@@ -1,0 +1,92 @@
+[
+  {
+    "id": "16f09216-b1c8-4e07-b64e-0e0268565b65",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 04:57:58.989138"
+  },
+  {
+    "id": "1495f6f5-6e87-42f7-9e70-dd9209b3dd64",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 04:41:42.952749"
+  },
+  {
+    "id": "dff327e1-7e8f-4432-98e2-76f8d0a58174",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 04:24:29.468477"
+  },
+  {
+    "id": "2b9eef8d-8203-49f0-8186-b00803f9f090",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 04:01:44.248075"
+  },
+  {
+    "id": "bd18f13c-a90d-4361-93fd-21388167dd4e",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 03:48:33.495497"
+  },
+  {
+    "id": "89c0709a-c833-45fe-89c9-fc6003008a57",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 03:17:16.127008"
+  },
+  {
+    "id": "2018f061-2c4d-492d-8ac9-b83f8eaf8ae3",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 03:09:05.255040"
+  },
+  {
+    "id": "7f9c58be-f273-4b62-a039-c81047f3134c",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 02:53:29.287516"
+  },
+  {
+    "id": "e7845089-6a5a-4e86-b64e-9f46ace72c54",
+    "type": "intraday",
+    "status": "completed",
+    "error": null,
+    "progress": 55,
+    "total_steps": 55,
+    "updated_at": "2026-02-12 02:28:21.670065"
+  },
+  {
+    "id": "c9254a9c-6bbf-474f-965b-f5ef069d96e8",
+    "type": "full_scan",
+    "status": "completed",
+    "error": null,
+    "progress": 502,
+    "total_steps": 502,
+    "updated_at": "2026-02-12 02:24:03.392079"
+  }
+]

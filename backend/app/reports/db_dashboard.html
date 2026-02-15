@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Blind Trade DB Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+</head>
+
+<body class="bg-gray-100 p-8">
+
+    <div class="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold text-gray-800">📊 Database Scan Results Visualizer</h1>
+            <button onclick="loadData()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Refresh
+                Data</button>
+        </div>
+
+        <div id="status" class="mb-4 p-4 bg-yellow-50 rounded hidden"></div>
+
+        <div class="grid grid-cols-4 gap-4 mb-6">
+            <div class="bg-blue-50 p-4 rounded text-center">
+                <div class="text-sm text-gray-500">Total Scanned</div>
+                <div id="stat-total" class="text-2xl font-bold text-blue-700">-</div>
+            </div>
+            <div class="bg-green-50 p-4 rounded text-center">
+                <div class="text-sm text-gray-500">Success Count</div>
+                <div id="stat-success" class="text-2xl font-bold text-green-700">-</div>
+            </div>
+            <div class="bg-red-50 p-4 rounded text-center">
+                <div class="text-sm text-gray-500">Errors</div>
+                <div id="stat-error" class="text-2xl font-bold text-red-700">-</div>
+            </div>
+            <div class="bg-purple-50 p-4 rounded text-center">
+                <div class="text-sm text-gray-500">Job Status</div>
+                <div id="stat-status" class="text-2xl font-bold text-purple-700">-</div>
+            </div>
+        </div>
+
+        <table id="dataTable" class="display w-full text-sm">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Price</th>
+                    <th>Score</th>
+                    <th>Signal</th>
+                    <th>Cap</th>
+                    <th>Tech Score</th>
+                    <th>Fund Score</th>
+                    <th>Risk Score</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script>
+        async function loadData() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = "Fetching from API...";
+            statusDiv.classList.remove('hidden');
+
+            try {
+                // Fetch from Local API (Main Job Status Endpoint)
+                const response = await fetch('http://localhost:8001/api/v1/jobs/status');
+                const job = await response.json();
+
+                if (!job || !job.result || !job.result.data) {
+                    statusDiv.innerHTML = "No completed scan data found in DB.";
+                    return;
+                }
+
+                document.getElementById('stat-status').innerText = job.status.toUpperCase();
+                document.getElementById('stat-total').innerText = job.result.total_scanned || 0;
+                document.getElementById('stat-success').innerText = job.result.success_count || 0;
+                document.getElementById('stat-error').innerText = (job.result.errors || []).length;
+
+                const tableBody = document.querySelector('#dataTable tbody');
+                tableBody.innerHTML = ''; // Clear old rows
+
+                job.result.data.forEach(row => {
+                    const tr = document.createElement('tr');
+
+                    // Color code signal
+                    let signalColor = 'text-gray-600';
+                    if (row.signal === 'BUY') signalColor = 'text-green-600 font-bold';
+                    if (row.signal === 'SELL') signalColor = 'text-red-600 font-bold';
+                    if (row.signal === 'AVOID') signalColor = 'text-orange-500';
+
+                    tr.innerHTML = `
+                        <td class="font-bold">${row.symbol}</td>
+                        <td>₹${row.price}</td>
+                        <td class="font-bold">${row.score}</td>
+                        <td class="${signalColor}">${row.signal}</td>
+                        <td>${row.market_cap}</td>
+                        <td>${row.groups.Technical.score}</td>
+                        <td>${row.groups.Fundamental.score}</td>
+                        <td>${row.groups.Risk.score}</td>
+                    `;
+                    tableBody.appendChild(tr);
+                });
+
+                // Initialize DataTable
+                if ($.fn.DataTable.isDataTable('#dataTable')) {
+                    $('#dataTable').DataTable().destroy();
+                }
+                $('#dataTable').DataTable({
+                    order: [[2, 'desc']], // Sort by Score
+                    pageLength: 25
+                });
+
+                statusDiv.classList.add('hidden');
+
+            } catch (error) {
+                statusDiv.innerHTML = `Error: ${error.message}. Is Backend running on Port 8001?`;
+                statusDiv.classList.add('bg-red-100', 'text-red-700');
+            }
+        }
+
+        // Auto Load
+        loadData();
+    </script>
+</body>
+
+</html>

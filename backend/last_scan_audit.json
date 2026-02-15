@@ -1,0 +1,92 @@
+{
+  "job_id": "7f9c58be-f273-4b62-a039-c81047f3134c",
+  "total_symbols": 435,
+  "max_score": 40.0,
+  "min_score": 12.9,
+  "avg_score": 26.839080459770138,
+  "verdict_dist": {
+    "N/A": 435
+  },
+  "top_10": [
+    {
+      "symbol": "AVANTIFEED.NS",
+      "score": 40.0,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "HAL.NS",
+      "score": 39.5,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "GMDCLTD.NS",
+      "score": 39.2,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "KRBL.NS",
+      "score": 39.1,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "PTC.NS",
+      "score": 38.5,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "NH.NS",
+      "score": 37.8,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "CARERATING.NS",
+      "score": 36.8,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "PERSISTENT.NS",
+      "score": 36.3,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "COALINDIA.NS",
+      "score": 36.1,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    },
+    {
+      "symbol": "ONGC.NS",
+      "score": 35.6,
+      "verdict": null,
+      "rationale": "N/A",
+      "trend_score": null,
+      "is_bullish": true
+    }
+  ]
+}

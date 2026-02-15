@@ -1,0 +1,86 @@
+[
+  {
+    "id": "1b751add-4e3b-477e-8e5f-b9d53ee412a3",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-10 16:53:30.611617"
+  },
+  {
+    "id": "b38ae2fc-4e5e-485f-9b97-bedf7fa756cb",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-09 02:55:14.349291"
+  },
+  {
+    "id": "97dae15a-b851-4d6f-a8db-1bb5d6c3d25d",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-08 17:10:30.867656"
+  },
+  {
+    "id": "673d944c-3626-49dc-8c3f-50b6da8c1330",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-08 17:07:21.345807"
+  },
+  {
+    "id": "05b60429-fba8-40d9-84f8-be7d918f8c6d",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-08 16:49:13.486580"
+  },
+  {
+    "id": "d8a692b1-1b42-43eb-aa60-14a9d12e7bbf",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-08 07:42:12.175986"
+  },
+  {
+    "id": "d98c01dc-3cad-41dd-b497-d73276695b6a",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-08 06:19:38.863981"
+  },
+  {
+    "id": "928ab86c-2b31-4a0a-b257-1382ba78fcce",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-07 05:42:22.115668"
+  },
+  {
+    "id": "fb03a056-85d2-4430-9e1b-ebb1f610c344",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-07 04:34:48.917385"
+  },
+  {
+    "id": "f90ac920-4c9a-4655-b29d-291e11be9ff7",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-07 04:22:47.880837"
+  },
+  {
+    "id": "b23c014a-76fd-4678-8a2d-6782f6c1fac3",
+    "type": "test",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-05 18:36:37.106754"
+  },
+  {
+    "id": "90061523-0fca-41e6-bf75-8e95af56fd1f",
+    "type": "full_scan",
+    "status": "failed",
+    "error": "Worker Restarted - Job Interrupted",
+    "updated_at": "2026-02-05 08:05:45.088749"
+  }
+]

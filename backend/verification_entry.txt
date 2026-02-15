@@ -1,0 +1,14 @@
+[PTC.NS] Current Price: ₹189.46
+Smart Entry: ₹188.87 (Limit (R1))
+Rationale: Suggested entry near Ironclad support (R1).
+Buffer: 0.3% below market
+
+[RELIANCE.NS] Current Price: ₹1458.5
+Smart Entry: ₹1432.39 (Limit (P))
+Rationale: Suggested entry near Ironclad support (P).
+Buffer: 1.8% below market
+
+[RVNL.NS] Current Price: ₹319.45
+Smart Entry: ₹319.45 (Market (Optimized))
+Rationale: Standard entry at current price levels.
+Buffer: 0.0% below market

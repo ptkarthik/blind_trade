@@ -1,0 +1,6 @@
+--- FOCUSED DEBUG: ZOMATO.NS ---
+Price Check Error: 'currentTradingPeriod'
+History (1d): 0 rows
+History (5d): 0 rows
+History (1mo): 0 rows
+History (1y): 0 rows

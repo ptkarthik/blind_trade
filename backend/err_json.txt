@@ -1,0 +1,6 @@
+{
+  "id": "1b751add-4e3b-477e-8e5f-b9d53ee412a3",
+  "type": "full_scan",
+  "error": "Worker Restarted - Job Interrupted",
+  "status": "failed"
+}

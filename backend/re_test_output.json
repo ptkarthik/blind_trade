@@ -1,0 +1,279 @@
+{
+  "symbol": "RELIANCE",
+  "score": 60.9,
+  "signal": "NEUTRAL",
+  "price": 1450.8,
+  "entry": 1450.8,
+  "market_cap_category": "Large",
+  "market_cap_value": 19632911959623.266,
+  "sector": "Energy",
+  "target": 1787.57,
+  "stop_loss": 1299.97,
+  "target_reason": "40% CAGR + 40% Fair Value + 20% Tech",
+  "levels": {
+    "resistance": [
+      {
+        "price": 1504.5036671342627,
+        "label": "Fib 0.786",
+        "type": "Fibonacci",
+        "hits": 21,
+        "strength": "Ironclad"
+      },
+      {
+        "price": 1611.800048828125,
+        "label": "Fib 1.0",
+        "type": "Fibonacci",
+        "hits": 2,
+        "strength": "Solid"
+      }
+    ],
+    "support": [
+      {
+        "price": 1440.3333333333333,
+        "label": "R2",
+        "type": "Pivot",
+        "hits": 36,
+        "strength": "Ironclad"
+      },
+      {
+        "price": 1420.2709936549686,
+        "label": "Fib 0.618",
+        "type": "Fibonacci",
+        "hits": 35,
+        "strength": "Ironclad"
+      },
+      {
+        "price": 1393.6666666666665,
+        "label": "R1",
+        "type": "Pivot",
+        "hits": 30,
+        "strength": "Ironclad"
+      },
+      {
+        "price": 1364.3333333333333,
+        "label": "P",
+        "type": "Pivot",
+        "hits": 23,
+        "strength": "Ironclad"
+      },
+      {
+        "price": 1317.6666666666665,
+        "label": "S1",
+        "type": "Pivot",
+        "hits": 9,
+        "strength": "Ironclad"
+      }
+    ]
+  },
+  "strategic_summary": "Consolidation likely. Healthy Uptrend countered by Divergent Volume Flow. Wait and watch. [Advisor] Suggested hold: 1-2 Years. Target: \u20b91787.57 (11.5% CAGR).",
+  "category_rationale": "Assigned to HOLD because Healthy Uptrend is currently neutralized by Divergent Volume Flow.",
+  "accumulation_status": "Normal",
+  "intrinsic_value": 0,
+  "valuation_gap": 0,
+  "squeeze": {},
+  "investment_advisory": {
+    "holding_period": {
+      "score": 63.3,
+      "years": 1.9,
+      "label": "Tactical Growth",
+      "period_display": "1-2 Years",
+      "risk_adjusted": true
+    },
+    "targets": {
+      "3_year_target": 1787.57,
+      "projected_cagr": 11.5,
+      "fair_value_base": 1450.8,
+      "blend_logic": "40% CAGR + 40% Fair Value + 20% Tech"
+    },
+    "stop_loss": {
+      "stop_price": 1299.97,
+      "type": "Structural (200 EMA)",
+      "risk_pct": 10.4,
+      "trailing_logic": {
+        "activation_target": 1813.5,
+        "buffer": "HighestPrice - 108.81 (2.5x ATR)"
+      }
+    },
+    "scenarios": [
+      {
+        "label": "Conservative",
+        "cagr": "8.0%",
+        "target": 1680.68,
+        "probability": "60%"
+      },
+      {
+        "label": "Realistic",
+        "cagr": "12.0%",
+        "target": 1799.38,
+        "probability": "30%"
+      },
+      {
+        "label": "Aggressive",
+        "cagr": "20.0%",
+        "target": 2051.41,
+        "probability": "10%"
+      }
+    ],
+    "trend_status": {
+      "slope": "Steep Upward Slope \ud83d\ude80",
+      "angle_proxy": "10.0\u00b0 Relative",
+      "action": "Extend Hold / Pyramiding"
+    },
+    "review_cycle": "Quarterly Earnings Review",
+    "confidence": "59%",
+    "fair_value": 1450.8
+  },
+  "weights": {
+    "Fundamental": 40,
+    "Technical (Trend)": 25,
+    "Technical (Momentum)": 15,
+    "Volume Behavior": 10,
+    "Risk & Stability": 10,
+    "regime": "Standard"
+  },
+  "reasons": [
+    {
+      "text": "Healthy Uptrend",
+      "type": "positive",
+      "label": "L/T",
+      "value": "Price > 200EMA"
+    },
+    {
+      "text": "Golden Cross (50>200)",
+      "type": "positive",
+      "label": "CROSS",
+      "value": "Strong Bullish"
+    },
+    {
+      "text": "Bullish RSI Sweet-Zone",
+      "type": "positive",
+      "label": "MOM",
+      "value": "RSI: 49.5"
+    },
+    {
+      "text": "Low Historical Volatility",
+      "type": "positive",
+      "label": "SAFE",
+      "value": "DD: 24.6%"
+    },
+    {
+      "text": "Robust Financial Health",
+      "type": "positive",
+      "label": "SAFE",
+      "value": "D/E: 35.7"
+    }
+  ],
+  "groups": {
+    "Fundamental": {
+      "score": 59.5,
+      "details": [
+        {
+          "text": "Lackluster Profitability",
+          "type": "negative",
+          "label": "PRO",
+          "value": "Margin: 8.1%"
+        },
+        {
+          "text": "Robust Financial Health",
+          "type": "positive",
+          "label": "SAFE",
+          "value": "D/E: 35.7"
+        },
+        {
+          "text": "Strong Promoter Skin-in-game",
+          "type": "positive",
+          "label": "MGMT",
+          "value": "50.9%"
+        }
+      ],
+      "status": "STRONG"
+    },
+    "Technical (Trend)": {
+      "score": 100,
+      "details": [
+        {
+          "text": "Healthy Uptrend",
+          "type": "positive",
+          "label": "L/T",
+          "value": "Price > 200EMA"
+        },
+        {
+          "text": "Golden Cross (50>200)",
+          "type": "positive",
+          "label": "CROSS",
+          "value": "Strong Bullish"
+        },
+        {
+          "text": "Divergent Volume Flow",
+          "type": "negative",
+          "label": "VOL",
+          "value": "OBV Weak"
+        }
+      ],
+      "status": "BULLISH"
+    },
+    "Technical (Momentum)": {
+      "score": 40,
+      "details": [
+        {
+          "text": "Bullish RSI Sweet-Zone",
+          "type": "positive",
+          "label": "MOM",
+          "value": "RSI: 49.5"
+        },
+        {
+          "text": "MACD Bearish Bias",
+          "type": "negative",
+          "label": "MACD",
+          "value": "Below Signal"
+        }
+      ],
+      "status": "LOW"
+    },
+    "Volume Behavior": {
+      "score": 50.0,
+      "details": [],
+      "status": "ACTIVE"
+    },
+    "Risk & Stability": {
+      "score": 61.0,
+      "details": [
+        {
+          "text": "Weak Institutional Trust",
+          "type": "negative",
+          "label": "SEC",
+          "value": "Hold: 0%"
+        },
+        {
+          "text": "Exceptional Market Stability",
+          "type": "positive",
+          "label": "SAFE",
+          "value": "Moves only 0.22x per 1% Market swing"
+        }
+      ],
+      "status": "STABLE"
+    },
+    "Strategic Alpha": {
+      "score": 25.0,
+      "details": [
+        {
+          "text": "Sector Lag: Weak vs Energy",
+          "type": "negative",
+          "label": "SECT",
+          "value": "-49.6%"
+        }
+      ],
+      "status": "UNDERPERFORMER"
+    }
+  },
+  "alpha_intel": {
+    "quality_score": 59.5,
+    "growth_probability": "Medium",
+    "risk_level": "Low",
+    "valuation_status": "Attractive",
+    "suggested_hold": "1-2 Years",
+    "confidence": "60.9%",
+    "moat_status": "Narrow",
+    "recovery_vibe": "Slow"
+  }
+}
