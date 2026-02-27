@@ -59,32 +59,142 @@ class LongTermTechnicalAnalysis:
         except: return {"recovery_weeks": 0, "label": "Unknown"}
 
     @staticmethod
-    def calculate_pivots(df: pd.DataFrame) -> dict:
-        if len(df) < 2: return {}
-        prev = df.iloc[-2]
-        p = (prev['high'] + prev['low'] + prev['close']) / 3
-        return {"P": p, "R1": (2 * p) - prev['low'], "S1": (2 * p) - prev['high']}
+    def check_trend_template(df: pd.DataFrame) -> dict:
+        """
+        Mark Minervini's Trend Template (Stage 2 Uptrend).
+        Criteria:
+        1. Price > 150 SMA and > 200 SMA
+        2. 150 SMA > 200 SMA
+        3. 200 SMA trending up for at least 1 month (20 days)
+        4. 50 SMA > 150 SMA and > 200 SMA
+        5. Price > 50 SMA
+        6. Price > 52-week low + 25%
+        7. Price is within 25% of 52-week high
+        """
+        try:
+            if len(df) < 260: return {"passed": False, "details": "Not enough history"}
+            
+            close = df['close']
+            
+            sma_50 = close.rolling(window=50).mean()
+            sma_150 = close.rolling(window=150).mean()
+            sma_200 = close.rolling(window=200).mean()
+            
+            current_close = close.iloc[-1]
+            c_50 = sma_50.iloc[-1]
+            c_150 = sma_150.iloc[-1]
+            c_200 = sma_200.iloc[-1]
+            
+            # Check 200 SMA Trend (compare to 20 days ago)
+            c_200_prev = sma_200.iloc[-20]
+            trend_200_up = c_200 > c_200_prev
+            
+            # 52-Week High/Low
+            low_52 = df['low'].tail(260).min()
+            high_52 = df['high'].tail(260).max()
+            
+            abv_low = current_close > (low_52 * 1.25)
+            near_high = current_close > (high_52 * 0.75) # Within 25% of high means > 75% of high value
+            
+            # Condition Checks
+            c1 = current_close > c_150 and current_close > c_200
+            c2 = c_150 > c_200
+            c3 = trend_200_up
+            c4 = c_50 > c_150 and c_50 > c_200
+            c5 = current_close > c_50
+            
+            passed = c1 and c2 and c3 and c4 and c5 and abv_low and near_high
+            
+            reasons = []
+            if passed: reasons.append("Stage 2 Uptrend Confirmed")
+            elif not c1: reasons.append("Price below L/T MAs")
+            elif not c2: reasons.append("150 SMA < 200 SMA")
+            elif not c3: reasons.append("200 SMA Flat/Down")
+            elif not abv_low: reasons.append("Too close to 52W Low")
+            
+            return {
+                "passed": passed,
+                "reason": reasons[0] if reasons else "Mixed Signals",
+                "sma_50": c_50,
+                "sma_200": c_200,
+                "high_52": high_52
+            }
+        except:
+             return {"passed": False, "reason": "Calculation Error"}
 
     @staticmethod
-    def calculate_fibonacci(df: pd.DataFrame) -> dict:
-        if len(df) < 52: return {}
-        high, low = df['high'].tail(52).max(), df['low'].tail(52).min()
-        diff = high - low
-        return {"0.618": low + 0.618 * diff, "1.0": high, "0.0": low}
+    def analyze_volume_behavior(df: pd.DataFrame) -> dict:
+        """
+        Analyzes Volume Accumulation/Distribution.
+        """
+        try:
+           if len(df) < 50: return {"status": "Neutral", "score": 50}
+           
+           recent = df.tail(20)
+           up_days = recent[recent['close'] > recent['open']]
+           down_days = recent[recent['close'] < recent['open']]
+           
+           up_vol = up_days['volume'].mean() if not up_days.empty else 0
+           down_vol = down_days['volume'].mean() if not down_days.empty else 0
+           
+           status = "Neutral"
+           score = 50
+           
+           if up_vol > (down_vol * 1.2):
+               status = "Accumulation"
+               score = 80
+           elif down_vol > (up_vol * 1.2):
+               status = "Distribution"
+               score = 20
+           
+           # Check for Dry Up on recent pullback (Last 5 days)
+           # If price down over last 5 days but volume declining -> Constructive
+           last_5 = df.tail(5)
+           price_drop = last_5['close'].iloc[-1] < last_5['close'].iloc[0]
+           vol_declining = last_5['volume'].iloc[-1] < last_5['volume'].mean() * 0.8
+           
+           dry_up = False
+           if price_drop and vol_declining:
+               dry_up = True
+               status += " (Vol Dry-Up)"
+               score += 10
+               
+           return {"status": status, "score": score, "dry_up": dry_up}
+        except:
+            return {"status": "Neutral", "score": 50}
 
     @staticmethod
     def calculate_ladder(df: pd.DataFrame, current_price: float) -> dict:
-        pivots = LongTermTechnicalAnalysis.calculate_pivots(df)
-        fibs = LongTermTechnicalAnalysis.calculate_fibonacci(df)
-        res, sup = [], []
-        for k, v in pivots.items():
-            if v > current_price: res.append({"price": v, "label": k})
-            else: sup.append({"price": v, "label": k})
-        for k, v in fibs.items():
-            if v > current_price: res.append({"price": v, "label": f"Fib {k}"})
-            else: sup.append({"price": v, "label": f"Fib {k}"})
-        return {"resistance": sorted(res, key=lambda x: x["price"])[:3], 
-                "support": sorted(sup, key=lambda x: x["price"], reverse=True)[:3]}
+        """
+        Calculates Key Support & Resistance Levels (The 'Ladder').
+        Uses 52-Week High, Recent Swing Lows, and Moving Averages.
+        """
+        try:
+            if len(df) < 50: return {"support": current_price * 0.9, "resistance": current_price * 1.1}
+            
+            # 1. Moving Averages as Dynamic Levels
+            sma_50 = df['close'].rolling(window=50).mean().iloc[-1]
+            sma_200 = df['close'].rolling(window=200).mean().iloc[-1]
+            
+            # 2. Structural Levels (Swings)
+            recent_high = df['high'].tail(60).max()
+            recent_low = df['low'].tail(60).min()
+            
+            # Determine immediate support/resistance
+            supports = [l for l in [sma_50, sma_200, recent_low] if l < current_price]
+            resistances = [l for l in [sma_50, sma_200, recent_high] if l > current_price]
+            
+            # Fallbacks
+            support = max(supports) if supports else current_price * 0.95
+            resistance = min(resistances) if resistances else current_price * 1.05
+            
+            return {
+                "support": round(support, 2),
+                "resistance": round(resistance, 2),
+                "pivot": round((recent_high + recent_low + current_price) / 3, 2)
+            }
+        except:
+             return {"support": current_price * 0.9, "resistance": current_price * 1.1}
 
     @staticmethod
     def analyze_stock(df: pd.DataFrame) -> dict:
@@ -99,39 +209,76 @@ class LongTermTechnicalAnalysis:
             "Safety": {"score": 0, "details": [], "status": "NEUTRAL"}
         }
 
-        ema_200 = EMAIndicator(close=df['close'], window=200).ema_indicator().iloc[-1]
-        ema_50 = EMAIndicator(close=df['close'], window=50).ema_indicator().iloc[-1]
+        # 1. Trend Analysis (Minervini Template)
+        template = LongTermTechnicalAnalysis.check_trend_template(df)
+        ema_50 = template.get("sma_50", close)
+        ema_200 = template.get("sma_200", close)
         
-        if np.isnan(ema_200): ema_200 = close
-        if close > ema_200:
+        if template["passed"]:
             trend_score = 100
-            groups["Trend"]["details"].append({"text": "Above 200 EMA (Long-Term Bullish)", "type": "positive", "label": "L/T", "value": "Strong Trend"})
+            groups["Trend"]["details"].append({"text": "Minervini Stage 2 Template", "type": "positive", "label": "TREND", "value": "Passed"})
+        else:
+            # Partial Credit
+            if close > ema_200:
+                trend_score = 60
+                groups["Trend"]["details"].append({"text": "Above 200 EMA", "type": "positive", "label": "TREND", "value": "Bullish"})
+            else:
+                trend_score = 0
+                groups["Trend"]["details"].append({"text": "Below 200 EMA", "type": "negative", "label": "TREND", "value": "Bearish"})
         
+        # 50 DMA Pullback Detection
+        # If Price is above 200EMA but within 2-3% of 50EMA (and above it OR slightly below)
+        dist_to_50 = (close - ema_50) / ema_50
+        if 0 < dist_to_50 < 0.03 and trend_score >= 60:
+             groups["Trend"]["details"].append({"text": "Pullback to 50 DMA", "type": "positive", "label": "SETUP", "value": "Buy Zone"})
+             trend_score += 10
+
+        # 2. Volume Analysis
+        vol_data = LongTermTechnicalAnalysis.analyze_volume_behavior(df)
+        if vol_data["score"] > 60:
+             groups["Momentum"]["details"].append({"text": f"Volume: {vol_data['status']}", "type": "positive", "label": "VOL", "value": "Constructive"})
+        elif vol_data["score"] < 40:
+             groups["Momentum"]["details"].append({"text": f"Volume: {vol_data['status']}", "type": "negative", "label": "VOL", "value": "Weak"})
+
+        # 3. Momentum (RSI)
         rsi = RSIIndicator(close=df['close'], window=14).rsi().iloc[-1]
         if 40 <= rsi <= 70:
             mom_score = 100
             groups["Momentum"]["details"].append({"text": "RSI Accumulation Zone (40-70)", "type": "positive", "label": "MOM", "value": round(rsi,1)})
-        
+        elif rsi > 80:
+             groups["Momentum"]["details"].append({"text": "RSI Overbought", "type": "neutral", "label": "MOM", "value": round(rsi,1)})
+
         dd_data = LongTermTechnicalAnalysis.calculate_drawdown(df)
         recovery_data = LongTermTechnicalAnalysis.calculate_recovery_speed(df)
         
+        # Safety Logic
+        if dd_data["max_drawdown_pct"] < 15:
+             groups["Safety"]["details"].append({"text": "Low Historical Drawdown", "type": "positive", "label": "RISK", "value": f"-{dd_data['max_drawdown_pct']}%"})
+        
+        # Golden Cross (Bonus)
+        # Check if 50 crossed 200 recently? (Already covered by template, but good to explicit)
+        
+        final_score = (trend_score * 0.5) + (mom_score * 0.3) + (vol_data["score"] * 0.2)
+        
         return {
-            "score": (trend_score * 0.6) + (mom_score * 0.4), # Internal TA Blend
+            "score": min(100, round(final_score, 1)), 
             "trend_score": trend_score,
             "mom_score": mom_score,
             "groups": groups,
-            "ema_20": ema_50, # Keep legacy key for compatibility
+            "ema_20": ema_50, 
             "ema_50_val": ema_50,
             "ema_200_val": ema_200,
             "rsi": rsi,
             "atr": (df['high'] - df['low']).rolling(14).mean().iloc[-1],
             "is_bullish_trend": close > ema_200,
-            "trend": "BULLISH" if trend_score >= 15 else "BEARISH",
-            "support": round(ema_200 * 0.95, 2),
-            "resistance": round(close * 1.15, 2),
+            "trend": "BULLISH" if trend_score >= 50 else "BEARISH",
+            "support": round(ema_50 * 0.98, 2) if trend_score > 60 else round(ema_200 * 0.95, 2),
+            "resistance": round(template.get("high_52", close*1.2), 2),
             "drawdown": dd_data,
             "recovery": recovery_data,
-            "levels": LongTermTechnicalAnalysis.calculate_ladder(df, close)
+            "levels": LongTermTechnicalAnalysis.calculate_ladder(df, close),
+            "squeeze": LongTermTechnicalAnalysis.calculate_squeeze(df),
+            "trend_template": template
         }
 
 ta_longterm = LongTermTechnicalAnalysis()

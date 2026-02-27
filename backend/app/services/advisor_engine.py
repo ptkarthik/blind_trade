@@ -45,7 +45,7 @@ class AdvisorEngine:
         
         # 4. Scenario Analysis (Risk-Adjusted Expectancy)
         # -----------------------------------------------------------
-        scenarios = self._generate_scenarios(price, targets["3_year_target"], metrics, risk)
+        scenarios = self._generate_scenarios(price, targets["3_year_target"], metrics, risk, horizon_months=horizon_months)
 
         # 5. Smart Entry (Institutional Zones)
         # -----------------------------------------------------------
@@ -182,7 +182,11 @@ class AdvisorEngine:
         return {
             "stop_price": round(stop, 2),
             "type": typ,
-            "risk_pct": round(((price - stop)/price)*100, 1)
+            "risk_pct": round(((price - stop)/price)*100, 1),
+            "trailing_logic": {
+                "activation_target": round(price * 1.25, 2),
+                "buffer": "10% Trailing"
+            }
         }
 
     # =========================================================================
@@ -257,7 +261,8 @@ class AdvisorEngine:
         vwap = ta.get("vwap_val", 0)
         ema_200 = ta.get("ema_200_val", 0)
         ema_50 = ta.get("ema_50_val", 0)
-        supports = ta.get("levels", {}).get("support", [])
+        levels = ta.get("levels", [])
+        supports = [l for l in levels if l.get("type") == "support"] if isinstance(levels, list) else []
         
         entry = price
         typ = "Market"
@@ -301,18 +306,25 @@ class AdvisorEngine:
             "confluence": 1
         }
 
-    def _generate_scenarios(self, price, target, metrics, risk):
+    def _generate_scenarios(self, price, target, metrics, risk, horizon_months=36):
         """
         Simple 3-case scenario for UI.
         """
+        years = max(0.5, horizon_months / 12)
         upside = target
         downside_risk = risk.get("max_drawdown", 20) / 100
         downside = price * (1 - downside_risk)
         
+        # Calculate CAGR for each
+        def get_cagr(tgt):
+             try:
+                 return round(((tgt / price) ** (1/years) - 1) * 100, 1)
+             except: return 0.0
+
         return [
-            {"label": "Bull Case", "target": upside, "probability": "Optimistic"},
-            {"label": "Base Case", "target": (upside+price)/2, "probability": "Likely"},
-            {"label": "Bear Case", "target": downside, "probability": "Risk"}
+            {"label": "Bull Case", "target": upside, "probability": "Optimistic", "cagr": get_cagr(upside)},
+            {"label": "Base Case", "target": (upside+price)/2, "probability": "Likely", "cagr": get_cagr((upside+price)/2)},
+            {"label": "Bear Case", "target": downside, "probability": "Risk", "cagr": get_cagr(downside)}
         ]
     
     def _analyze_trend_slope(self, ta):

@@ -1,0 +1,6 @@
+Job ID: 5573b99a-5e0f-4b09-b54e-6c1b275722e1
+Status: paused
+Created: 2026-02-16 16:05:11.102149
+Updated: 2026-02-16 16:10:40.955727
+Progress: 570 / 2210
+Signals Found: 0

@@ -1,6 +1,7 @@
 
 import asyncio
 import time
+import random
 import pandas as pd
 from datetime import datetime
 from app.services.market_data import market_service
@@ -17,17 +18,25 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.services.utils import STATIC_FULL_LIST, sanitize_data
 from app.services.market_discovery import market_discovery
 
-class ScannerEngine:
+class LongTermScannerEngine:
     def __init__(self):
         self.running = False
         self.delay = 0.5 
-        self.semaphore = asyncio.Semaphore(20)
-        self.active_symbols = [] 
-        self.results_buffer = [] 
-        self.progress_counter = 0 
-        self.scan_active = False 
-        self.sector_counts = {} # Sector frequency tracking for Portfolio Awareness
+        self.semaphore = asyncio.Semaphore(10) # Reduced from 20 for stability
         self.job_states = {} # Track concurrent jobs
+
+    def _group_by_sector(self, results):
+        """Pre-groups results by sector for fast UI retrieval."""
+        grouped = {}
+        for r in results:
+            sec = r.get("sector", "General")
+            if sec not in grouped:
+                grouped[sec] = {"buys": [], "holds": [], "sells": []}
+            sig = r.get("signal")
+            if sig == "BUY": grouped[sec]["buys"].append(r)
+            elif sig == "SELL": grouped[sec]["sells"].append(r)
+            else: grouped[sec]["holds"].append(r)
+        return grouped
     @staticmethod
     def sanitize(data):
         return sanitize_data(data)
@@ -72,14 +81,23 @@ class ScannerEngine:
         # 2. Iterate
         results = []
         errors = []
+        failed_symbols = []
         
         total = len(symbols)
         
-        # 1. Reset State
-        self.active_symbols = []
-        self.results_buffer = []
-        self.progress_counter = 0
-        self.scan_active = True
+        # 1. Initialize per-job state
+        self.job_states[job_id] = {
+            "results": [],
+            "failed_symbols": [],
+            "active": [],
+            "progress": 0,
+            "is_running": True,
+            "stop_requested": False,
+            "pause_requested": False,
+            "last_data_sync": 0, # Track progress of last data sync
+            "main_task": asyncio.current_task(),
+            "sector_counts": {}
+        }
 
         # 2. Initial Progress Update & Start Background Sync
         try:
@@ -99,58 +117,61 @@ class ScannerEngine:
         print(f"Engine: Regime [{regime['label'].upper()}] | Macro [{macro['label'].upper()}]")
         weights = regime["weights"]
 
-        # Start background sync with per-job state isolation
-        self.job_states[job_id] = {
-            "results": [],
-            "active": [],
-            "progress": 0,
-            "is_running": True
-        }
         sync_task = asyncio.create_task(self._progress_loop(job_id, total))
 
         async def sem_task(sym, idx):
+                # 1. PAUSE / STOP CHECK (Before entering semaphore)
+                while job_id in self.job_states and self.job_states[job_id].get("pause_requested"):
+                    if self.job_states[job_id].get("stop_requested"): return
+                    try:
+                        await asyncio.sleep(1)
+                    except asyncio.CancelledError:
+                        return
+
                 async with self.semaphore:
+                    # Initial Stop Check
+                    if job_id not in self.job_states or self.job_states[job_id].get("stop_requested"):
+                        return
+
                     state = self.job_states[job_id]
                     state["active"].append(sym)
                     try:
-                        # 1. Check for Stop/Pause Signal
-                        async with AsyncSessionLocal() as session:
-                            q = select(Job).where(Job.id == job_id)
-                            db_res = await session.execute(q)
-                            job_obj = db_res.scalars().first()
-                            if job_obj:
-                                if job_obj.status == "stopped":
-                                    print(f"🛑 Engine: Stop Signal received for {sym}. Aborting task.")
-                                    return
-                                
-                                while job_obj.status == "paused":
-                                    await asyncio.sleep(2)
-                                    await session.refresh(job_obj)
-                                    if job_obj.status == "stopped": return
-
                         # 2. Strict Throttling for APIs per slot
                         await asyncio.sleep(self.delay)
-                        
-                        # 3. Fetch & Analyze
+
                         symbol_str = sym["symbol"] if isinstance(sym, dict) else sym
+                        print(f"[{idx+1}/{total}] Analyzing: {symbol_str}", flush=True)
+                        res = await self.analyze_stock(symbol_str, weights=weights, regime_label=regime['label'], macro_data=macro, job_id=job_id)
                         
-                        print(f"[{idx+1}/{total}] Concurrent Logic Execution: {symbol_str}")
-                        res = await self.analyze_stock(symbol_str, weights=weights, regime_label=regime['label'], macro_data=macro)
+                        # Re-check stop after long analysis
+                        if job_id not in self.job_states or self.job_states[job_id].get("stop_requested"):
+                            return
+
                         if res:
                             state["results"].append(res)
                             results.append(res)
-                        
+                        else:
+                            state["failed_symbols"].append({"symbol": symbol_str, "reason": "No data / Invalid setup"})
+                            failed_symbols.append({"symbol": symbol_str, "reason": "No data / Invalid setup"})
+
                         state["progress"] += 1
+                    except asyncio.CancelledError:
+                        return
                     except Exception as e:
                         print(f"Error scanning {sym}: {e}")
                         errors.append(f"{sym}: {str(e)}")
-                        state["progress"] += 1 
+                        state["failed_symbols"].append({"symbol": symbol_str, "reason": str(e)})
+                        failed_symbols.append({"symbol": symbol_str, "reason": str(e)})
+                        state["progress"] += 1
                     finally:
                         if sym in state["active"]:
                             state["active"].remove(sym)
 
-        tasks = [sem_task(sym, i) for i, sym in enumerate(symbols)]
-        await asyncio.gather(*tasks)
+        try:
+            tasks = [sem_task(sym, i) for i, sym in enumerate(symbols)]
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            print(f"🛑 Engine: Job {job_id} CANCELLED via Task Cancellation")
 
         # 2.5 Stop background sync and wait for it
         if job_id in self.job_states:
@@ -159,26 +180,31 @@ class ScannerEngine:
         if job_id in self.job_states: del self.job_states[job_id]
                 
         # 3. Sort & Filter (Prioritization Logic)
-        # Sort by Final Score (Desc)
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        local_results = list(results)
+        local_results.sort(key=lambda x: x.get("score", 0), reverse=True)
         
         # 4. Return
-        print(f"Scan Completed. Found {len(results)} valid signals.")
+        print(f"Scan Completed for Job {job_id}. Found {len(local_results)} valid signals.")
         final_payload = {
             "total_scanned": total,
-            "success_count": len(results),
-            "data": results,
+            "success_count": len(local_results),
+            "data": local_results,
             "errors": errors[:20], 
+            "failed_symbols": failed_symbols,
             "progress": total,
             "total_steps": total,
             "status_msg": "Completed"
         }
         return self.sanitize(final_payload)
 
-    async def analyze_stock(self, sym, weights=None, regime_label="Standard", macro_data=None):
+    async def analyze_stock(self, sym, weights=None, regime_label="Standard", macro_data=None, job_id=None):
         """
         Single Stock Analysis - Robust Wrapper
         """
+        # Track sector counts for portfolio awareness if job_id is provided
+        sector_counts = {}
+        if job_id and job_id in self.job_states:
+            sector_counts = self.job_states[job_id]["sector_counts"]
         # Default Weights (Standard)
         if weights is None:
             weights = {
@@ -196,10 +222,34 @@ class ScannerEngine:
             macro_adjustment = self._calculate_macro_adjustment(sector, macro_data)
         
         try:
-            # 1. Fetch Data
-            # Note: We use the existing market_service logic but throttled
-            df = await market_service.get_ohlc(sym, period="5y", interval="1wk") # Long term scan (5y for 200 EMA accuracy)
-            price_data = await market_service.get_live_price(sym)
+            # 1. Parallel Fetch Data (Comprehensive)
+            # We bundle all independent fetches into one gather to minimize wall-clock time
+            ohlc_task = market_service.get_ohlc(sym, period="5y", interval="1wk")
+            price_task = market_service.get_live_price(sym)
+            fund_task = market_service.get_fundamentals(sym)
+            meta_task = market_service.get_symbol_metadata(sym)
+            
+            # Start primary core fetches
+            primary_results = await asyncio.gather(ohlc_task, price_task, fund_task, meta_task, return_exceptions=True)
+            
+            # Unpack with safety checks
+            df = primary_results[0] if not isinstance(primary_results[0], Exception) else pd.DataFrame()
+            price_data = primary_results[1] if not isinstance(primary_results[1], Exception) else {}
+            fund = primary_results[2] if not isinstance(primary_results[2], Exception) else {}
+            metadata = primary_results[3] if not isinstance(primary_results[3], Exception) else {}
+            
+            sector_name = metadata.get("sector", "Unknown")
+            
+            # 2. Secondary Contextual Parallel Fetch
+            index_task = market_service.get_index_performance(sector_name)
+            ext_data_task = market_service.get_extended_data(sym)
+            hist_fin_task = market_service.get_historical_financials(sym)
+            
+            secondary_results = await asyncio.gather(index_task, ext_data_task, hist_fin_task, return_exceptions=True)
+            
+            index_df = secondary_results[0] if not isinstance(secondary_results[0], Exception) else pd.DataFrame()
+            ext = secondary_results[1] if not isinstance(secondary_results[1], Exception) else {"holders": {}, "news": []}
+            hist_financials = secondary_results[2] if not isinstance(secondary_results[2], Exception) else pd.DataFrame()
             
             real_price = price_data.get("price", 0.0)
             market_cap = price_data.get("market_cap", 0.0)
@@ -215,69 +265,70 @@ class ScannerEngine:
                 print(f"⚠️ [DEBUG] {sym}: Data Unavailable or Invalid (OHLC: {len(df)}, Price: {real_price})")
                 return None
 
-            # 2. TA Analysis
+            # 3. TA Analysis
             ta_res = await asyncio.to_thread(ta_longterm.analyze_stock, df)
             if not ta_res: 
                 print(f"⚠️ [DEBUG] {sym}: TA Analysis Failed")
                 return None
-            
-            # 3. Fundamental/Risk Analysis (Phase 29: Historical Context)
-            fund = await market_service.get_fundamentals(sym)
-            metadata = await market_service.get_symbol_metadata(sym)
-            sector_name = metadata.get("sector", "Unknown")
-            
-            # Parallel fetch for Efficiency (Phase 30: Sector Intel)
-            index_df_task = asyncio.create_task(market_service.get_index_performance(sector_name))
-            ext_task = asyncio.create_task(market_service.get_extended_data(sym))
-            hist_fin_task = asyncio.create_task(market_service.get_historical_financials(sym))
-            
-            index_df = await index_df_task
-            ext = await ext_task
-            hist_financials = await hist_fin_task
             
             fund_res = await asyncio.to_thread(fundamental_engine.analyze, fund, hist_financials)
             risk_res = await asyncio.to_thread(risk_engine.analyze, ext, fund, df)
             sector_res = await asyncio.to_thread(sector_engine.analyze, df, index_df, sector_name)
             
             # --- PROFESSIONAL ADAPTIVE SCORING (Phase 33) ---
-            fund_score = fund_res["score"]
-            trend_score = ta_res.get("trend_score", 0)
-            mom_score = ta_res.get("mom_score", 0)
-            vol_score = risk_res.get("volume_score", 0)
-            risk_stability_score = risk_res.get("stability_score", 0)
-            
-            # Sector Bonus/Penalty (Phase 30: Alpha Influence)
-            sector_alpha = sector_res.get("alpha", 0)
-            sector_adjustment = max(-5, min(5, sector_alpha * 20)) 
-            
-            # --- INSTITUTIONAL INTEL (Paid App Features) ---
-            from app.services.institutional_intel import institutional_intel
-            inst_data = await asyncio.to_thread(institutional_intel.analyze, df)
-            
-            inst_score = 0
-            # 1. RS Rating Boost (MarketSmith Style)
-            rs_rating = inst_data.get("rs_rating", 50)
-            if rs_rating > 80: inst_score += 10
-            elif rs_rating > 90: inst_score += 15
-            
-            # 2. VCP Pattern (Minervini)
-            if inst_data.get("vcp_detected", False):
-                inst_score += 15
-                print(f"💎 VCP PATTERN DETECTED: {sym}")
+            try:
+                fund_score = fund_res.get("score", 50)
+                trend_score = ta_res.get("trend_score", 50)
+                mom_score = ta_res.get("mom_score", 50)
+                vol_score = risk_res.get("volume_score", 50)
+                risk_stability_score = risk_res.get("stability_score", 50)
                 
-            # 3. Sponsorship
-            spon_action = inst_data.get("institutional_action", "Neutral")
-            if "Accumulation" in spon_action: inst_score += 10
-            elif "Distribution" in spon_action: inst_score -= 10
+                # Sector Bonus/Penalty (Phase 30: Alpha Influence)
+                sector_alpha = sector_res.get("alpha", 0)
+                # Ensure sector_alpha is a number
+                if not isinstance(sector_alpha, (int, float)): sector_alpha = 0
+                sector_adjustment = max(-5, min(5, sector_alpha * 20)) 
+                
+                # --- INSTITUTIONAL INTEL (Paid App Features) ---
+                from app.services.institutional_intel import institutional_intel
+                inst_data = await asyncio.to_thread(institutional_intel.analyze, df)
+                
+                inst_score = 0
+                # 1. RS Rating Boost (MarketSmith Style)
+                rs_rating = inst_data.get("rs_rating", 50)
+                if rs_rating > 80: inst_score += 10
+                elif rs_rating > 90: inst_score += 15
+                
+                # 2. VCP Pattern (Minervini)
+                if inst_data.get("vcp_detected", False):
+                    inst_score += 15
+                    print(f"💎 VCP PATTERN DETECTED: {sym}")
+                    
+                # 3. Sponsorship
+                spon_action = inst_data.get("institutional_action", "Neutral")
+                if "Accumulation" in spon_action: inst_score += 10
+                elif "Distribution" in spon_action: inst_score -= 10
 
-            final_score = (fund_score * weights["fundamental"]) + \
-                          (trend_score * weights["trend"]) + \
-                          (mom_score * weights["momentum"]) + \
-                          (vol_score * weights["volume"]) + \
-                          (risk_stability_score * weights["risk"]) + \
-                          sector_adjustment + \
-                          macro_adjustment + \
-                          inst_score
+                final_score = (fund_score * weights.get("fundamental", 0.40)) + \
+                              (trend_score * weights.get("trend", 0.25)) + \
+                              (mom_score * weights.get("momentum", 0.15)) + \
+                              (vol_score * weights.get("volume", 0.10)) + \
+                              (risk_stability_score * weights.get("risk", 0.10)) + \
+                              sector_adjustment + \
+                              macro_adjustment + \
+                              inst_score
+            except Exception as e:
+                print(f"⚠️ Scoring Logic Error for {sym}: {e}")
+                # Fallback to a neutral/safe score
+                final_score = 50 
+                fund_score = 50
+                trend_score = 50
+                mom_score = 50
+                vol_score = 50
+                risk_stability_score = 50
+                sector_adjustment = 0
+                inst_score = 0
+                inst_data = {}
             
             # --- BREAKOUT BOOST (Phase 62: Momentum Prioritization) ---
             # If stock is near 52-Week High AND has Volume Support -> Massive Boost
@@ -414,6 +465,17 @@ class ScannerEngine:
             # Phase 33: Moat & Recovery Context in Verdict
             moat_score = fund_res.get("moat_score", 0)
             recovery = ta_res.get("recovery", {}).get("label", "Moderate")
+            
+            # --- PROFESSIONAL TAGS ---
+            stage2_tag = ""
+            trend_template = ta_res.get("trend_template", {})
+            if trend_template.get("passed"): stage2_tag = " [🚀 STAGE 2 UPTREND]"
+            
+            # Re-calculate volume behavior for specific tagging
+            vol_behavior = ta_longterm.analyze_volume_behavior(df)
+            dryup_tag = ""
+            if vol_behavior.get("dry_up"): dryup_tag = " [💧 VOL DRY-UP]"
+            
             if moat_score > 7:
                 verdict += f" High pricing power (Stable Margins) suggests a strong competitive moat."
             if recovery == "Fast":
@@ -421,15 +483,18 @@ class ScannerEngine:
 
             if not verdict:
                 if final_score >= 75:
-                    verdict = f"Exceptional {signal} conviction. {pro_context.capitalize()}."
+                    verdict = f"Exceptional {signal} conviction{stage2_tag}{dryup_tag}. {pro_context.capitalize()}."
                 elif signal == "NEUTRAL":
-                    verdict = f"Consolidation likely. {top_pros[0] if top_pros else 'Stable metrics'} countered by {risk_warn}. Wait and watch."
+                    verdict = f"Consolidation likely{dryup_tag}. {top_pros[0] if top_pros else 'Stable metrics'} countered by {risk_warn}. Wait and watch."
                 elif fund_score > 70:
                     verdict = f"Strong fundamentals ({', '.join(top_pros) if top_pros else 'Value/Quality'}) provide a safety margin despite technical weakness."
                 elif trend_score > 70:
-                    verdict = f"Technical momentum ({', '.join(top_pros) if top_pros else 'Trend Strength'}) is overriding short-term fundamental concerns."
+                    verdict = f"Technical momentum{stage2_tag} ({', '.join(top_pros) if top_pros else 'Trend Strength'}) is overriding short-term fundamental concerns."
                 else:
                     verdict = f"Balanced {signal} signal. {top_pros[0] if top_pros else 'Diversified metrics'} countered by {risk_warn}."
+            else:
+                # Append tags to existing verdict if it was generated by EMA logic
+                verdict += f"{stage2_tag}{dryup_tag}"
             
             # --- FINAL REASON PRIORITIZATION (Phase 36) ---
             # 1. EMA Priority (Phase 26) - Ensure EMA logic is first in the pool if advice exists
@@ -473,14 +538,18 @@ class ScannerEngine:
             cap_cat = metadata.get("market_cap_category", "Small")
             market_cap = metadata.get("market_cap_value", 0)
             
-            # Key Levels & Reason
-            target_val = ta_res.get("resistance", real_price * 1.05)
-            stop_loss_val = ta_res.get("support", real_price * 0.95)
+            # Key Levels & Reason (Swap for SELLs so Risk/Reward is correct)
+            if signal == "SELL":
+                target_val = ta_res.get("support", real_price * 0.95)
+                stop_loss_val = ta_res.get("resistance", real_price * 1.05)
+            else:
+                target_val = ta_res.get("resistance", real_price * 1.05)
+                stop_loss_val = ta_res.get("support", real_price * 0.95)
+                
             target_reason = ta_res.get("target_reason", "Standard 5% Target")
 
-            # --- INVESTMENT ADVISOR ENGINE (Phase 40) ---
-            self.sector_counts[sector_name] = self.sector_counts.get(sector_name, 0) + 1
-            portfolio_ctx = {"sector_distribution": self.sector_counts}
+            sector_counts[sector_name] = sector_counts.get(sector_name, 0) + 1
+            portfolio_ctx = {"sector_distribution": sector_counts}
 
             advisory = advisor_engine.generate_advice(
                 sym, real_price, fund_res, ta_res, risk_res, sector_res, portfolio_ctx, mode="longterm"
@@ -492,6 +561,20 @@ class ScannerEngine:
             if advisory:
                 holding = advisory.get("holding_period", {})
                 targets = advisory.get("targets", {})
+                
+                # Override Levels with Advisory if available - Safety First
+                try:
+                    if "3_year_target" in targets: 
+                        t = targets["3_year_target"]
+                        target_val = float(t) if t is not None else target_val
+                    
+                    sl_obj = advisory.get("stop_loss", {})
+                    if "stop_price" in sl_obj: 
+                        s = sl_obj["stop_price"]
+                        stop_loss_val = float(s) if s is not None else stop_loss_val
+                except (ValueError, TypeError):
+                    pass # Keep original values if conversion fails
+
                 play = holding.get("play_type", "Standard")
                 period = holding.get('period_display', '3-5 Years')
                 
@@ -506,6 +589,11 @@ class ScannerEngine:
                 if entry_analysis:
                     verdict += f" [💡 ENTRY] {entry_analysis.get('rationale')}"
 
+            # --- RISK MANAGEMENT CALCULATION ---
+            trade_params = risk_engine.calculate_trade_params(real_price, stop_loss_val, target_val)
+            if trade_params.get("is_good_rr"):
+                verdict += f" [⚖️ R:R {trade_params['rr_ratio']}]"
+
             return {
                 "symbol": sym,
                 "score": final_score,
@@ -516,8 +604,8 @@ class ScannerEngine:
                 "market_cap_category": cap_cat, 
                 "market_cap_value": market_cap,
                 "sector": sector_name, 
-                "target": targets.get("3_year_target", target_val) if advisory else target_val,
-                "stop_loss": advisory.get("stop_loss", {}).get("stop_price", stop_loss_val) if advisory else stop_loss_val,
+                "target": target_val,
+                "stop_loss": stop_loss_val,
                 "target_reason": targets.get("blend_logic", target_reason) if advisory else target_reason,
                 "levels": ta_res.get("levels", {}),
                 "strategic_summary": verdict,
@@ -527,6 +615,7 @@ class ScannerEngine:
                 "valuation_gap": fund_res.get("valuation_gap", 0),
                 "squeeze": ta_res.get("squeeze", {}),
                 "investment_advisory": advisory,
+                "risk_management": trade_params,
                 "weights": {
                     "Fundamental": int(weights["fundamental"] * 100),
                     "Technical (Trend)": int(weights["trend"] * 100),
@@ -597,14 +686,23 @@ class ScannerEngine:
                 state = self.job_states.get(job_id)
                 if not state: break
                 
+                # Use memory flags for instant status update
+                status_suffix = ""
+                if state.get("pause_requested"):
+                    status_suffix = " [PAUSED]"
+
                 async with AsyncSessionLocal() as session:
                     stmt = select(Job).where(Job.id == job_id)
                     res = await session.execute(stmt)
                     job_obj = res.scalars().first()
                     if job_obj:
-                        # Normalize active_symbols for display (ensure string join)
+                        # Double check for stop logic
+                        if state.get("stop_requested"):
+                             job_obj.status = "stopped"
+                        elif state.get("pause_requested"):
+                             job_obj.status = "paused"
+
                         display_symbols = [s["symbol"] if isinstance(s, dict) else s for s in state["active"]]
-                        
                         active_str = ", ".join(display_symbols[:3])
                         if len(display_symbols) > 3:
                             active_str += f" and {len(display_symbols)-3} others"
@@ -615,19 +713,19 @@ class ScannerEngine:
                         current_result["progress"] = state["progress"]
                         current_result["total_steps"] = total
                         current_result["active_symbols"] = display_symbols
+                        current_result["status_msg"] = f"Analyzing: {active_str}{status_suffix}"
                         
-                        # INCREMENTAL PERSISTENCE (Save data every pulse)
-                        current_result["data"] = list(state["results"])
-                        
-                        # Status message based on job state
-                        if job_obj.status == "paused":
-                            current_result["status_msg"] = f"PAUSED: {active_str}"
-                        elif job_obj.status == "stopped":
-                            current_result["status_msg"] = "STOPPED (Partial results saved)"
-                            state["is_running"] = False # Kill loop
-                        else:
-                            current_result["status_msg"] = f"Analyzing: {active_str}"
-                        
+                        # Partial Data Sync: Sync results every 5 stocks to keep UI updated
+                        current_count = len(state.get("results", []))
+                        last_sync = state.get("last_data_sync", 0)
+                        if current_count - last_sync >= 5 or current_count == total:
+                            current_result["data"] = list(state["results"])
+                            current_result["failed_symbols"] = list(state.get("failed_symbols", []))
+                            # Pre-calculate sectors for O(1) API fetches (Fast Toggles)
+                            current_result["sectors"] = self._group_by_sector(current_result["data"])
+                            state["last_data_sync"] = current_count
+                            # print(f"📊 [SYNC] Partial Data Sync for {job_id}: {current_count} results")
+
                         job_obj.result = self.sanitize(current_result)
                         flag_modified(job_obj, "result")
                         job_obj.updated_at = datetime.utcnow()
@@ -635,7 +733,6 @@ class ScannerEngine:
             except Exception as e:
                 print(f"Progress Sync Warning for {job_id}: {e}")
             
-            # Update every 2 seconds
             await asyncio.sleep(2.0)
         
         # Final update to 100% or whatever state we reached
@@ -719,6 +816,31 @@ class ScannerEngine:
         except:
             return {"label": "Macro Normal (Fallback)", "crude": 75, "currency": 83}
 
+    async def stop_job(self, job_id: str):
+        """Instant Stop Signal."""
+        if job_id in self.job_states:
+            print(f"🛑 STOPPING Job {job_id}...")
+            self.job_states[job_id]["stop_requested"] = True
+            self.job_states[job_id]["is_running"] = False
+            
+            # Cancel the Main Task if stored
+            main_task = self.job_states[job_id].get("main_task")
+            if main_task:
+                print(f"🛑 Cancelling Main Task for Job {job_id}")
+                main_task.cancel()
+
+    async def pause_job(self, job_id: str):
+        """Pause Signal."""
+        if job_id in self.job_states:
+            print(f"⏸️ PAUSING Job {job_id}...")
+            self.job_states[job_id]["pause_requested"] = True
+
+    async def resume_job(self, job_id: str):
+        """Resume Signal."""
+        if job_id in self.job_states:
+            print(f"▶️ RESUMING Job {job_id}...")
+            self.job_states[job_id]["pause_requested"] = False
+
     def _calculate_macro_adjustment(self, sector: str, macro: dict) -> float:
         """
         Applies sector-specific adjustments based on macro regime.
@@ -733,7 +855,7 @@ class ScannerEngine:
             if sector in ["FMCG", "Auto", "Pharma"]: adj -= 2.0 # Raw material costs
         elif crude < 65: # Low Crude
             if sector in ["FMCG", "Auto"]: adj += 2.0
-            
+
         # 2. Currency Impact
         if currency > 83.5: # Weak INR
             if sector in ["IT", "Pharma"]: adj += 3.0 # Export revenue increase
@@ -741,4 +863,5 @@ class ScannerEngine:
             
         return adj
 
-scanner_engine = ScannerEngine()
+# Export as longterm_scanner_engine to avoid confusion
+longterm_scanner_engine = LongTermScannerEngine()

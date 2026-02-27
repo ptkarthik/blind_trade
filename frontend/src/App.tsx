@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { marketApi, signalApi, jobsApi } from './services/api';
 import { AnalysisModal } from './components/AnalysisModal';
 
@@ -8,6 +8,8 @@ import { PieChart, List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader
 import { SearchBox } from './components/SearchBox';
 import { StockCardLongTerm } from './components/StockCardLongTerm';
 import { StockCardIntraday } from './components/StockCardIntraday';
+import { StockCardSwing } from './components/StockCardSwing';
+import { FailedSymbolsModal } from './components/FailedSymbolsModal';
 import type { Signal } from './components/DealCard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -15,15 +17,24 @@ function App() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [marketStatus, setMarketStatus] = useState<any>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'intraday' | 'longterm'>('longterm');
+  const [mode, setMode] = useState<'intraday' | 'longterm' | 'swing'>('longterm');
   const [loading, setLoading] = useState(false);
 
-  // Progress State
-  const [scanJob, setScanJob] = useState<any>(null);
+  // Progress State - Global Tracking
+  const [jobStates, setJobStates] = useState<Record<string, any>>({});
+  const scanJob = jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan']; // Derived state for UI compatibility
+
+  // Refs for Worker Context
+  const isInitialMount = useRef(true);
+  const modeRef = useRef<'intraday' | 'longterm' | 'swing'>(mode);
+
 
   // Modal State
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const [isFailedModalOpen, setIsFailedModalOpen] = useState(false);
+  const [failedSymbolsList, setFailedSymbolsList] = useState<{ symbol: string, reason: string }[]>([]);
 
   // Search State
   const [searchResult, setSearchResult] = useState<Signal | null>(null);
@@ -45,11 +56,18 @@ function App() {
     setIsModalOpen(true);
   };
 
-  const fetchSignals = async (silent = false) => {
+  const fetchSignals = async (silent = false, jobId?: string) => {
     if (!silent && !signals.length) setLoading(true);
     try {
-      const signalsRes = await signalApi.getTodaySignals(mode);
-      const resData = signalsRes.data;
+      let resData;
+      if (jobId) {
+        const res = await jobsApi.getResults(jobId);
+        resData = res.data;
+      } else {
+        const signalsRes = await signalApi.getTodaySignals(mode);
+        resData = signalsRes.data;
+      }
+
       let newData: Signal[] = [];
 
       if (resData && typeof resData === 'object' && !Array.isArray(resData)) {
@@ -99,71 +117,130 @@ function App() {
     };
     fetchData();
 
-    // 2. Poll Job Status (2s)
-    const pollJobStatus = async () => {
-      try {
-        const jobType = mode === 'intraday' ? 'intraday' : 'full_scan';
-        const res = await jobsApi.getStatus(jobType);
-        setScanJob(res.data);
-      } catch (e: any) {
-        if (!e.response || e.response.status !== 404) {
-          // console.error("Job status poll error:", e);
-        } else {
-          setScanJob(null); // Clear if no job of this type found
+    // Mark that initial load is done after slight delay
+    setTimeout(() => { isInitialMount.current = false; }, 1000);
+
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+
+  // 2. Poll Job Status (2s) - Using Web Worker for background reliability
+  // We use a REF to track mode inside the closure without restarting the worker
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    const worker = new Worker(new URL('./services/pollingWorker.ts', import.meta.url), { type: 'module' });
+
+    // Worker Handler
+    worker.onmessage = async (e) => {
+      if (e.data === 'TICK') {
+        try {
+          // Poll ALL THREE job types in parallel
+          const [intraRes, fullRes, swingRes] = await Promise.allSettled([
+            jobsApi.getStatus('intraday'),
+            jobsApi.getStatus('full_scan'),
+            jobsApi.getStatus('swing_scan')
+          ]);
+
+          const newStates: Record<string, any> = {};
+
+          if (intraRes.status === 'fulfilled') newStates['intraday'] = intraRes.value.data;
+          else newStates['intraday'] = null;
+
+          if (fullRes.status === 'fulfilled') newStates['full_scan'] = fullRes.value.data;
+          else newStates['full_scan'] = null;
+
+          if (swingRes.status === 'fulfilled') newStates['swing_scan'] = swingRes.value.data;
+          else newStates['swing_scan'] = null;
+
+          setJobStates(prev => {
+            // Preserve "stopping" state if backend hasn't caught up yet to avoid UI flicker
+            const merged = { ...newStates };
+            if (prev['intraday']?.status === 'stopping' && newStates['intraday']?.status !== 'stopped') {
+              merged['intraday'] = prev['intraday'];
+            }
+            if (prev['full_scan']?.status === 'stopping' && newStates['full_scan']?.status !== 'stopped') {
+              merged['full_scan'] = prev['full_scan'];
+            }
+            if (prev['swing_scan']?.status === 'stopping' && newStates['swing_scan']?.status !== 'stopped') {
+              merged['swing_scan'] = prev['swing_scan'];
+            }
+            return merged;
+          });
+
+          // Trigger Signal Fetch if the ACTIVE mode's job is processing
+          // We use the Ref to know the current active view
+          const currentMode = modeRef.current;
+          const currentJobType = currentMode === 'intraday' ? 'intraday' : currentMode === 'swing' ? 'swing_scan' : 'full_scan';
+          const activeJob = newStates[currentJobType];
+
+          if (activeJob?.status === 'processing') {
+            // Refresh signals silently
+          }
+        } catch (err) {
+          // Silent fail
         }
       }
     };
-    pollJobStatus();
-    const jobInterval = setInterval(pollJobStatus, 2000);
+
+    worker.postMessage({ action: 'START', interval: 2000 });
+
     return () => {
-      clearInterval(jobInterval);
-      window.removeEventListener('error', handleError);
+      worker.postMessage({ action: 'STOP' });
+      worker.terminate();
     };
-  }, [mode]);
+  }, []); // Run ONCE. Worker persists across mode switches.
+
+  // 3. Auto-Fetch Signals on Pulse (Replaces the Interval)
+  useEffect(() => {
+    if (scanJob?.status === 'processing') {
+      // fetchSignals(true); // DISABLED: Don't poll full results every 2s, only progress
+      fetchSectorSignals(true);
+    }
+  }, [scanJob?.progress, scanJob?.updated_at]); // Trigger on job updates
+
 
   // 3. Logic: Mode Switch & Dashboard Sync
   useEffect(() => {
-    const cachedSignals = localStorage.getItem(`signals_v2_${mode}`);
-    const cachedSectors = localStorage.getItem(`sector_v2_${mode}`);
-
-    // 1. CLEAR STALE STATE IMMEDIATELY to prevent "ghost" data collision
+    // 1. OPTIMISTIC TRANSITION: Remove cache as requested by user
     setSignals([]);
     setSectorSignals({});
-    // setScanJob(null); // Shield Wall: OFF - Persist job state across tabs
+
+    // Clear the active rendering list locally so it doesn't try to auto-hydrate from old storage
+    // if the fetch is slow or fails
+    localStorage.removeItem(`signals_v2_${mode}`);
+    localStorage.removeItem(`sector_v2_${mode}`);
+
+    // 2. We only set high-level loading flags
     setLoading(true);
     setLoadingSector(true);
-
-    // 2. Load mode-specific cache if it exists (allows partial data while fetching)
-    if (cachedSignals) setSignals(JSON.parse(cachedSignals));
-    if (cachedSectors) setSectorSignals(JSON.parse(cachedSectors));
 
     // Clear modals & reset state appropriately on mode switch
     setIsModalOpen(false);
     setSelectedSignal(null);
+    setSearchError('');
+    setSearchResult(null);
+    setSearching(false);
 
-    // 3. Refresh for the new mode anyway
+    // 3. Refresh for the new mode
     fetchSignals();
     fetchSectorSignals();
 
     return () => { };
   }, [mode]);
 
-  // 4. Logic: Incremental/Completion Refresh during Jobs
+  // 4. Logic: Completion Refresh
   useEffect(() => {
-    let interval: any;
-
-    if (scanJob?.status === 'completed') {
-      fetchSignals(true);
-      fetchSectorSignals(true);
-    } else if (scanJob?.status === 'processing') {
-      interval = setInterval(() => {
+    if (scanJob?.status === 'completed' || scanJob?.status === 'stopped') {
+      if (scanJob?.id) {
+        fetchSignals(true, scanJob.id);
+      } else {
         fetchSignals(true);
-        fetchSectorSignals(true);
-      }, 10000);
+      }
+      fetchSectorSignals(true);
     }
-
-    return () => clearInterval(interval);
-  }, [scanJob?.status, scanJob?.id, mode]);
+  }, [scanJob?.status]);
 
   const analyzeSymbol = async (symbol: string) => {
     setSearching(true);
@@ -175,8 +252,9 @@ function App() {
       if (res.data.error) {
         setSearchError(res.data.error);
       } else {
-        // Ensure analysis_mode is tagged for unique UI attributes
-        setSearchResult({ ...res.data, analysis_mode: 'on-demand' });
+        // Ensure we preserve the original analysis_mode for UI layout logic
+        // but mark it as an on-demand result for the header
+        setSearchResult({ ...res.data, is_ondemand: true });
       }
     } catch (err) {
       setSearchError('Failed to analyze symbol. Check validity.');
@@ -188,18 +266,25 @@ function App() {
   const clearSearch = () => {
     setSearchResult(null);
     setSearchError('');
+    setSearching(false);
   };
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans">
       {/* Analysis Modal */}
-      <ErrorBoundary>
+      <ErrorBoundary key={selectedSignal ? selectedSignal.symbol : 'modal-boundary'}>
         <AnalysisModal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           data={selectedSignal}
         />
       </ErrorBoundary>
+
+      <FailedSymbolsModal
+        isOpen={isFailedModalOpen}
+        onClose={() => setIsFailedModalOpen(false)}
+        symbols={failedSymbolsList}
+      />
 
       {/* Header */}
       <header className="border-b border-border bg-card p-4 sticky top-0 z-10 shadow-sm">
@@ -209,61 +294,34 @@ function App() {
             <h1 className="text-xl font-bold tracking-tight">Blind Trade Engine</h1>
           </div>
 
-          {/* Search Bar with Suggestions */}
-          <SearchBox onSelect={analyzeSymbol} />
+          {/* Search Bar with Suggestions - Keyed by mode for state isolation */}
+          <SearchBox key={mode} onSelect={analyzeSymbol} />
 
           <div className="flex gap-4 text-sm hidden md:flex items-center">
-            {/* Scan Control Functions */}
-            {scanJob?.status === 'processing' || scanJob?.status === 'paused' ? (
-              <div className="flex gap-2">
+            {/* Context-aware Start Button */}
+            {(!jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan'] ||
+              !['pending', 'processing', 'paused'].includes(jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan']?.status)) && (
                 <button
                   onClick={async () => {
-                    const jobType = mode === 'intraday' ? 'intraday' : 'full_scan';
-                    if (scanJob.status === 'paused') {
-                      await jobsApi.resume(jobType);
-                    } else {
-                      await jobsApi.pause(jobType);
-                    }
-                  }}
-                  className="bg-amber-500 text-white px-3 py-1.5 rounded-md font-bold hover:bg-amber-600 transition-colors flex items-center gap-1.5"
-                >
-                  {scanJob.status === 'paused' ? (
-                    <><Activity className="w-4 h-4" /> RESUME</>
-                  ) : (
-                    <><X className="w-4 h-4" /> PAUSE</>
-                  )}
-                </button>
-                <button
-                  onClick={async () => {
-                    const jobType = mode === 'intraday' ? 'intraday' : 'full_scan';
-                    if (confirm(`Stop ${mode.toUpperCase()} scan and save partial results?`)) {
-                      await jobsApi.stop(jobType);
-                      setScanJob(null); // Immediate UI clear
-                    }
-                  }}
-                  className="bg-destructive text-white px-3 py-1.5 rounded-md font-bold hover:bg-destructive/90 transition-colors flex items-center gap-1.5"
-                >
-                  <X className="w-4 h-4" /> STOP
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={async () => {
-                  const scanLabel = mode === 'intraday' ? "Intraday Analysis" : "Full Market Scan";
-                  const scanType = mode === 'intraday' ? "intraday" : "full_scan";
+                    const scanLabel = mode === 'intraday' ? "Intraday Analysis" : mode === 'swing' ? "Swing Scan" : "Full Market Scan";
+                    const scanType = mode === 'intraday' ? "intraday" : mode === 'swing' ? "swing_scan" : "full_scan";
 
-                  if (confirm(`Start ${scanLabel}? This runs in background.`)) {
-                    try {
-                      await jobsApi.triggerScan(scanType);
-                    } catch (e) { alert("Failed to start scan"); }
-                  }
-                }}
-                className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
-              >
-                <Search className="w-4 h-4" />
-                {mode === 'intraday' ? 'RUN INTRA SCAN' : 'RUN FULL SCAN'}
-              </button>
-            )}
+                    if (confirm(`Start ${scanLabel}? This runs in background.`)) {
+                      try {
+                        setSignals([]);
+                        setSectorSignals({});
+                        localStorage.removeItem(`signals_v2_${mode}`);
+                        localStorage.removeItem(`sector_v2_${mode}`);
+                        await jobsApi.triggerScan(scanType);
+                      } catch (e) { alert("Failed to start scan"); }
+                    }
+                  }}
+                  className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
+                >
+                  <Search className="w-4 h-4" />
+                  {mode === 'intraday' ? 'RUN INTRA SCAN' : mode === 'swing' ? 'RUN SWING SCAN' : 'RUN FULL SCAN'}
+                </button>
+              )}
 
             <div className="flex flex-col items-end">
               <span className="text-muted-foreground">NIFTY 50</span>
@@ -277,51 +335,107 @@ function App() {
         </div>
       </header>
 
-      {/* Progress Bar */}
-      {(scanJob?.status === 'pending' || scanJob?.status === 'processing' || scanJob?.status === 'paused' || scanJob?.status === 'stopped') && (
-        <div className={`bg-primary/10 border-b border-primary/20 px-4 py-3 animate-in fade-in slide-in-from-top-1 ${scanJob.status === 'paused' ? 'bg-amber-500/10 border-amber-500/20' : scanJob.status === 'stopped' ? 'bg-destructive/10 border-destructive/20' : ''}`}>
-          <div className="container mx-auto">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 text-xs font-bold text-primary mb-3">
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  {scanJob.status === 'processing' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : scanJob.status === 'paused' ? (
-                    <Activity className="w-4 h-4 text-amber-600" />
-                  ) : (
-                    <X className="w-4 h-4 text-destructive" />
-                  )}
-                  <span className={`uppercase tracking-wider ${scanJob.status === 'paused' ? 'text-amber-700' : scanJob.status === 'stopped' ? 'text-destructive' : ''}`}>
-                    [{mode === 'intraday' ? 'INTRA' : 'LONG-TERM'}] {scanJob.result?.status_msg || 'INITIALIZING SCAN...'}
-                  </span>
-                </div>
-                {scanJob.result?.active_symbols && scanJob.result.active_symbols.length > 0 && (
-                  <div className="flex items-center gap-2 text-[10px] text-primary/60 font-medium">
-                    <span className="bg-primary/20 px-1.5 py-0.5 rounded">CONCURRENT BATCH:</span>
-                    <span>{Array.isArray(scanJob.result.active_symbols) ? scanJob.result.active_symbols.join(", ") : 'Scanning...'}</span>
+      {/* Progress Bars - Mode Specific Tracking */}
+      <div className="sticky top-[73px] z-[9] flex flex-col">
+        {[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan'].map(type => {
+          const job = jobStates[type];
+          if (!job || !['pending', 'processing', 'paused', 'stopping'].includes(job.status)) return null;
+
+          const label = type === 'intraday' ? 'INTRADAY' : type === 'swing_scan' ? 'SWING' : 'LONG-TERM';
+          const progress = job.result?.progress || 0;
+          const total = job.result?.total_steps || 0;
+          const percent = total ? Math.round((progress / total) * 100) : 0;
+
+          return (
+            <div key={type} className={`bg-card border-b border-border px-4 py-2 animate-in fade-in slide-in-from-top-1 ${job.status === 'paused' ? 'bg-amber-500/5' : 'bg-primary/5'}`}>
+              <div className="container mx-auto">
+                <div className="flex justify-between items-center gap-4 text-[10px] font-bold">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {job.status === 'processing' ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                      ) : job.status === 'paused' ? (
+                        <Activity className="w-3 h-3 text-amber-500" />
+                      ) : (
+                        <Loader2 className="w-3 h-3 text-muted-foreground" />
+                      )}
+                      <span className={`tracking-widest ${job.status === 'paused' ? 'text-amber-600' : 'text-primary'}`}>
+                        {label}: {job.result?.status_msg || 'INITIALIZING...'}
+                      </span>
+                    </div>
+                    {job.result?.active_symbols && job.result.active_symbols.length > 0 && (
+                      <span className="truncate text-muted-foreground/60 hidden sm:inline">
+                        Scanning: {Array.isArray(job.result.active_symbols) ? job.result.active_symbols.slice(0, 3).join(", ") : '...'}
+                      </span>
+                    )}
                   </div>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-sm">
-                  {scanJob.result?.progress || 0} / {scanJob.result?.total_steps || '...'} STOCKS
-                </span>
-                <span className="bg-primary text-primary-foreground px-2 py-1 rounded text-lg">
-                  {scanJob.result?.total_steps ? Math.round(((scanJob.result?.progress || 0) / scanJob.result.total_steps) * 100) : 0}%
-                </span>
+
+                  <div className="flex items-center gap-4 shrink-0">
+                    {/* Inline Controls for each Bar */}
+                    <div className="flex gap-1 mr-2 border-r border-border pr-3">
+                      <button
+                        disabled={job.status === 'stopping'}
+                        onClick={async () => {
+                          if (job.status === 'paused') await jobsApi.resume(type);
+                          else await jobsApi.pause(type);
+                        }}
+                        className={`p-1 rounded hover:bg-muted transition-colors ${job.status === 'paused' ? 'text-amber-600' : 'text-primary'}`}
+                        title={job.status === 'paused' ? 'Resume' : 'Pause'}
+                      >
+                        {job.status === 'paused' ? <Activity size={14} /> : <X size={14} className="rotate-45" />}
+                      </button>
+                      <button
+                        disabled={job.status === 'stopping'}
+                        onClick={async () => {
+                          if (confirm(`Stop ${label} scan?`)) {
+                            setJobStates(prev => ({
+                              ...prev,
+                              [type]: { ...prev[type], status: 'stopping' }
+                            }));
+                            await jobsApi.stop(type);
+                          }
+                        }}
+                        className="p-1 rounded hover:bg-destructive/10 text-destructive transition-colors"
+                        title="Stop"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {job.result?.failed_symbols && job.result.failed_symbols.length > 0 && (
+                        <button
+                          onClick={() => {
+                            setFailedSymbolsList(job.result.failed_symbols);
+                            setIsFailedModalOpen(true);
+                          }}
+                          className="text-[10px] bg-destructive/10 text-destructive px-2 py-0.5 rounded hover:bg-destructive/20 font-bold tracking-widest transition-colors flex items-center gap-1"
+                          title="View Failed Validations"
+                        >
+                          <AlertTriangle className="w-3 h-3" />
+                          {job.result.failed_symbols.length} FAILED
+                        </button>
+                      )}
+                      <span className="text-muted-foreground">{progress} / {total || '...'}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[11px] ${job.status === 'paused' ? 'bg-amber-100 text-amber-700' : 'bg-primary/20 text-primary'}`}>
+                        {percent}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-1.5 h-1 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-700 ease-in-out relative ${job.status === 'paused' ? 'bg-amber-500' : 'bg-primary'}`}
+                    style={{ width: `${percent}%` }}
+                  >
+                    <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="h-2 bg-primary/20 rounded-full overflow-hidden shadow-inner">
-              <div
-                className="h-full bg-primary transition-all duration-700 ease-in-out relative"
-                style={{ width: `${scanJob.result?.total_steps ? ((scanJob.result?.progress || 0) / scanJob.result.total_steps) * 100 : 0}%` }}
-              >
-                <div className="absolute inset-0 bg-white/20 animate-pulse" />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+          );
+        })}
+      </div>
 
       <main className="container mx-auto p-6">
         {runtimeError && (
@@ -371,6 +485,11 @@ function App() {
                   signal={searchResult}
                   onClick={() => openAnalysis(searchResult)}
                 />
+              ) : mode === 'swing' ? (
+                <StockCardSwing
+                  signal={searchResult}
+                  onClick={() => openAnalysis(searchResult)}
+                />
               ) : (
                 <StockCardLongTerm
                   signal={searchResult}
@@ -385,10 +504,12 @@ function App() {
           <div className="flex flex-col gap-1">
             <h2 className="text-2xl font-black flex items-center gap-2 tracking-tight">
               <ShieldCheck className="h-6 w-6 text-emerald-500" />
-              MARKET HUB <span className="text-muted-foreground font-light text-lg">/ {mode === 'intraday' ? 'Intraday Advice' : 'Long-Term Scans'}</span>
+              MARKET HUB <span className="text-muted-foreground font-light text-lg">/ {mode === 'intraday' ? 'Intraday Advice' : mode === 'swing' ? 'Swing Breakouts' : 'Long-Term Scans'}</span>
             </h2>
             <div className="flex gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
               <span className={mode === 'intraday' ? 'text-primary' : ''}>Intraday</span>
+              <span>•</span>
+              <span className={mode === 'swing' ? 'text-primary' : ''}>Swing</span>
               <span>•</span>
               <span className={mode === 'longterm' ? 'text-primary' : ''}>Long-Term</span>
             </div>
@@ -401,6 +522,12 @@ function App() {
                 className={`px-4 py-1.5 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${mode === 'intraday' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 INTRA
+              </button>
+              <button
+                onClick={() => setMode('swing')}
+                className={`px-4 py-1.5 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${mode === 'swing' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                SWING
               </button>
               <button
                 onClick={() => setMode('longterm')}

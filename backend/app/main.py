@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from app.core.config import settings
 from app.api.api_v1.api import api_router
 from app.services.market_data import market_service
@@ -23,6 +24,28 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     await market_service.initialize()
+    
+    # Reset any stuck jobs from previous runs
+    from app.db.session import AsyncSessionLocal
+    from app.models.job import Job
+    from sqlalchemy import select
+    
+    async with AsyncSessionLocal() as session:
+        # Reset any stuck jobs (Processing, Paused, or old Pending)
+        result = await session.execute(
+            select(Job).where(Job.status.in_(["processing", "paused", "pending"]))
+        )
+        stuck_jobs = result.scalars().all()
+        for job in stuck_jobs:
+            print(f"⚠️ Clearing stale job {job.id} ({job.status})")
+            job.status = "failed"
+            job.error_details = "System restarted while job was active."
+            if not job.result: job.result = {}
+            job.result["status_msg"] = "Cleaned up on Restart"
+            session.add(job)
+        if stuck_jobs:
+            await session.commit()
+            
     # Background Runner is now handled by external Worker process (app.worker.worker_main)
     print("API Startup Complete. Background Jobs System Ready.")
 
@@ -37,6 +60,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip Compression for large JSON payloads (Fast Toggles)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Mount Reports for Visualization
 if not os.path.exists("app/reports"):

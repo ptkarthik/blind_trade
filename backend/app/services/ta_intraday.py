@@ -7,174 +7,295 @@ from ta.momentum import RSIIndicator
 class IntradayTechnicalAnalysis:
     
     @staticmethod
-    def calculate_pivots(df: pd.DataFrame) -> dict:
-        """Standard Daily/Weekly Pivot Points."""
-        if len(df) < 2: return {}
-        prev = df.iloc[-2]
-        p = (prev['high'] + prev['low'] + prev['close']) / 3
-        return {
-            "P": p,
-            "R1": (2 * p) - prev['low'],
-            "S1": (2 * p) - prev['high'],
-            "R2": p + (prev['high'] - prev['low']),
-            "S2": p - (prev['high'] - prev['low'])
-        }
-
-    @staticmethod
-    def calculate_ladder(df: pd.DataFrame, current_price: float) -> dict:
-        """Calculates a 'Technical Ladder' of support and resistance levels for intraday."""
-        pivots = IntradayTechnicalAnalysis.calculate_pivots(df)
-        
-        potential_resistance = []
-        potential_support = []
-        
-        for k, v in pivots.items():
-            if v > current_price: potential_resistance.append({"price": v, "label": k, "type": "Pivot"})
-            elif v < current_price: potential_support.append({"price": v, "label": k, "type": "Pivot"})
-            
-        def get_hits(price_level):
-            lookback_df = df.tail(50)
-            within_range = ((lookback_df['low'] <= price_level * 1.002) & (lookback_df['high'] >= price_level * 0.998))
-            return int(within_range.sum())
-
-        for level in potential_resistance + potential_support:
-            level["hits"] = get_hits(level["price"])
-            level["strength"] = "Normal" if level["hits"] < 2 else "Solid" if level["hits"] < 5 else "Ironclad"
-
-        potential_resistance.sort(key=lambda x: x["price"])
-        potential_support.sort(key=lambda x: x["price"], reverse=True)
-        
-        return {
-            "resistance": potential_resistance[:3],
-            "support": potential_support[:3]
-        }
-
-    @staticmethod
-    def analyze_stock(df: pd.DataFrame) -> dict:
-        """Institutional-grade Intraday Analysis (15m/5m context)."""
-        if df.empty or len(df) < 50: return {}
-        
-        latest = df.iloc[-1]
-        close = latest['close']
-        
-        trend_score = 0
-        mom_score = 0
-        vol_score = 0
-        safety_score = 0
-        
-        groups = {
-            "Trend": {"score": 0, "details": [], "status": "NEUTRAL"},
-            "Momentum": {"score": 0, "details": [], "status": "NEUTRAL"},
-            "Volume": {"score": 0, "details": [], "status": "NEUTRAL"},
-            "Risk & Levels": {"score": 0, "details": [], "status": "NEUTRAL"}
-        }
-
-        # 1. Trend Direction
+    def calculate_vwap(df: pd.DataFrame) -> float:
+        """Calculates Volume Weighted Average Price (VWAP)."""
         try:
             if isinstance(df.index, pd.DatetimeIndex):
                 current_date = df.index[-1].date()
                 today_df = df[df.index.date == current_date].copy()
             else:
-                today_df = df.tail(25).copy()
+                today_df = df.tail(75).copy() # Fallback to approx 1 day of 5m candles
+            
+            if today_df.empty: return df['close'].iloc[-1]
+            
+            check = (today_df['high'] + today_df['low'] + today_df['close']) / 3
+            vwap = (check * today_df['volume']).cumsum() / today_df['volume'].cumsum()
+            return vwap.iloc[-1]
+        except:
+            return df['close'].iloc[-1]
+
+    @staticmethod
+    def detect_orb(df: pd.DataFrame) -> dict:
+        """
+        Opening Range Breakout (ORB) Detection.
+        Checks if price has broken the High/Low of the first 30 minutes.
+        """
+        try:
+            if not isinstance(df.index, pd.DatetimeIndex): return {}
+            
+            current_date = df.index[-1].date()
+            today_df = df[df.index.date == current_date]
+            
+            if len(today_df) < 2: return {} # Need at least 2 candles
+            
+            # Assume 15m candles: First 2 candles = 30 mins
+            # Assume 5m candles: First 6 candles = 30 mins
+            # We'll take the first 2 rows generically as "Early Range"
+            orb_df = today_df.iloc[:2] 
+            
+            orb_high = orb_df['high'].max()
+            orb_low = orb_df['low'].min()
+            current_close = today_df.iloc[-1]['close']
+            
+            status = "Inside"
+            if current_close > orb_high: status = "Breakout"
+            elif current_close < orb_low: status = "Breakdown"
+            
+            return {
+                "orb_high": orb_high,
+                "orb_low": orb_low,
+                "status": status,
+                "range_size": orb_high - orb_low
+            }
+        except:
+            return {}
+
+    @staticmethod
+    def analyze_gap(df: pd.DataFrame) -> dict:
+        """
+        Analyzes Gap Up/Down from previous day close.
+        """
+        try:
+            if not isinstance(df.index, pd.DatetimeIndex): return {}
+            
+            # Split into Today and Yesterday
+            current_date = df.index[-1].date()
+            today_mask = df.index.date == current_date
+            today_df = df[today_mask]
+            prev_df = df[~today_mask]
+            
+            if prev_df.empty or today_df.empty: return {}
+            
+            prev_close = prev_df.iloc[-1]['close']
+            today_open = today_df.iloc[0]['open']
+            
+            gap_pct = ((today_open - prev_close) / prev_close) * 100
+            
+            gap_type = "None"
+            if gap_pct > 1.0: gap_type = "Gap Up"
+            elif gap_pct < -1.0: gap_type = "Gap Down"
+            
+            return {
+                "type": gap_type,
+                "pct": gap_pct,
+                "prev_close": prev_close,
+                "today_open": today_open
+            }
+        except:
+            return {}
+
+    @staticmethod
+    def calculate_pivots(df: pd.DataFrame) -> dict:
+        """
+        Calculates Standard Pivot Points using Previous Day's High, Low, Close.
+        Expects df to contain at least 2 days of data.
+        """
+        try:
+            if not isinstance(df.index, pd.DatetimeIndex): return {}
+            
+            # Identify "Yesterday"
+            if len(df) > 0:
+                current_date = df.index[-1].date()
+                prev_data = df[df.index.date < current_date]
+            else:
+                prev_data = pd.DataFrame()
+            
+            if prev_data.empty:
+                # Fallback: Use full DF stats if no prev day distinction
+                high = df['high'].max()
+                low = df['low'].min()
+                close = df['close'].iloc[-1]
+            else:
+                # Get last completed day
+                last_date = prev_data.index[-1].date()
+                last_day_df = prev_data[prev_data.index.date == last_date]
+                high = last_day_df['high'].max()
+                low = last_day_df['low'].min()
+                close = last_day_df['close'].iloc[-1]
+                
+            pivot = (high + low + close) / 3
+            r1 = (2 * pivot) - low
+            s1 = (2 * pivot) - high
+            r2 = pivot + (high - low)
+            s2 = pivot - (high - low)
+            r3 = high + 2 * (pivot - low)
+            s3 = low - 2 * (high - pivot)
+            
+            return {
+                "P": pivot, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3
+            }
+        except:
+             return {}
+
+    @staticmethod
+    def calculate_ladder(df: pd.DataFrame, current_price: float) -> list:
+        """
+        Generates a price ladder of significant levels (Pivots + Recent High/Low).
+        """
+        try:
+            pivots = IntradayTechnicalAnalysis.calculate_pivots(df)
+            levels = []
+            
+            if pivots:
+                levels.append({"price": pivots["R2"], "label": "R2 (Pivot)", "type": "resistance"})
+                levels.append({"price": pivots["R1"], "label": "R1 (Pivot)", "type": "resistance"})
+                levels.append({"price": pivots["P"], "label": "Daily Pivot", "type": "neutral"})
+                levels.append({"price": pivots["S1"], "label": "S1 (Pivot)", "type": "support"})
+                levels.append({"price": pivots["S2"], "label": "S2 (Pivot)", "type": "support"})
+                
+            # Add Recent Intraday High/Low
+            today_mask = df.index.date == df.index[-1].date()
+            today_df = df[today_mask]
             
             if not today_df.empty:
-                today_df['tp'] = (today_df['high'] + today_df['low'] + today_df['close']) / 3
-                today_df['vwap'] = (today_df['tp'] * today_df['volume']).cumsum() / today_df['volume'].cumsum()
-                vwap = today_df.iloc[-1]['vwap']
-            else: vwap = close
-        except: vwap = close
+                day_high = today_df['high'].max()
+                day_low = today_df['low'].min()
+                if day_high > current_price * 1.001:
+                    levels.append({"price": day_high, "label": "Day High", "type": "resistance"})
+                if day_low < current_price * 0.999:
+                    levels.append({"price": day_low, "label": "Day Low", "type": "support"})
+            
+            # Use provided levels if any
+            return sorted(levels, key=lambda x: x["price"], reverse=True)
+        except:
+            return []
 
+    @staticmethod
+    def analyze_stock(df: pd.DataFrame) -> dict:
+        """Institutional-grade Intraday Analysis using specific weighted indicators."""
+        if df.empty or len(df) < 20: return {}
+        
+        latest = df.iloc[-1]
+        close = latest['close']
+        
+        # 1. VWAP (30% weight in engine) - Daily anchor is standard
+        vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
+        vwap_score = 100 if close > vwap else 0
+        vwap_status = "Price > VWAP" if vwap_score == 100 else "Price < VWAP"
+        
+        # 2. RVOL (Relative Volume - 25% weight in engine) - Length 14
+        vol_ma = df['volume'].rolling(14).mean().iloc[-1]
+        rvol = latest['volume'] / vol_ma if vol_ma > 0 else 1.0
+        rvol_score = 100 if rvol >= 2.0 else min(100, (rvol / 2.0) * 100)
+        
+        # 3. EMA 9 & 20 (10% weight in engine)
         ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
-        ema_21 = EMAIndicator(close=df['close'], window=21).ema_indicator().iloc[-1]
-        ema_50 = EMAIndicator(close=df['close'], window=50).ema_indicator().iloc[-1]
-
-        price_above_vwap = close > vwap
-        ema_cross_up = ema_9 > ema_21
-        price_above_50 = close > ema_50
-
-        if price_above_vwap and ema_cross_up and price_above_50:
-            trend_score = 100
-            groups["Trend"]["details"].append({"text": "Full Bullish Alignment", "type": "positive", "label": "TREND", "value": "Price > VWAP/EMA50"})
-        elif not price_above_vwap and not ema_cross_up and not price_above_50:
-            trend_score = 0
-            groups["Trend"]["details"].append({"text": "Full Bearish Alignment", "type": "negative", "label": "TREND", "value": "Price < VWAP/EMA50"})
-        else:
-            trend_score = 50
-            groups["Trend"]["details"].append({"text": "Mixed Trend Signals", "type": "neutral", "label": "TREND", "value": "Entry Caution"})
-
-        # 2. Momentum
-        rsi = RSIIndicator(close=df['close'], window=14).rsi().iloc[-1]
-        macd_obj = MACD(close=df['close'])
-        macd = macd_obj.macd().iloc[-1]
-        macd_signal = macd_obj.macd_signal().iloc[-1]
+        ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
         
-        if 50 <= rsi <= 65:
-            mom_score += 50
-            groups["Momentum"]["details"].append({"text": "RSI Buy Zone (50-65)", "type": "positive", "label": "MOM", "value": f"RSI: {round(rsi,1)}"})
-        elif rsi > 70 or rsi < 30:
-            mom_score -= 20
-            groups["Momentum"]["details"].append({"text": "Exhaustion Risk", "type": "negative", "label": "MOM", "value": f"RSI: {round(rsi,1)}"})
-
-        if macd > macd_signal:
-            mom_score += 50
-            groups["Momentum"]["details"].append({"text": "MACD Bullish Cross", "type": "positive", "label": "MACD", "value": "Bullish"})
-        else:
-            groups["Momentum"]["details"].append({"text": "MACD Bearish Cross", "type": "negative", "label": "MACD", "value": "Bearish"})
-
-        # 3. Volume
-        vol_ma = df['volume'].rolling(20).mean().iloc[-1]
-        vol_ratio = latest['volume'] / vol_ma if vol_ma > 0 else 1.0
-        if vol_ratio > 1.5:
-            vol_score = 100
-            groups["Volume"]["details"].append({"text": "Volume Surge Detected", "type": "positive", "label": "VOL", "value": f"{round(vol_ratio, 1)}x Avg"})
-        else:
-            vol_score = 30
-
-        # 4. Risk Control
+        ema_score = 0
+        ema_status = "Bearish"
+        if ema_9 > ema_20 and close > ema_9:
+            ema_score = 100
+            ema_status = "Strong Bullish (> 9EMA > 20EMA)"
+        elif ema_9 > ema_20:
+            ema_score = 75
+            ema_status = "Bullish Cross"
+        elif close > ema_20:
+            ema_score = 50
+            ema_status = "Holding 20EMA"
+            
+        # 4. Pivot Points (15% weight in engine) - Daily timeframe
         pivots = IntradayTechnicalAnalysis.calculate_pivots(df)
-        atr_val = (df['high'] - df['low']).rolling(14).mean().iloc[-1]
-        sl_dist = 1.2 * atr_val
-        
-        if trend_score > 50:
-            stop_loss = close - sl_dist
-            target = close + (sl_dist * 1.5)
-            target_reason = "1.5x ATR Target"
-        else:
-            stop_loss = close + sl_dist
-            target = close - (sl_dist * 1.5)
-            target_reason = "1.5x ATR Target (Short)"
-
+        pivot_score = 50
+        pivot_status = "Between Levels"
         res_1 = pivots.get("R1", close * 1.05)
         sup_1 = pivots.get("S1", close * 0.95)
         
-        if trend_score > 50 and close > res_1 * 0.995:
-             safety_score = 50
-             groups["Risk & Levels"]["details"].append({"text": "Near Pivot Resistance", "type": "negative", "label": "LEVEL", "value": f"R1: {round(res_1,1)}"})
-        else:
-             safety_score = 80
+        if close > res_1:
+            pivot_score = 100  # Clean Breakout
+            pivot_status = "Above R1 Breakout"
+        elif close < sup_1:
+            pivot_score = 0
+            pivot_status = "Below S1 Breakdown"
+        elif close > pivots.get("P", 0):
+            pivot_score = 75
+            pivot_status = "Above Central Pivot"
+            
+        # 5. Price Action / Order Flow Proxy (20% weight in engine)
+        # Replacing Level 2 with candle structure: Strong close near high + volume
+        candle_range = latest['high'] - latest['low']
+        close_relative = (close - latest['low']) / candle_range if candle_range > 0 else 0.5
         
-        final_score = (trend_score * 0.30) + (min(100, mom_score) * 0.20) + (vol_score * 0.20) + (safety_score * 0.15)
+        # A close in the top 20% of the candle is very aggressive buying
+        pa_score = 0
+        pa_status = "Weak Close"
+        if close_relative > 0.8:
+            pa_score = 100 if rvol > 1.2 else 80
+            pa_status = "Aggressive Buying (Strong Close)"
+        elif close_relative > 0.5:
+            pa_score = 50
+            pa_status = "Neutral Close"
+            
+        groups = {
+            "VWAP": {"score": vwap_score, "details": [{"text": "VWAP Trend", "type": "positive" if vwap_score > 50 else "negative", "label": "VWAP", "value": vwap_status}]},
+            "Volume": {"score": rvol_score, "details": [{"text": "Relative Volume", "type": "positive" if rvol >= 1.5 else "neutral", "label": "RVOL", "value": f"{round(rvol,2)}x"}]},
+            "Price Action": {"score": pa_score, "details": [{"text": "Order Flow Proxy", "type": "positive" if pa_score > 50 else "negative", "label": "ACTION", "value": pa_status}]},
+            "Trend": {"score": ema_score, "details": [{"text": "9/20 EMA", "type": "positive" if ema_score > 50 else "negative", "label": "EMA", "value": ema_status}]},
+            "Risk & Levels": {"score": pivot_score, "details": [{"text": "Pivot Defense", "type": "positive" if pivot_score > 50 else "negative", "label": "PIVOT", "value": pivot_status}]}
+        }
+        
+        atr_val = (df['high'] - df['low']).rolling(14).mean().iloc[-1]
+        if pd.isna(atr_val) or atr_val == 0: atr_val = close * 0.015
+        
+        sl_dist = 1.2 * atr_val
+        
+        # Dynamic Support/Resistance relative to CURRENT price (Fixes broken Entry/Target flips on Gap-Ups)
+        valid_res = [v for k, v in pivots.items() if v > close]
+        target = min(valid_res) if valid_res else close + (1.5 * sl_dist)
+        
+        valid_sup = [v for k, v in pivots.items() if v < close]
+        best_sup = max(valid_sup) if valid_sup else close - sl_dist
+        
+        stop_loss = max(best_sup, close - sl_dist)
+        
+        # Hard limits (Fix for Penny Stocks where ATR < 0.01)
+        # Ensure a minimum 0.5% move for target and 0.4% move for stop loss to prevent overlaps
+        min_target_dist = max(1.5 * sl_dist, close * 0.005)
+        min_stop_dist = max(sl_dist, close * 0.004)
+        
+        if target <= close: target = close + min_target_dist
+        if stop_loss >= close: stop_loss = close - min_stop_dist
+        
+        # Absolute safeguard against equal values due to rounding on micro-caps
+        if round(target, 2) <= round(close, 2): target = close * 1.01
+        if round(stop_loss, 2) >= round(close, 2): stop_loss = close * 0.99
+        
+        target_reason = "Technical Resistance Area" if valid_res else "ATR Momentum Extension"
+        
+        # Special Bonus Events (Still mapped for the Engine to view)
+        orb = IntradayTechnicalAnalysis.detect_orb(df)
+        gap = IntradayTechnicalAnalysis.analyze_gap(df)
         
         ladder = IntradayTechnicalAnalysis.calculate_ladder(df, close)
         
         return {
-            "score": round(final_score, 1),
-            "trend_score": trend_score,
-            "mom_score": min(100, mom_score),
-            "vol_score": vol_score,
-            "safety_score": safety_score,
-            "groups": groups,
-            "ema_20": ema_21, 
-            "rsi": rsi,
+            "vwap_score": vwap_score,
+            "rvol_score": rvol_score,
+            "ema_score": ema_score,
+            "pivot_score": pivot_score,
+            "pa_score": pa_score,
             "vwap_val": vwap,
-            "is_bullish_trend": trend_score > 50,
-            "ema_200_val": ema_50,
-            "trend": "BULLISH" if trend_score > 50 else "BEARISH" if trend_score < 50 else "NEUTRAL",
+            "rvol_val": rvol,
+            "groups": groups,
+            "is_bullish_trend": ema_score >= 50 and vwap_score == 100,
+            "trend": "BULLISH" if ema_score > 50 else "BEARISH" if ema_score < 50 else "NEUTRAL",
             "support": round(stop_loss, 2),
             "resistance": round(target, 2),
             "levels": ladder,
             "target_reason": target_reason,
-            "atr": atr_val
+            "atr": atr_val,
+            "orb": orb,
+            "gap": gap
         }
 
 ta_intraday = IntradayTechnicalAnalysis()

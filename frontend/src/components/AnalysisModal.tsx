@@ -27,8 +27,9 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
     const isLongTerm = displayData.analysis_mode === 'LONGTERM_INVEST';
 
     // Split reasons into categories for better UI
-    const bullishReasons = data.reasons?.filter((r: any) => r.type === "positive") || [];
-    const bearishReasons = data.reasons?.filter((r: any) => r.type === "negative") || [];
+    const safeReasons = Array.isArray(data.reasons) ? data.reasons : [];
+    const bullishReasons = safeReasons.filter((r: any) => r.type === "positive");
+    const bearishReasons = safeReasons.filter((r: any) => r.type === "negative");
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -43,9 +44,9 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                         </h2>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
                             <span className="font-medium">AI-Generated Strategy Report</span>
-                            {displayData.analysis_mode && (
+                            {(displayData.analysis_mode || displayData.is_ondemand) && (
                                 <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-widest uppercase border ${isLongTerm ? 'bg-purple-500/10 text-purple-600 border-purple-500/20' : 'bg-primary/10 text-primary border-primary/20'}`}>
-                                    {displayData.analysis_mode}
+                                    {displayData.is_ondemand ? 'ON-DEMAND' : displayData.analysis_mode}
                                 </span>
                             )}
                         </div>
@@ -142,21 +143,22 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                         </div>
 
                                         {/* Core Metrics Grid */}
+                                        {/* Core Metrics Grid */}
                                         <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
                                             <div className="p-4 text-center">
                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Suggested Hold</div>
-                                                <div className="text-lg font-black text-slate-800 tracking-tight">{data.investment_advisory.holding_period?.period_display}</div>
-                                                <div className="text-[10px] font-bold text-slate-500">{data.investment_advisory.holding_period?.label}</div>
+                                                <div className="text-lg font-black text-slate-800 tracking-tight">{data.investment_advisory.holding_period?.period_display || 'N/A'}</div>
+                                                <div className="text-[10px] font-bold text-slate-500">{data.investment_advisory.holding_period?.label || 'Standard'}</div>
                                             </div>
                                             <div className="p-4 text-center bg-emerald-50/50">
-                                                <div className="text-[9px] font-black text-emerald-600/60 uppercase tracking-widest mb-1">3-Year Target</div>
+                                                <div className="text-[9px] font-black text-emerald-600/60 uppercase tracking-widest mb-1">Target</div>
                                                 <div className="text-lg font-black text-emerald-600 tracking-tight">₹{typeof data.investment_advisory.targets?.['3_year_target'] === 'number' ? data.investment_advisory.targets['3_year_target'].toLocaleString() : 'N/A'}</div>
-                                                <div className="text-[10px] font-bold text-emerald-600/70">CAGR: {data.investment_advisory.targets?.projected_cagr}%</div>
+                                                <div className="text-[10px] font-bold text-emerald-600/70">ROI: {data.investment_advisory.targets?.absolute_return || 0}%</div>
                                             </div>
                                             <div className="p-4 text-center bg-red-50/50">
                                                 <div className="text-[9px] font-black text-red-600/60 uppercase tracking-widest mb-1">Smart Stop</div>
                                                 <div className="text-lg font-black text-red-600 tracking-tight">₹{typeof data.investment_advisory.stop_loss?.stop_price === 'number' ? data.investment_advisory.stop_loss.stop_price.toLocaleString() : 'N/A'}</div>
-                                                <div className="text-[10px] font-bold text-red-600/70">{data.investment_advisory.stop_loss?.type}</div>
+                                                <div className="text-[10px] font-bold text-red-600/70">{data.investment_advisory.stop_loss?.type || 'Standard'}</div>
                                             </div>
                                         </div>
 
@@ -171,7 +173,7 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                                             <span className="text-xs font-bold text-slate-700">{s.label}</span>
                                                         </div>
                                                         <div className="flex items-center gap-6">
-                                                            <span className="text-xs font-medium text-slate-500">{s.cagr}% CAGR</span>
+                                                            <span className="text-xs font-medium text-slate-500">{s.cagr || 0}% ROI</span>
                                                             <div className="text-right w-24">
                                                                 <div className="text-xs font-black text-slate-800">₹{typeof s.target === 'number' ? s.target.toLocaleString() : 'N/A'}</div>
                                                                 <div className="text-[10px] font-bold text-emerald-500">

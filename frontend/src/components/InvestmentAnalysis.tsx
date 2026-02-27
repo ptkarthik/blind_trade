@@ -7,13 +7,14 @@ interface InvestmentAnalysisProps {
 export function InvestmentAnalysis({ data }: InvestmentAnalysisProps) {
     const { groups, score, signal, entry, stop_loss, target, strategic_summary } = data;
 
-    const allIndicators = groups ? Object.entries(groups).flatMap(([groupName, group]: [string, any]) =>
-        (group.details || []).map((d: any) => ({
+    const allIndicators = groups ? Object.entries(groups).flatMap(([groupName, group]: [string, any]) => {
+        if (!group || !group.details) return [];
+        return (group.details || []).map((d: any) => ({
             ...d,
             src: groupName.split(' ')[0], // Short name like 'TECH' or 'FUND'
             groupName
-        }))
-    ) : [];
+        }));
+    }) : [];
 
     const bullishDrivers = allIndicators.filter(i => i.type === 'positive');
     const riskFactors = allIndicators.filter(i => i.type === 'negative');
@@ -60,45 +61,47 @@ export function InvestmentAnalysis({ data }: InvestmentAnalysisProps) {
                                 "{strategic_summary || data.reason || "AI model confirms alignment across technical and fundamental layers."}"
                             </div>
                         </div>
-                        {data.levels?.support?.some((s: any) => s.strength === "Ironclad") && (
-                            <div className="text-[9px] font-black text-emerald-600 flex items-center gap-1 mt-2">
-                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                IRONCLAD SUPPORT DETECTED
-                            </div>
-                        )}
                     </div>
+                    {Array.isArray(data.levels?.support) && data.levels.support.some((s: any) => s.strength === "Ironclad") && (
+                        <div className="text-[9px] font-black text-emerald-600 flex items-center gap-1 mt-2">
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            IRONCLAD SUPPORT DETECTED
+                        </div>
+                    )}
                 </div>
             </div>
 
             {/* 1.5 Professional Alpha Metrics (Phase 30) */}
-            {data.alpha_intel && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                    <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
-                        <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Growth Prob.</div>
-                        <div className={`text-sm font-black mt-1 ${data.alpha_intel.growth_probability === 'High' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                            {data.alpha_intel.growth_probability}
+            {
+                data.alpha_intel && (
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                        <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
+                            <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Growth Prob.</div>
+                            <div className={`text-sm font-black mt-1 ${data.alpha_intel.growth_probability === 'High' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                {data.alpha_intel.growth_probability}
+                            </div>
+                        </div>
+                        <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
+                            <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Risk Level</div>
+                            <div className={`text-sm font-black mt-1 ${data.alpha_intel.risk_level === 'Low' ? 'text-emerald-600' : data.alpha_intel.risk_level === 'High' ? 'text-red-600' : 'text-amber-600'}`}>
+                                {data.alpha_intel.risk_level}
+                            </div>
+                        </div>
+                        <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
+                            <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Valuation</div>
+                            <div className="text-sm font-black mt-1 text-slate-700">{data.alpha_intel.valuation_status}</div>
+                        </div>
+                        <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
+                            <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Suggested Hold</div>
+                            <div className="text-sm font-black mt-1 text-slate-700">{data.alpha_intel.suggested_hold}</div>
+                        </div>
+                        <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
+                            <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Confidence</div>
+                            <div className="text-sm font-black mt-1 text-primary">{data.alpha_intel.confidence}</div>
                         </div>
                     </div>
-                    <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
-                        <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Risk Level</div>
-                        <div className={`text-sm font-black mt-1 ${data.alpha_intel.risk_level === 'Low' ? 'text-emerald-600' : data.alpha_intel.risk_level === 'High' ? 'text-red-600' : 'text-amber-600'}`}>
-                            {data.alpha_intel.risk_level}
-                        </div>
-                    </div>
-                    <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
-                        <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Valuation</div>
-                        <div className="text-sm font-black mt-1 text-slate-700">{data.alpha_intel.valuation_status}</div>
-                    </div>
-                    <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
-                        <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Suggested Hold</div>
-                        <div className="text-sm font-black mt-1 text-slate-700">{data.alpha_intel.suggested_hold}</div>
-                    </div>
-                    <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
-                        <div className="text-[9px] font-black text-primary/60 uppercase tracking-widest">Confidence</div>
-                        <div className="text-sm font-black mt-1 text-primary">{data.alpha_intel.confidence}</div>
-                    </div>
-                </div>
-            )}
+                )
+            }
 
             {/* 1.6 Professional Resilience (Phase 32-34) */}
             <div className="flex flex-wrap gap-2 py-2">
@@ -192,75 +195,77 @@ export function InvestmentAnalysis({ data }: InvestmentAnalysisProps) {
             </div>
 
             {/* 3. Professional Advisor Logic (Phase 40) */}
-            {data.investment_advisory && (
-                <div className="mt-8 pt-8 border-t border-border space-y-6">
-                    <div className="flex items-center gap-3">
-                        <div className="h-5 w-1.5 bg-indigo-500 rounded-full" />
-                        <h3 className="font-black text-sm uppercase tracking-[0.2em] text-indigo-600">Investment Advisor Console</h3>
-                    </div>
+            {
+                data.investment_advisory && (
+                    <div className="mt-8 pt-8 border-t border-border space-y-6">
+                        <div className="flex items-center gap-3">
+                            <div className="h-5 w-1.5 bg-indigo-500 rounded-full" />
+                            <h3 className="font-black text-sm uppercase tracking-[0.2em] text-indigo-600">Investment Advisor Console</h3>
+                        </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Scenario Engine */}
-                        <div className="bg-muted/5 rounded-2xl border border-border overflow-hidden">
-                            <div className="bg-muted/10 px-4 py-2 border-b border-border flex justify-between items-center">
-                                <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Scenario Engine (Price Projections)</span>
-                                <span className="text-[9px] font-bold text-indigo-600 italic">Expected Horizon: {data.investment_advisory.holding_period.period_display}</span>
-                            </div>
-                            <div className="p-4 space-y-3">
-                                {data.investment_advisory.scenarios.map((sc: any, idx: number) => (
-                                    <div key={idx} className="flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`h-1.5 w-1.5 rounded-full ${idx === 0 ? 'bg-red-400' : idx === 1 ? 'bg-blue-400' : 'bg-emerald-400'}`} />
-                                            <span className="text-xs font-bold text-slate-600 w-24">{sc.label}</span>
-                                            <span className="text-[10px] font-medium text-muted-foreground italic w-12">({sc.probability})</span>
-                                        </div>
-                                        <div className="flex flex-col items-end">
-                                            <span className="text-sm font-black text-slate-800">₹{sc.target}</span>
-                                            <div className="flex items-center gap-1.5 justify-end">
-                                                <span className="text-[9px] font-bold text-emerald-600">+{Math.round(((sc.target - data.price) / data.price) * 100)}%</span>
-                                                <span className="text-[9px] font-medium text-muted-foreground opacity-60">@{sc.cagr}</span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Scenario Engine */}
+                            <div className="bg-muted/5 rounded-2xl border border-border overflow-hidden">
+                                <div className="bg-muted/10 px-4 py-2 border-b border-border flex justify-between items-center">
+                                    <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Scenario Engine (Price Projections)</span>
+                                    <span className="text-[9px] font-bold text-indigo-600 italic">Expected Horizon: {data.investment_advisory.holding_period?.period_display || 'Mid-Term'}</span>
+                                </div>
+                                <div className="p-4 space-y-3">
+                                    {Array.isArray(data.investment_advisory.scenarios) ? data.investment_advisory.scenarios.map((sc: any, idx: number) => (
+                                        <div key={idx} className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`h-1.5 w-1.5 rounded-full ${idx === 0 ? 'bg-red-400' : idx === 1 ? 'bg-blue-400' : 'bg-emerald-400'}`} />
+                                                <span className="text-xs font-bold text-slate-600 w-24">{sc.label}</span>
+                                                <span className="text-[10px] font-medium text-muted-foreground italic w-12">({sc.probability})</span>
+                                            </div>
+                                            <div className="flex flex-col items-end">
+                                                <span className="text-sm font-black text-slate-800">₹{sc.target}</span>
+                                                <div className="flex items-center gap-1.5 justify-end">
+                                                    <span className="text-[9px] font-bold text-emerald-600">+{data.price ? Math.round(((sc.target - data.price) / data.price) * 100) : 0}%</span>
+                                                    <span className="text-[9px] font-medium text-muted-foreground opacity-60">@{(sc as any).cagr || "-"}%</span>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Stop-Loss & Risk Management */}
-                        <div className="space-y-4">
-                            <div className="bg-red-500/[0.03] rounded-2xl border border-red-500/10 p-5">
-                                <div className="text-[10px] font-black uppercase text-red-600 mb-4 tracking-widest">Advanced Risk Guard</div>
-                                <div className="grid grid-cols-2 gap-6">
-                                    <div>
-                                        <div className="text-[10px] text-muted-foreground font-bold uppercase mb-1">Structural Stop</div>
-                                        <div className="text-2xl font-black text-red-600">₹{data.investment_advisory.stop_loss.stop_price}</div>
-                                        <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase">{data.investment_advisory.stop_loss.type}</div>
-                                    </div>
-                                    <div>
-                                        <div className="text-[10px] text-muted-foreground font-bold uppercase mb-1">Trailing Activation</div>
-                                        <div className="text-2xl font-black text-indigo-600">₹{data.investment_advisory.stop_loss.trailing_logic.activation_target}</div>
-                                        <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase">25% Upside Trigger</div>
-                                    </div>
-                                </div>
-                                <div className="mt-4 pt-4 border-t border-red-500/10 text-[10px] italic text-slate-600 leading-tight">
-                                    Trailing Buffer: <span className="font-bold text-indigo-600">{data.investment_advisory.stop_loss.trailing_logic.buffer}</span>
+                                    )) : <div className="text-xs text-muted-foreground italic p-4">Detailed scenario projections unavailable.</div>}
                                 </div>
                             </div>
 
-                            <div className="bg-indigo-500/[0.03] rounded-2xl border border-indigo-500/10 p-4 flex items-center justify-between">
-                                <div>
-                                    <div className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Recommended Review Cycle</div>
-                                    <div className="text-sm font-black text-slate-700 mt-1">{data.investment_advisory.review_cycle}</div>
+                            {/* Stop-Loss & Risk Management */}
+                            <div className="space-y-4">
+                                <div className="bg-red-500/[0.03] rounded-2xl border border-red-500/10 p-5">
+                                    <div className="text-[10px] font-black uppercase text-red-600 mb-4 tracking-widest">Advanced Risk Guard</div>
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <div>
+                                            <div className="text-[10px] text-muted-foreground font-bold uppercase mb-1">Structural Stop</div>
+                                            <div className="text-2xl font-black text-red-600">₹{data.investment_advisory.stop_loss?.stop_price || 'N/A'}</div>
+                                            <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase">{data.investment_advisory.stop_loss?.type || 'Standard'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-muted-foreground font-bold uppercase mb-1">Trailing Activation</div>
+                                            <div className="text-2xl font-black text-indigo-600">₹{data.investment_advisory.stop_loss?.trailing_logic?.activation_target || 'N/A'}</div>
+                                            <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase">25% Upside Trigger</div>
+                                        </div>
+                                    </div>
+                                    <div className="mt-4 pt-4 border-t border-red-500/10 text-[10px] italic text-slate-600 leading-tight">
+                                        Trailing Buffer: <span className="font-bold text-indigo-600">{data.investment_advisory.stop_loss?.trailing_logic?.buffer || "10% Trailing (Est)"}</span>
+                                    </div>
                                 </div>
-                                <div className="text-right">
-                                    <div className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Trend Slope</div>
-                                    <div className="text-[11px] font-black text-slate-700 mt-1">{data.investment_advisory.trend_status.slope}</div>
+
+                                <div className="bg-indigo-500/[0.03] rounded-2xl border border-indigo-500/10 p-4 flex items-center justify-between">
+                                    <div>
+                                        <div className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Recommended Review Cycle</div>
+                                        <div className="text-sm font-black text-slate-700 mt-1">{data.investment_advisory.review_cycle || 'Quarterly'}</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Trend Slope</div>
+                                        <div className="text-[11px] font-black text-slate-700 mt-1">{data.investment_advisory.trend_status?.slope || 'Neutral'}</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }

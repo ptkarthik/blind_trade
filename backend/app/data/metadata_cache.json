@@ -13779,5 +13779,105 @@
         "sector": "Services",
         "market_cap_category": "Small",
         "market_cap_value": 0
+    },
+    "CLCIND.NS": {
+        "sector": "Consumer Cyclical",
+        "market_cap_category": "Small",
+        "market_cap_value": 130661128
+    },
+    "DCMSIL.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "DSFCL.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "AYE.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "UNIVAFOODS.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "QUINTEGRA.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "FRACTAL.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "NEUEON.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "SWANDEF.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "GFSTEELS.NS": {
+        "sector": "Services",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "STALL-RE.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "BONLON.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "GICL.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Small",
+        "market_cap_value": 5659304448
+    },
+    "ONECAP-RE.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "CEINSYS.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "INFOSYS.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "SICAL-RE.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "TCC.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "AARNAV.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "SADHNA-RE.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
     }
 }

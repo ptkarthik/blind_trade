@@ -40,8 +40,14 @@ class FundamentalAnalysisEngine:
         data["moat_score"] = moat_score
         
         # 2.5 New Institutional Filters (Phase 32)
-        earnings_quality = self._score_earnings_quality(data, hist_financials)
+        earnings_res = self._score_earnings_quality(data, hist_financials)
+        earnings_quality = earnings_res["score"]
+        red_flags = earnings_res["red_flags"]
+        
         val_bands = self._calculate_valuation_bands(data, hist_financials)
+        # Update data with historical means if found
+        if val_bands:
+            data.update(val_bands)
         
         # 3. DCF Calculation (New - Phase 12)
         dcf_data = self._calculate_intrinsic_value(data)
@@ -76,8 +82,8 @@ class FundamentalAnalysisEngine:
             })
 
         # Phase 32: Earnings Quality Red-Flags
-        if earnings_quality["red_flags"]:
-            for flag in earnings_quality["red_flags"]:
+        if red_flags:
+            for flag in red_flags:
                 details.append({"text": flag, "type": "negative", "label": "QUALITY", "value": "Red Flag"})
 
         rating = "HOLD"
@@ -212,107 +218,6 @@ class FundamentalAnalysisEngine:
                 score += 1
             
         return max(0, min(10, score))
-
-    def _score_earnings_quality(self, d: Dict, df: pd.DataFrame) -> Dict:
-        """
-        Earnings Quality Filter (Phase 32).
-        Validates Operating Cash Flow vs Net Income.
-        """
-        quality_score = 100 # Percentage
-        red_flags = []
-        
-        ocf = d.get("operating_cashflow")
-        ni = d.get("net_income")
-        
-        if ocf is not None and ni is not None and ni > 0:
-            ratio = ocf / ni
-            if ratio < 0.8:
-                quality_score -= 30
-                red_flags.append("OCF significantly lower than Net Income (Accrual concern)")
-            if ratio < 0.5:
-                quality_score -= 40
-                red_flags.append("Severe Cash-Flow divergence (High Risk)")
-        
-        return {"quality_score": quality_score, "red_flags": red_flags}
-
-    def _calculate_valuation_bands(self, d: Dict, df: pd.DataFrame) -> None:
-        """
-        Calculates 5-year average P/E and P/B from historical financials.
-        Updates the 'd' dictionary in place.
-        """
-        if df is None or df.empty: return
-        
-        try:
-            # We need Avg Net Income over last 4-5 years
-            prof_keys = ['Net Income', 'NetIncome']
-            profs = None
-            for k in prof_keys:
-                if k in df.index:
-                    profs = df.loc[k].dropna()
-                    break
-            
-            if profs is not None and not profs.empty:
-                avg_ni = profs.mean()
-                mcap = d.get("market_cap")
-                if mcap and avg_ni > 0:
-                    d["hist_pe_mean"] = mcap / avg_ni
-            
-            # P/B Average
-            equity_keys = ['Total Stockholder Equity', 'StockholdersEquity']
-            equity = None
-            for k in equity_keys:
-                if k in df.index:
-                    equity = df.loc[k].dropna()
-                    break
-            
-            if equity is not None and not equity.empty:
-                avg_equity = equity.mean()
-                mcap = d.get("market_cap")
-                if mcap and avg_equity > 0:
-                    d["hist_pb_mean"] = mcap / avg_equity
-        except Exception as e:
-            print(f"Valuation Band Calculation error: {e}")
-
-    def _calculate_moat_score(self, df: pd.DataFrame) -> float:
-        """
-        Moat Proxy Algorithm (Phase 33).
-        Analyzes Gross Margin Stability over the last 4-5 years.
-        Stable margins = Pricing Power = Moat.
-        """
-        if df is None or df.empty: return 0.0
-        
-        try:
-            rev_keys = ['Total Revenue', 'TotalRevenue']
-            cost_keys = ['Cost Of Revenue', 'CostOfRevenue']
-            
-            revs = None
-            for k in rev_keys:
-                if k in df.index: revs = df.loc[k].dropna(); break
-            
-            costs = None
-            for k in cost_keys:
-                if k in df.index: costs = df.loc[k].dropna(); break
-                
-            if revs is not None and costs is not None and not revs.empty:
-                # Align series
-                common_dates = revs.index.intersection(costs.index)
-                if len(common_dates) < 2: return 0.0
-                
-                gm_series = (revs[common_dates] - costs[common_dates]) / revs[common_dates]
-                
-                stability = gm_series.std() # Standard deviation of margins
-                avg_margin = gm_series.mean()
-                
-                # Logic: High stability (low std) + High average margin = Strong Moat
-                score = 5.0
-                if stability < 0.05: score += 3 # Very stable
-                elif stability < 0.10: score += 1
-                
-                if avg_margin > 0.40: score += 2 # High margin floor
-                
-                return max(0, min(10, score))
-        except: pass
-        return 0.0
 
 
     def _calculate_fcf_score(self, d: Dict) -> float:

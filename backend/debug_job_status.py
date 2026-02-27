@@ -1,24 +1,20 @@
 
 import asyncio
-from sqlalchemy.future import select
 from app.db.session import AsyncSessionLocal
 from app.models.job import Job
-import json
+from sqlalchemy import select
 
-async def check_jobs():
+async def check():
     async with AsyncSessionLocal() as session:
-        query = select(Job).order_by(Job.created_at.desc()).limit(1)
+        query = select(Job).where(Job.status.in_(["pending", "processing"]))
         result = await session.execute(query)
-        job = result.scalars().first()
-        if job:
-            print(f"ID: {job.id}")
-            print(f"Status: {job.status}")
-            res = job.result or {}
-            # Exclude large signal list to see progress
-            summary = {k: v for k, v in res.items() if k != "signals"}
-            print(f"Result Summary: {json.dumps(summary, indent=2)}")
-        else:
-            print("No jobs found")
+        jobs = result.scalars().all()
+        print("\n=== Active Jobs ===")
+        for j in jobs:
+            print(f"ID: {j.id} | Type: {j.type} | Status: {j.status} | Updated: {j.updated_at}")
+        
+        if len(jobs) > 1:
+            print("\n⚠️ WARNING: Multiple active jobs found. This might confuse the UI.")
 
 if __name__ == "__main__":
-    asyncio.run(check_jobs())
+    asyncio.run(check())

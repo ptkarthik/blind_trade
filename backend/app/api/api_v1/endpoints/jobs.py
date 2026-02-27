@@ -14,7 +14,7 @@ router = APIRouter()
 
 # Schema
 class JobCreate(BaseModel):
-    type: str = "full_scan" # full_scan or sector_scan
+    type: str # 'full_scan', 'sector_scan', 'intraday', or 'swing_scan'
 
 class JobSchema(BaseModel):
     id: uuid.UUID
@@ -47,29 +47,100 @@ async def trigger_scan(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
     
     return new_job
 
-@router.get("/status", response_model=JobSchema)
+@router.get("/status", response_model=Optional[JobSchema])
 async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
-    Get the latest job status, optionally filtered by type.
+    Get the latest job status from the last 24 hours, optionally filtered by type.
     """
-    query = select(Job)
+    from datetime import datetime, timedelta
+    from sqlalchemy import desc, func
+    
+    since = datetime.utcnow() - timedelta(hours=24)
+    
+    # Extract only what we need for progress polling from the massive JSON blob
+    query = select(
+        Job.id, 
+        Job.type, 
+        Job.status, 
+        Job.error_details, 
+        Job.created_at, 
+        Job.updated_at,
+        func.json_extract(Job.result, '$.progress').label("progress"),
+        func.json_extract(Job.result, '$.total_steps').label("total_steps"),
+        func.json_extract(Job.result, '$.status_msg').label("status_msg")
+    ).where(Job.created_at >= since)
+    
     if job_type:
         query = query.where(Job.type == job_type)
+        
+    query = query.order_by(
+        desc(Job.status == "processing"), 
+        Job.updated_at.desc()
+    ).limit(1)
     
-    query = query.order_by(Job.created_at.desc()).limit(1)
     result = await db.execute(query)
-    job = result.scalars().first()
+    row = result.first()
     
-    if not job:
-        raise HTTPException(status_code=404, detail=f"No {type or 'scan'} jobs found")
-    return job
+    if not row:
+        return None
+        
+    # Reconstruct a lightweight dict matching JobSchema
+    return {
+        "id": row.id,
+        "type": row.type,
+        "status": row.status,
+        "error_details": row.error_details,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "result": {
+            "progress": row.progress or 0,
+            "total_steps": row.total_steps or 0,
+            "status_msg": row.status_msg or ""
+        }
+    }
 
 @router.get("/history", response_model=List[JobSchema])
 async def get_scan_history(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    query = select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)
+    """
+    Get job history from the last 24 hours.
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    
+    since = datetime.utcnow() - timedelta(hours=24)
+    
+    # Extract only what we need for history view (id, type, status, dates)
+    query = select(
+        Job.id, 
+        Job.type, 
+        Job.status, 
+        Job.error_details, 
+        Job.created_at, 
+        Job.updated_at,
+        func.json_extract(Job.result, '$.progress').label("progress"),
+        func.json_extract(Job.result, '$.total_steps').label("total_steps"),
+        func.json_extract(Job.result, '$.status_msg').label("status_msg")
+    ).where(Job.created_at >= since).order_by(Job.created_at.desc()).offset(skip).limit(limit)
+    
     result = await db.execute(query)
-    jobs = result.scalars().all()
-    return jobs
+    rows = result.all()
+    
+    jobs_out = []
+    for row in rows:
+        jobs_out.append({
+            "id": row.id,
+            "type": row.type,
+            "status": row.status,
+            "error_details": row.error_details,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+            "result": {
+                "progress": row.progress or 0,
+                "total_steps": row.total_steps or 0,
+                "status_msg": row.status_msg or ""
+            }
+        })
+    return jobs_out
 
 @router.post("/stop", response_model=JobSchema)
 async def stop_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
@@ -90,6 +161,17 @@ async def stop_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(g
     job.status = "stopped"
     await db.commit()
     await db.refresh(job)
+    
+    # Active Kill Switch
+    job_id_str = str(job.id)
+    if job.type == "intraday":
+        from app.services.intraday_engine import intraday_engine
+        await intraday_engine.stop_job(job_id_str)
+    else:
+        # full_scan, sector_scan, etc.
+        from app.services.scanner_engine import longterm_scanner_engine
+        await longterm_scanner_engine.stop_job(job_id_str)
+        
     return job
 
 @router.post("/pause", response_model=JobSchema)
@@ -111,6 +193,16 @@ async def pause_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(
     job.status = "paused"
     await db.commit()
     await db.refresh(job)
+    
+    # Pause Signal
+    job_id_str = str(job.id)
+    if job.type == "intraday":
+        from app.services.intraday_engine import intraday_engine
+        await intraday_engine.pause_job(job_id_str)
+    else:
+        from app.services.scanner_engine import longterm_scanner_engine
+        await longterm_scanner_engine.pause_job(job_id_str)
+        
     return job
 
 @router.post("/resume", response_model=JobSchema)
@@ -132,4 +224,29 @@ async def resume_scan(job_type: Optional[str] = None, db: AsyncSession = Depends
     job.status = "processing"
     await db.commit()
     await db.refresh(job)
+    
+    # Resume Signal
+    job_id_str = str(job.id)
+    if job.type == "intraday":
+        from app.services.intraday_engine import intraday_engine
+        await intraday_engine.resume_job(job_id_str)
+    else:
+        from app.services.scanner_engine import longterm_scanner_engine
+        await longterm_scanner_engine.resume_job(job_id_str)
+        
     return job
+
+@router.get("/{job_id}/results")
+async def get_job_results(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Get the full results data for a specific job.
+    """
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Return just the data part of the result if it exists
+    if job.result and isinstance(job.result, dict) and "data" in job.result:
+        return job.result["data"]
+    
+    return job.result

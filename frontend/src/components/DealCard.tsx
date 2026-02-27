@@ -16,6 +16,8 @@ export interface Signal {
     entry: number;
     target: number;
     stop_loss: number;
+    name?: string;
+    hold_duration?: string;
     target_reason?: string;
     strategic_summary?: string;
     category_rationale?: string;

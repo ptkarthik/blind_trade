@@ -260,4 +260,48 @@ class RiskSentimentEngine:
             
         return score, msg
 
+    def calculate_trade_params(self, entry: float, stop: float, target: float, capital: float = 100000, risk_pct: float = 1.0) -> dict:
+        """
+        Calculates Position Size and R:R Ratio.
+        Default Capital: ₹1,00,000 | Risk: 1% per trade.
+        """
+        if entry <= 0 or stop <= 0 or target <= 0: return {}
+        
+        risk_per_share = entry - stop
+        reward_per_share = target - entry
+        
+        if risk_per_share <= 0: 
+            # Short trade? 
+            if entry < stop and target < entry: # Short
+                 risk_per_share = stop - entry
+                 reward_per_share = entry - target
+            else:
+                 return {"valid": False, "msg": "Invalid Trade Levels"}
+        
+        if risk_per_share == 0: return {"valid": False, "msg": "Zero Risk (Stop=Entry)"}
+
+        rr_ratio = reward_per_share / risk_per_share
+        
+        risk_amount = capital * (risk_pct / 100)
+        shares = int(risk_amount / risk_per_share)
+        
+        # Max position cap (e.g. 20% of capital) to avoid over-concentration in penny stocks
+        max_pos_val = capital * 0.25
+        if (shares * entry) > max_pos_val:
+            shares = int(max_pos_val / entry)
+        
+        position_value = shares * entry
+        
+        return {
+            "valid": True,
+            "rr_ratio": round(rr_ratio, 2),
+            "shares": shares,
+            "position_value": round(position_value, 2),
+            "risk_amount": risk_amount,
+            "capital_used": capital,
+            "risk_pct": risk_pct,
+            "is_high_rr": rr_ratio > 3.0,
+            "is_good_rr": rr_ratio > 2.0
+        }
+
 risk_engine = RiskSentimentEngine()

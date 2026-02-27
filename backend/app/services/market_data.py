@@ -1,16 +1,19 @@
-import os
-os.environ['NO_PROXY'] = '*'
-os.environ['HTTP_PROXY'] = ''
-os.environ['HTTPS_PROXY'] = ''
-
 import yfinance as yf
+from app.services.proxy_manager import proxy_manager
 import pandas as pd
 from typing import Dict, Any
 import asyncio
+import random
 from app.core.config import settings
 from twelvedata import TDClient
 
 import time
+import urllib3
+import traceback
+import numpy as np
+
+# Suppress InsecureRequestWarning for proxies
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from app.services.market_discovery import market_discovery
 
@@ -18,7 +21,12 @@ class MarketDataService:
     def __init__(self):
         # Cache Config
         self.price_cache = {}
-        self.CACHE_DURATION = 60 # seconds
+        self.index_cache = {}
+        self.financials_cache = {}
+        self.extended_data_cache = {}
+        self.CACHE_DURATION = 60 # seconds generic price
+        self.INDEX_CACHE_DURATION = 3600 * 6 # 6 hours for sector indices
+        self.EXTENDED_CACHE_DURATION = 3600 * 24 # 24 hours for holders/news
 
         # Robust Persistence: Session with Retries
         import requests
@@ -26,21 +34,27 @@ class MarketDataService:
         from urllib3.util.retry import Retry
 
         self.session = requests.Session()
-        self.session.trust_env = False # Ignore system proxies
+        self.session.trust_env = True # Allow system proxies
         retries = Retry(
             total=5, 
-            backoff_factor=1, 
+            backoff_factor=2, 
             status_forcelist=[429, 500, 502, 503, 504],
             raise_on_status=False
         )
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Origin': 'https://finance.yahoo.com',
             'Referer': 'https://finance.yahoo.com/'
         })
+        
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0'
+        ]
 
         # Static Sector Mapping (Expanded Universe: Large, Mid, Small)
         self.SECTOR_MAP = {
@@ -233,14 +247,25 @@ class MarketDataService:
         
         # Check static map first
         if symbol in self.SECTOR_MAP:
-            data = {"sector": self.SECTOR_MAP[symbol], "market_cap": "Large"} # Default to Large if in static map
+            data = {"sector": self.SECTOR_MAP[symbol], "market_cap": "Large"} 
             self.metadata_cache[symbol] = data
             return data
+
+        # Check stock master (Nifty 500)
+        clean_sym = symbol.split(".")[0].upper()
+        for item in self.stock_master:
+            if item["symbol"].split(".")[0].upper() == clean_sym:
+                 data = {
+                     "sector": item.get("sector", "General"),
+                     "market_cap": "Mid" # Default/approx since JSON might not have cap
+                 }
+                 self.metadata_cache[symbol] = data
+                 return data
             
         print(f"📡 Metadata Fetch for {symbol}...")
         info = await self.get_fundamentals(symbol)
         
-        sector = info.get("sector", "Services")
+        sector = info.get("sector", "General")
         mkt_cap = info.get("marketCap", 0)
         
         # Category Logic
@@ -296,7 +321,21 @@ class MarketDataService:
         Used for relative strength comparison (Phase 30).
         """
         index_symbol = self.get_sector_index_symbol(sector)
-        return await self.get_ohlc(index_symbol, period=period, interval="1d")
+        
+        # Check Cache
+        current_time = time.time()
+        cache_key = f"{index_symbol}_{period}"
+        if cache_key in self.index_cache:
+            entry = self.index_cache[cache_key]
+            if current_time - entry["timestamp"] < self.INDEX_CACHE_DURATION:
+                return entry["data"]
+                
+        df = await self.get_ohlc(index_symbol, period=period, interval="1d")
+        
+        if not df.empty:
+            self.index_cache[cache_key] = {"timestamp": current_time, "data": df}
+            
+        return df
 
 
     async def get_live_price(self, symbol: str) -> Dict[str, Any]:
@@ -325,7 +364,7 @@ class MarketDataService:
                         raise ValueError(f"Invalid TD Response: {res}")
                     return float(res['price'])
                 
-                price = await asyncio.to_thread(_fetch_td)
+                price = await asyncio.wait_for(asyncio.to_thread(_fetch_td), timeout=10.0)
                 result = {
                     "symbol": symbol.upper(),
                     "price": round(price, 2),
@@ -347,9 +386,9 @@ class MarketDataService:
                 print(f"TwelveData failed for {symbol}: {e}. Falling back to Yahoo.")
 
         # 2. Fallback to Yahoo Finance (Multiple Candidates)
-        candidates = []
-        if not symbol.endswith((".NS", ".BO")) and not symbol.startswith("^"):
-            candidates = [f"{symbol}.NS", f"{symbol}.BO", symbol]
+        base_sym = symbol.replace(".NS", "").replace(".BO", "")
+        if not symbol.startswith("^"):
+            candidates = [f"{base_sym}.NS", f"{base_sym}.BO", base_sym]
         else:
             candidates = [symbol]
 
@@ -358,18 +397,31 @@ class MarketDataService:
             try:
                 def _fetch_yf():
                     ticker = yf.Ticker(ticker_symbol)
-                    # fast_info can return NaN or None
-                    p = ticker.fast_info.last_price
-                    pc = ticker.fast_info.previous_close
-                    v = ticker.fast_info.last_volume
-                    mc = ticker.fast_info.market_cap
+                    
+                    try:
+                        p = ticker.fast_info.last_price
+                        pc = ticker.fast_info.previous_close
+                        v = ticker.fast_info.last_volume
+                        mc = ticker.fast_info.market_cap
+                    except Exception:
+                         # Use 5d for weekend/after-hours robustness
+                         hist = ticker.history(period="5d")
+                         if hist.empty:
+                             # Try yf.download as last resort for live price
+                             hist = yf.download(ticker_symbol, period="5d", interval="1d", progress=False)
+                         
+                         if hist.empty: raise ValueError("No Data")
+                         p = hist["Close"].iloc[-1]
+                         pc = hist["Open"].iloc[0]
+                         v = hist["Volume"].iloc[-1]
+                         mc = 0
                     
                     if p is None or (isinstance(p, float) and np.isnan(p)) or p <= 0:
                          raise ValueError("Invalid Price")
                     return {"price": p, "prev_close": pc, "volume": v, "market_cap": mc}
                 
                 import numpy as np
-                data = await asyncio.to_thread(_fetch_yf)
+                data = await asyncio.wait_for(asyncio.to_thread(_fetch_yf), timeout=12.0)
                 price = data.get("price")
                 prev_close = data.get("prev_close")
                 
@@ -393,6 +445,19 @@ class MarketDataService:
 
             except Exception as e:
                 last_error = str(e)
+                print(f"DEBUG: Yahoo Direct failed for {ticker_symbol}: {last_error}")
+                if "subscriptable" in last_error:
+                    traceback.print_exc()
+
+                # Proxy Fallback
+                try:
+                    res = await self._fetch_live_with_proxy(ticker_symbol)
+                    if res:
+                         # Cache it too
+                         self.price_cache[symbol] = {"timestamp": current_time, "data": res}
+                         return res
+                except: pass
+                
                 continue # Try next candidate
 
         # Final Failover
@@ -419,7 +484,12 @@ class MarketDataService:
         try:
             def _fetch_info():
                 ticker = yf.Ticker(ticker_symbol)
-                return ticker.info
+                # Defensive check for ticker.info which can raise TypeError internally
+                try:
+                    res = ticker.info
+                    return res if isinstance(res, dict) else {}
+                except Exception:
+                    return {}
             
             info = await asyncio.wait_for(asyncio.to_thread(_fetch_info), timeout=15.0)
             return info
@@ -447,7 +517,10 @@ class MarketDataService:
                 except Exception:
                     pass
 
-                news = t.news if t.news else []
+                news = []
+                try:
+                    news = t.news if t.news else []
+                except Exception: pass
                 
                 insider_transactions = []
                 try:
@@ -459,7 +532,7 @@ class MarketDataService:
 
                 return {"holders": holders, "news": news, "insider_transactions": insider_transactions}
 
-            return await asyncio.wait_for(asyncio.to_thread(_fetch_ext), timeout=15.0)
+            return await asyncio.wait_for(asyncio.to_thread(_fetch_ext), timeout=20.0)
         except Exception as e:
             print(f"Extended data fetch failed for {symbol}: {e}")
             return {"holders": {}, "news": []}
@@ -468,17 +541,92 @@ class MarketDataService:
         """
         Fetch historical yearly Income Statement for CAGR calculation.
         """
+        current_time = time.time()
+        if symbol in self.financials_cache:
+            entry = self.financials_cache[symbol]
+            if current_time - entry["timestamp"] < self.EXTENDED_CACHE_DURATION: # Re-use 24h
+                return entry["data"]
+
         ticker_symbol = f"{symbol}.NS" if not symbol.endswith((".NS", ".BO")) and not symbol.startswith("^") else symbol
         try:
             def _fetch_hist():
                 t = yf.Ticker(ticker_symbol)
                 return t.financials
             
-            df = await asyncio.wait_for(asyncio.to_thread(_fetch_hist), timeout=20.0) # Financials can be slow
+            df = await asyncio.wait_for(asyncio.to_thread(_fetch_hist), timeout=30.0) # Financials can be slow
+            self.financials_cache[symbol] = {"timestamp": current_time, "data": df}
             return df
         except Exception as e:
             print(f"Historical financial fetch failed for {symbol}: {e}")
             return pd.DataFrame()
+
+
+    async def _fetch_hist_with_proxy(self, symbol: str, period: str, interval: str) -> pd.DataFrame:
+        """
+        Attempts to fetch history using rotating proxies when main connection fails.
+        """
+        print(f"🔄 Switching to Proxy for {symbol}...")
+        for _ in range(3): # Try 3 different proxies max
+            proxy = await proxy_manager.get_proxy()
+            if not proxy: break
+            
+            try:
+                def _try_fetch():
+                    ticker = yf.Ticker(symbol, proxy=proxy) 
+                    return ticker.history(period=period, interval=interval)
+                
+                df = await asyncio.wait_for(asyncio.to_thread(_try_fetch), timeout=15.0)
+                
+                if not df.empty:
+                    print(f"✅ Proxy Fetch Success for {symbol} via {proxy}")
+                    return df
+                else:
+                    print(f"❌ Proxy {proxy} returned empty for {symbol}")
+                    proxy_manager.blacklist(proxy)
+            except Exception as e:
+                # print(f"Proxy {proxy} failed for {symbol}: {e}")
+                proxy_manager.blacklist(proxy)
+        
+        return pd.DataFrame()
+
+    async def _fetch_live_with_proxy(self, symbol: str) -> Dict[str, Any]:
+        """Fetch live price via proxy."""
+        print(f"🔄 Switching to Proxy for Live Price {symbol}...")
+        for _ in range(2):
+            proxy = await proxy_manager.get_proxy()
+            if not proxy: break
+            try:
+                def _try():
+                    t = yf.Ticker(symbol, proxy=proxy)
+                    # fast_info might be unstable with proxy, use history
+                    hist = t.history(period="1d")
+                    if hist.empty: raise ValueError("Empty")
+                    price = hist['Close'].iloc[-1]
+                    return {"price": price, "prev_close": hist['Open'].iloc[0], "volume": hist['Volume'].iloc[-1]}
+                
+                data = await asyncio.wait_for(asyncio.to_thread(_try), timeout=10.0)
+                if data:
+                    print(f"✅ Proxy Live Success for {symbol}")
+                    # Calculate change if possible
+                    p = data['price']
+                    pc = data['prev_close']
+                    ch = p - pc
+                    ch_p = (ch/pc)*100 if pc else 0
+                    
+                    return {
+                        "symbol": symbol.upper(),
+                        "price": round(float(p), 2),
+                        "change": round(float(ch), 2),
+                        "change_percent": round(float(ch_p), 2),
+                        "volume": int(data['volume']),
+                        "market_cap": 0,
+                        "prev_close": round(float(pc), 2),
+                        "source": f"Yahoo Proxy"
+                    }
+            except Exception:
+                proxy_manager.blacklist(proxy)
+        return {}
+
 
     async def get_ohlc(self, symbol: str, period: str = "1mo", interval: str = "1d") -> pd.DataFrame:
         """
@@ -506,7 +654,7 @@ class MarketDataService:
                         outputsize=outputsize
                     ).as_pandas()
 
-                df = await asyncio.to_thread(_fetch_td_hist)
+                df = await asyncio.wait_for(asyncio.to_thread(_fetch_td_hist), timeout=15.0)
                 if not df.empty:
                     df.columns = [c.lower() for c in df.columns]
                     return df
@@ -518,30 +666,94 @@ class MarketDataService:
                 print(f"TwelveData OHLC failed for {symbol}: {e}")
 
         # 2. Fallback to Yahoo Finance (Multiple Candidates)
-        candidates = []
-        if not symbol.endswith((".NS", ".BO")) and not symbol.startswith("^"):
-            candidates = [f"{symbol}.NS", f"{symbol}.BO", symbol]
+        base_sym = symbol.replace(".NS", "").replace(".BO", "")
+        if not symbol.startswith("^"):
+            candidates = [f"{base_sym}.NS", f"{base_sym}.BO", base_sym]
         else:
             candidates = [symbol]
 
         for ticker_symbol in candidates:
             try:
                 def _fetch_yf_hist():
+                    # Rotate User-Agent and use session
                     ticker = yf.Ticker(ticker_symbol)
-                    hist = ticker.history(period=period, interval=interval)
+                    try:
+                        # For Zomato and similar, sometimes 7d works better for 15m
+                        effective_period = "7d" if interval == "15m" and period == "5d" else period
+                        hist = ticker.history(period=effective_period, interval=interval)
+                    except Exception: return pd.DataFrame()
+                    
                     if not hist.empty:
                         hist.columns = [c.lower() for c in hist.columns]
                     return hist
 
                 df = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_hist), timeout=15.0)
                 
-                if not df.empty and len(df) >= (5 if "1d" in interval else 2): # Basic sanity check
+                if not df.empty and len(df) >= (5 if "1d" in interval else 2):
                     df.columns = [c.lower() for c in df.columns]
+                    # Handle MultiIndex if present (yfinance sometimes returns this)
                     if isinstance(df.columns, pd.MultiIndex): 
+                        # Flatten it
                         df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
                     return df
             except Exception:
-                continue # Try next candidate
+                pass # Fallthrough to proxy
+
+            # Try yf.download before Proxy (yfindownload is often more robust)
+            try:
+                def _fetch_yf_dl():
+                    return yf.download(ticker_symbol, period=period, interval=interval, progress=False)
+                df_dl = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_dl), timeout=20.0)
+                if not df_dl.empty and len(df_dl) > 2:
+                    if isinstance(df_dl.columns, pd.MultiIndex):
+                        df_dl.columns = df_dl.columns.get_level_values(0)
+                    df_dl.columns = [c.lower() for c in df_dl.columns]
+                    print(f"✅ yf.download Success for {ticker_symbol}")
+                    return df_dl
+            except: pass
+
+            # Proxy Fallback
+            try:
+                df_proxy = await self._fetch_hist_with_proxy(ticker_symbol, period, interval)
+                if not df_proxy.empty and len(df_proxy) > 2:
+                    # ... processing already handles multiindex
+                    return df_proxy
+            except Exception:
+                pass
+            
+            continue # Try next candidate
+
+        # 3. Resampling Fallback (Specific for 15m issues)
+        if interval == "15m":
+            print(f"⚠️ 15m fetch failed for {symbol}. Attempting 5m resampling...")
+            try:
+                df_5m = await self.get_ohlc(symbol, period=period, interval="5m")
+                if not df_5m.empty:
+                    # Resample 5m -> 15m
+                    logic = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}
+                    df_15m = df_5m.resample('15min').agg(logic).dropna()
+                    return df_15m
+            except Exception as e:
+                print(f"Resampling failed: {e}")
+
+        # 4. Desperate Fallback: yf.download
+        if interval in ["15m", "5m"]:
+            print(f"⚠️ attempting yf.download fallback for {symbol}...")
+            try:
+                # IMPORTANT: yf.download returns a MultiIndex columns by default in newer versions
+                # when fetching single ticker, we need to handle it.
+                # yf.download is slow, 25s timeout
+                df = await asyncio.wait_for(asyncio.to_thread(yf.download, tickers=symbol, period=period, interval=interval, progress=False), timeout=25.0)
+                
+                if not df.empty and len(df) > 2:
+                    # Flatten columns if MultiIndex (Price, Ticker) -> Price
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
+                    
+                    df.columns = [c.lower() for c in df.columns]
+                    return df
+            except Exception as e:
+                print(f"yf.download failed: {e}")
 
         return pd.DataFrame()
 

@@ -1,36 +1,26 @@
-
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.job import Job
 from app.services.market_data import market_service
-from app.services.scanner_engine import scanner_engine
+from app.services.scanner_engine import longterm_scanner_engine
 from app.services.intraday_engine import intraday_engine
 from app.services.portfolio_engine import portfolio_engine
+from app.services.utils import sanitize_data # Use shared version
 import asyncio
 import numpy as np
+import uuid
 
 router = APIRouter()
 
 def sanitize_json_data(data):
-    try:
-        if data is None: return 0.0
-        if isinstance(data, str):
-            if data.upper() in ["N/A", "NAN", "INF", "-INF", "NONE", ""]: return 0.0
-            return data
-        if isinstance(data, (float, np.floating)):
-            if np.isnan(data) or np.isinf(data): return 0.0
-            return float(data)
-        if isinstance(data, dict):
-            return {k: sanitize_json_data(v) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [sanitize_json_data(i) for i in data]
-        elif isinstance(data, (np.integer, int)):
-            return int(data)
-        if hasattr(data, "item"): return sanitize_json_data(data.item())
-    except:
-        return 0.0
+    """
+    Optimized for Speed: Data is already sanitized during the scan process 
+    before being saved to the database. Bypassing second-pass recursion here 
+    significantly improves UI responsiveness during mode toggles.
+    """
     return data
 
 @router.get("/today")
@@ -41,7 +31,15 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
     try:
         job_type = "full_scan" if mode == "longterm" else "intraday"
         
-        query = select(Job).where(Job.type == job_type, Job.status == "completed").order_by(Job.updated_at.desc()).limit(1)
+        # Allow results from completed, processing (live), and stopped (partial) jobs
+        # Favor jobs that actually have results data, then order by most recent
+        query = select(Job).where(
+            Job.type == job_type, 
+            Job.status.in_(["completed", "processing", "stopped"])
+        ).order_by(
+            Job.result.isnot(None).desc(), 
+            Job.updated_at.desc()
+        ).limit(1)
         res = await db.execute(query)
         valid_job = res.scalars().first()
         
@@ -73,16 +71,27 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
     """
     try:
         job_type = "full_scan" if mode == "longterm" else "intraday"
-        query = select(Job).where(Job.type == job_type, Job.status == "completed").order_by(Job.updated_at.desc()).limit(1)
+        # Allow results from completed, processing (live), and stopped (partial) jobs
+        # SMARTER PICK: Favor jobs that actually have result data, then by latest update.
+        # This prevents a fresh 0% scan from 'masking' the results of a 90% scan.
+        query = select(Job).where(
+            Job.type == job_type, 
+            Job.status.in_(["completed", "processing", "stopped"])
+        ).order_by(
+            (func.json_extract(Job.result, '$.sectors').isnot(None)).desc(),
+            (func.json_extract(Job.result, '$.data').isnot(None)).desc(),
+            Job.updated_at.desc()
+        ).limit(1)
         res = await db.execute(query)
         valid_job = res.scalars().first()
         
-        sectors = ["Banking", "Finance", "IT", "Auto", "Pharma", "Energy", "FMCG", "Metal", "Infrastructure", "Realty", "Services", "General"]
-        response = {s: {"buys": [], "sells": [], "holds": [], "last_updated": "Never"} for s in sectors}
-
         if not valid_job or not valid_job.result:
-            return response
+            return {}
             
+        # FAST PATH: Use pre-calculated sectors if available (O(1) fetch)
+        if "sectors" in valid_job.result:
+            return sanitize_json_data(valid_job.result["sectors"])
+
         data = valid_job.result.get("data", [])
         
         timestamp = ""
@@ -94,16 +103,25 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
             except:
                  timestamp = valid_job.updated_at.strftime("%H:%M:%S")
         
+        # Dynamic Aggregation
+        response = {}
+        
         for stock_data in data:
             try:
                 sym = stock_data.get("symbol", "UNKNOWN")
                 sector = stock_data.get("sector")
-                if not sector or sector == "Unknown" or sector == "General":
+                
+                # Fallback to Market Service if sector is missing in job result
+                if not sector or sector == "Unknown":
                     sector = market_service.get_sector_for_symbol(sym)
                     stock_data["sector"] = sector
-                    
+                
+                # Default bucket if still unknown
+                if not sector: sector = "General"
+                
+                # Initialize sector bucket if new
                 if sector not in response:
-                    sector = "General"
+                    response[sector] = {"buys": [], "sells": [], "holds": [], "last_updated": timestamp}
                 
                 signal = stock_data.get("signal")
                 if signal == "BUY":
@@ -113,9 +131,6 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
                 elif signal == "NEUTRAL":
                     response[sector]["holds"].append(stock_data)
             except: continue
-
-        for s in response:
-            response[s]["last_updated"] = timestamp
             
         return sanitize_json_data(response)
     except Exception as e:
@@ -124,6 +139,7 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
 
 @router.get("/quick_scan/{symbol}")
 @router.get("/analyze/{symbol}")
+@router.get("/{symbol}")
 async def analyze_stock(symbol: str, mode: str = "longterm"):
     """
     On-demand analysis for deep clarity on a single stock.
@@ -142,7 +158,17 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
             if mode == "intraday":
                 analysis = await intraday_engine.analyze_stock(s)
             else:
-                analysis = await scanner_engine.analyze_stock(s)
+                # 1. Fetch Market Context (Regime & Macro) to ensure scoring alignment with Scan
+                regime = await longterm_scanner_engine._detect_market_regime()
+                macro = await longterm_scanner_engine._detect_macro_regime()
+                
+                # 2. Analyze with context
+                analysis = await longterm_scanner_engine.analyze_stock(
+                    s, 
+                    weights=regime["weights"], 
+                    regime_label=regime["label"], 
+                    macro_data=macro
+                )
             if analysis: break
         except Exception as e:
             print(f"Engine ({mode}) failed for {s}: {e}")
@@ -157,7 +183,13 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
 async def get_portfolio_analysis(mode: str = "longterm", db: AsyncSession = Depends(get_db)):
     try:
         job_type = "full_scan" if mode == "longterm" else "intraday"
-        query = select(Job).where(Job.type == job_type, Job.status.in_(["completed", "processing"])).order_by(Job.created_at.desc()).limit(1)
+        query = select(Job).where(
+            Job.type == job_type, 
+            Job.status.in_(["completed", "processing"])
+        ).order_by(
+            Job.result.isnot(None).desc(), 
+            Job.updated_at.desc()
+        ).limit(1)
         result = await db.execute(query)
         job = result.scalars().first()
         

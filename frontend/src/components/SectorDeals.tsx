@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { RefreshCw, ArrowUpRight, ArrowDownRight, AlertTriangle } from 'lucide-react';
 import { StockCardLongTerm } from './StockCardLongTerm';
 import { StockCardIntraday } from './StockCardIntraday';
+import { StockCardSwing } from './StockCardSwing';
 import type { Signal } from './DealCard';
 
 interface SectorData {
@@ -15,7 +16,7 @@ interface SectorData {
 interface SectorDealsProps {
     data: Record<string, SectorData>;
     loading: boolean;
-    mode: 'intraday' | 'longterm';
+    mode: 'intraday' | 'longterm' | 'swing';
     onRefresh: () => void;
     onSignalClick: (signal: Signal) => void;
 }
@@ -85,6 +86,9 @@ export function SectorDeals({ data, loading, mode, onRefresh, onSignalClick }: S
     const renderCard = (signal: Signal, idx: number) => {
         if (mode === 'intraday') {
             return <StockCardIntraday key={signal.symbol} signal={signal} rank={idx + 1} onClick={() => onSignalClick(signal)} />;
+        }
+        if (mode === 'swing') {
+            return <StockCardSwing key={signal.symbol} signal={signal} onClick={() => onSignalClick(signal)} />;
         }
         return <StockCardLongTerm key={signal.symbol} signal={signal} rank={idx + 1} onClick={() => onSignalClick(signal)} />;
     };

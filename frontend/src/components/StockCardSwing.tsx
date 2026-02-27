@@ -1,0 +1,79 @@
+import { TrendingUp, Target, Shield, Clock } from 'lucide-react';
+import type { Signal } from './DealCard';
+import { ScoreGauge } from './ScoreGauge';
+
+interface Props {
+    signal: Signal;
+    onClick: () => void;
+}
+
+export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
+    return (
+        <div
+            className="bg-card border border-border shadow-md rounded-2xl p-5 hover:border-primary/50 transition-all cursor-pointer relative overflow-hidden group flex flex-col h-full"
+            onClick={onClick}
+        >
+            {/* Background Decor */}
+            <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                <TrendingUp size={120} />
+            </div>
+
+            <div className="flex justify-between items-start mb-4 relative z-10">
+                <div>
+                    <h3 className="font-black text-2xl tracking-tight text-foreground">{signal.symbol}</h3>
+                    <p className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">{signal.name}</p>
+                </div>
+
+                <div className="flex flex-col items-end">
+                    <ScoreGauge score={signal.score} />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-primary mt-1">{signal.confidence}</span>
+                </div>
+            </div>
+
+            <div className="mb-4 flex items-center gap-4 relative z-10">
+                <div className="flex items-center gap-2">
+                    <span className="text-2xl font-bold tracking-tighter">₹{signal.price}</span>
+                    <span className="text-xs font-bold uppercase tracking-widest py-1 px-2 rounded-md bg-primary/10 text-primary border border-primary/20">
+                        {signal.signal}
+                    </span>
+                </div>
+            </div>
+
+            {/* Logistics Grid (Specific to Swing Trading) */}
+            <div className="grid grid-cols-2 gap-3 mb-5 mt-auto relative z-10">
+                <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col items-center">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground flex items-center gap-1"><Shield size={12} /> Stop Loss</span>
+                    <span className="font-mono font-bold text-destructive">₹{signal.stop_loss || '---'}</span>
+                </div>
+                <div className="bg-primary/5 p-3 rounded-xl border border-primary/20 flex flex-col items-center">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-primary flex items-center gap-1"><Target size={12} /> Target</span>
+                    <span className="font-mono font-bold text-emerald-500">₹{signal.target || '---'}</span>
+                </div>
+                <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col items-center col-span-2">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground flex items-center gap-1"><Clock size={12} /> Holding Period</span>
+                    <span className="font-mono font-bold text-foreground">{signal.hold_duration || '---'}</span>
+                </div>
+            </div>
+
+            <div className="space-y-2 relative z-10 border-t border-border pt-4">
+                {signal.reasons?.slice(0, 3).map((r: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className={`px-1.5 py-0.5 rounded uppercase font-black tracking-widest text-[9px] ${r.type === 'positive' ? 'bg-emerald-500/10 text-emerald-500' :
+                            r.type === 'negative' ? 'bg-red-500/10 text-red-500' :
+                                'bg-blue-500/10 text-blue-500'
+                            }`}>
+                            {r.label}
+                        </span>
+                        <span className="text-muted-foreground truncate">{r.text}</span>
+                        {r.value && <span className="ml-auto font-mono text-[10px] font-bold text-foreground">{r.value}</span>}
+                    </div>
+                ))}
+                {signal.reasons && signal.reasons.length > 3 && (
+                    <div className="text-[10px] font-bold tracking-widest text-muted-foreground/60 mt-2 text-center w-full uppercase">
+                        + {signal.reasons.length - 3} More Triggers
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};

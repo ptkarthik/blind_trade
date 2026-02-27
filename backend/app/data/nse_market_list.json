@@ -65,6 +65,11 @@
         "raw_symbol": "AAREYDRUGS"
     },
     {
+        "symbol": "AARNAV.NS",
+        "name": "Aarnav Fashions Limited",
+        "raw_symbol": "AARNAV"
+    },
+    {
         "symbol": "AARON.NS",
         "name": "Aaron Industries Limited",
         "raw_symbol": "AARON"
@@ -1120,6 +1125,11 @@
         "raw_symbol": "AXITA"
     },
     {
+        "symbol": "AYE.NS",
+        "name": "Aye Finance Limited",
+        "raw_symbol": "AYE"
+    },
+    {
         "symbol": "AYMSYNTEX.NS",
         "name": "AYM Syntex Limited",
         "raw_symbol": "AYMSYNTEX"
@@ -1575,11 +1585,6 @@
         "raw_symbol": "BLSE"
     },
     {
-        "symbol": "BLUECHIP.NS",
-        "name": "Blue Chip India Limited",
-        "raw_symbol": "BLUECHIP"
-    },
-    {
         "symbol": "BLUECOAST.NS",
         "name": "Blue Coast Hotels Limited",
         "raw_symbol": "BLUECOAST"
@@ -1628,6 +1633,11 @@
         "symbol": "BOMDYEING.NS",
         "name": "Bombay Dyeing & Mfg Company Limited",
         "raw_symbol": "BOMDYEING"
+    },
+    {
+        "symbol": "BONLON.NS",
+        "name": "Bonlon Industries Limited",
+        "raw_symbol": "BONLON"
     },
     {
         "symbol": "BORANA.NS",
@@ -1868,6 +1878,11 @@
         "symbol": "CEIGALL.NS",
         "name": "Ceigall India Limited",
         "raw_symbol": "CEIGALL"
+    },
+    {
+        "symbol": "CEINSYS.NS",
+        "name": "Ceinsys Tech Limited",
+        "raw_symbol": "CEINSYS"
     },
     {
         "symbol": "CELEBRITY.NS",
@@ -2385,6 +2400,11 @@
         "raw_symbol": "DCMSHRIRAM"
     },
     {
+        "symbol": "DCMSIL.NS",
+        "name": "DCM Shriram International Limited",
+        "raw_symbol": "DCMSIL"
+    },
+    {
         "symbol": "DCMSRIND.NS",
         "name": "DCM Shriram Industries Limited",
         "raw_symbol": "DCMSRIND"
@@ -2673,6 +2693,11 @@
         "symbol": "DRREDDY.NS",
         "name": "Dr. Reddy's Laboratories Limited",
         "raw_symbol": "DRREDDY"
+    },
+    {
+        "symbol": "DSFCL.NS",
+        "name": "DCM Shriram Fine Chemicals Limited",
+        "raw_symbol": "DSFCL"
     },
     {
         "symbol": "DSSL.NS",
@@ -3215,6 +3240,11 @@
         "raw_symbol": "FOSECOIND"
     },
     {
+        "symbol": "FRACTAL.NS",
+        "name": "Fractal Analytics Limited",
+        "raw_symbol": "FRACTAL"
+    },
+    {
         "symbol": "FSL.NS",
         "name": "Firstsource Solutions Limited",
         "raw_symbol": "FSL"
@@ -3393,6 +3423,11 @@
         "symbol": "GICHSGFIN.NS",
         "name": "GIC Housing Finance Limited",
         "raw_symbol": "GICHSGFIN"
+    },
+    {
+        "symbol": "GICL.NS",
+        "name": "Globe International Carriers Limited",
+        "raw_symbol": "GICL"
     },
     {
         "symbol": "GICRE.NS",
@@ -6970,6 +7005,11 @@
         "raw_symbol": "OMINFRAL"
     },
     {
+        "symbol": "ONECAP-RE.NS",
+        "name": "Onelife Capital Advisors Limited-RE",
+        "raw_symbol": "ONECAP-RE"
+    },
+    {
         "symbol": "ONELIFECAP.NS",
         "name": "Onelife Capital Advisors Limited",
         "raw_symbol": "ONELIFECAP"
@@ -8300,6 +8340,11 @@
         "raw_symbol": "SADBHIN"
     },
     {
+        "symbol": "SADHNA-RE.NS",
+        "name": "Sadhana Nitrochem Limited-RE",
+        "raw_symbol": "SADHNA-RE"
+    },
+    {
         "symbol": "SADHNANIQ.NS",
         "name": "Sadhana Nitrochem Limited",
         "raw_symbol": "SADHNANIQ"
@@ -8878,6 +8923,11 @@
         "symbol": "SHYAMTEL.NS",
         "name": "Shyam Telecom Limited",
         "raw_symbol": "SHYAMTEL"
+    },
+    {
+        "symbol": "SICAL-RE.NS",
+        "name": "Sical Logistics Ltd-RE",
+        "raw_symbol": "SICAL-RE"
     },
     {
         "symbol": "SICALLOG.NS",
@@ -9713,6 +9763,11 @@
         "symbol": "TBZ.NS",
         "name": "Tribhovandas Bhimji Zaveri Limited",
         "raw_symbol": "TBZ"
+    },
+    {
+        "symbol": "TCC.NS",
+        "name": "TCC Concept Limited",
+        "raw_symbol": "TCC"
     },
     {
         "symbol": "TCI.NS",

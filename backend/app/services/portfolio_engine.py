@@ -11,7 +11,7 @@ class PortfolioEngine:
 
     def analyze_portfolio(self, stocks_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Inputs: List of results from ScannerEngine.analyze_stock
+        Inputs: List of results from LongTermScannerEngine.analyze_stock
         """
         if not stocks_data:
             return {"score": 0, "details": [], "correlation_matrix": {}}
