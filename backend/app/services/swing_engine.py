@@ -89,9 +89,9 @@ class SwingEngine:
                  return None
                  
             # 3. Pull minor metadata context (Optional)
-            company_data = await asyncio.to_thread(market_service.get_company_info, sym)
+            company_data = await market_service.get_fundamentals(sym)
             name = company_data.get("shortName", sym)
-            sector = market_discovery.get_sector(sym)
+            sector = market_service.get_sector_for_symbol(sym)
 
             # 4. Pack successful setups
             return {
@@ -166,6 +166,8 @@ class SwingEngine:
                          f"Analyzing: {', '.join(current_active[:3])}...", 
                          current_active
                     )
+                    
+                    print(f"Processed {idx + 1}/{total_stocks}: {sym}", flush=True)
 
                     res = await self.analyze_stock(sym, job_id)
                     
@@ -195,11 +197,9 @@ class SwingEngine:
             if job_id in self.job_states:
                 self.job_states[job_id]["is_running"] = False
             
-            try:
-                if 'sync_task' in locals():
-                    await sync_task
-            except Exception:
-                pass
+            # Wait for progress loop to naturally exit
+            if 'sync_task' in locals():
+                await sync_task
 
         final_state = self.job_states.get(job_id, {})
         final_payload = {
@@ -247,7 +247,9 @@ class SwingEngine:
                         
                         current_count = len(state.get("results", []))
                         last_sync = state.get("last_data_sync", 0)
-                        if current_count - last_sync >= 5 or current_count == total:
+                        
+                        # Force a sync if condition met, OR if job is nearly done to flush everything
+                        if current_count - last_sync >= 5 or current_count == total or state.get("progress") == total:
                             current_result["data"] = list(state.get("results", []))
                             current_result["failed_symbols"] = list(state.get("failed_symbols", []))
                             state["last_data_sync"] = current_count

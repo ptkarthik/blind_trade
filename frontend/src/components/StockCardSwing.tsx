@@ -30,11 +30,22 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
                 </div>
             </div>
 
-            <div className="mb-4 flex items-center gap-4 relative z-10">
-                <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold tracking-tighter">₹{signal.price}</span>
-                    <span className="text-xs font-bold uppercase tracking-widest py-1 px-2 rounded-md bg-primary/10 text-primary border border-primary/20">
-                        {signal.signal}
+            <div className="mb-4 flex items-center justify-between relative z-10 bg-slate-50/50 p-3 rounded-xl border border-border/50">
+                <div className="flex flex-col">
+                    <span className="text-[9px] uppercase font-black tracking-widest text-muted-foreground mb-0.5">CURRENT (LTP)</span>
+                    <span className="text-xl font-black tracking-tighter text-slate-500">
+                        ₹{signal.price ? Number(signal.price).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
+                    </span>
+                </div>
+
+                <div className="h-8 w-px bg-border/50 mx-2" />
+
+                <div className="flex flex-col text-right">
+                    <span className="text-[9px] uppercase font-black tracking-widest text-primary flex items-center justify-end gap-1 mb-0.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary" /> SMART ENTRY
+                    </span>
+                    <span className="text-2xl font-black tracking-tighter text-foreground">
+                        ₹{signal.entry ? Number(signal.entry).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
                     </span>
                 </div>
             </div>
@@ -42,12 +53,16 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
             {/* Logistics Grid (Specific to Swing Trading) */}
             <div className="grid grid-cols-2 gap-3 mb-5 mt-auto relative z-10">
                 <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col items-center">
-                    <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground flex items-center gap-1"><Shield size={12} /> Stop Loss</span>
-                    <span className="font-mono font-bold text-destructive">₹{signal.stop_loss || '---'}</span>
+                    <span className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground flex items-center gap-1"><Shield size={12} /> Stop Loss</span>
+                    <span className="font-mono font-bold text-destructive">
+                        ₹{signal.stop_loss ? Number(signal.stop_loss).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
+                    </span>
                 </div>
                 <div className="bg-primary/5 p-3 rounded-xl border border-primary/20 flex flex-col items-center">
-                    <span className="text-[10px] uppercase font-bold tracking-widest text-primary flex items-center gap-1"><Target size={12} /> Target</span>
-                    <span className="font-mono font-bold text-emerald-500">₹{signal.target || '---'}</span>
+                    <span className="text-[9px] uppercase font-bold tracking-widest text-primary flex items-center gap-1"><Target size={12} /> Target</span>
+                    <span className="font-mono font-bold text-emerald-500">
+                        ₹{signal.target ? Number(signal.target).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
+                    </span>
                 </div>
                 <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col items-center col-span-2">
                     <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground flex items-center gap-1"><Clock size={12} /> Holding Period</span>

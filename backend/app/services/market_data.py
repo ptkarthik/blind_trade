@@ -628,9 +628,10 @@ class MarketDataService:
         return {}
 
 
-    async def get_ohlc(self, symbol: str, period: str = "1mo", interval: str = "1d") -> pd.DataFrame:
+    async def get_ohlc(self, symbol: str, period: str = "1mo", interval: str = "1d", fast_fail: bool = False) -> pd.DataFrame:
         """
         Fetch OHLCV data with TwelveData -> Yahoo -> Empty Fallback.
+        If fast_fail is True, skips lengthy proxy fallbacks (useful for synchronous UI requests).
         """
         # 1. Try TwelveData
         if self.td and not self.td_disabled and not symbol.startswith("^"):
@@ -712,6 +713,10 @@ class MarketDataService:
                     return df_dl
             except: pass
 
+            if fast_fail:
+                print(f"⏩ fast_fail enabled for {symbol}, bypassing proxy retry loop.")
+                continue
+
             # Proxy Fallback
             try:
                 df_proxy = await self._fetch_hist_with_proxy(ticker_symbol, period, interval)
@@ -720,6 +725,7 @@ class MarketDataService:
                     return df_proxy
             except Exception:
                 pass
+            
             
             continue # Try next candidate
 

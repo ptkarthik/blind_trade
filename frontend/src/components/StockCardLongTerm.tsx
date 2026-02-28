@@ -86,26 +86,42 @@ export function StockCardLongTerm({ signal, rank, onClick }: StockCardLongTermPr
                 </div>
             </div>
 
-            {/* --- MAIN METRICS GRID (Investment Grade) --- */}
-            <div className="grid grid-cols-3 gap-4 py-4 border-t border-slate-100">
-                {/* 1. Price & Target */}
-                <div className="space-y-1">
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Current Price</p>
-                    <p className="text-xl font-black text-slate-700">
-                        {formatPrice(signal.price)}
-                    </p>
-                    {typeof signal.target === 'number' && (
-                        <div className="flex items-center gap-1 mt-1">
-                            <TrendingUp size={12} className="text-emerald-500" />
-                            <span className="text-xs font-bold text-emerald-600">
-                                Target: {formatPrice(signal.target)}
-                            </span>
-                        </div>
-                    )}
+            {/* --- ACTION ZONE (The "Trade" Setup) --- */}
+            <div className="grid grid-cols-4 gap-2 py-3 border-t border-slate-100">
+                <div className="flex flex-col gap-0.5">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400">LTP</span>
+                    <span className="font-mono font-bold text-slate-600 text-xs sm:text-base">
+                        {typeof signal.price === 'number' ? `₹${signal.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    </span>
                 </div>
 
-                {/* 2. Quality & Value */}
-                <div className="space-y-1 border-l border-slate-100 pl-4">
+                <div className="flex flex-col gap-0.5 border-l border-slate-100 pl-2">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-emerald-500">Entry</span>
+                    <span className="font-mono font-bold text-emerald-600 text-xs sm:text-base">
+                        {typeof signal.entry === 'number' ? `₹${signal.entry.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    </span>
+                </div>
+
+                <div className="flex flex-col gap-0.5 border-l border-slate-100 pl-2">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-red-500">Stop Loss</span>
+                    <span className="font-mono font-bold text-red-600 text-xs sm:text-base">
+                        {typeof signal.stop_loss === 'number' ? `₹${signal.stop_loss.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    </span>
+                </div>
+
+                <div className="flex flex-col gap-0.5 border-l border-slate-100 pl-2">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-blue-500">Target</span>
+                    <span className="font-mono font-bold text-blue-600 text-xs sm:text-base">
+                        {typeof signal.target === 'number' ? `₹${signal.target.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    </span>
+                </div>
+            </div>
+
+            {/* --- MAIN METRICS GRID (Investment Grade) --- */}
+            <div className="grid grid-cols-2 gap-4 py-4 border-t border-slate-100">
+
+                {/* 1. Quality & Value */}
+                <div className="space-y-1">
                     <p className="text-[10px] uppercase font-bold text-slate-400">Fundamentals</p>
                     <div className="flex flex-col gap-1">
                         <div className="flex justify-between text-xs">
@@ -121,7 +137,7 @@ export function StockCardLongTerm({ signal, rank, onClick }: StockCardLongTermPr
                     </div>
                 </div>
 
-                {/* 3. Strategic Horizon */}
+                {/* 2. Strategic Horizon */}
                 <div className="space-y-1 border-l border-slate-100 pl-4">
                     <p className="text-[10px] uppercase font-bold text-slate-400">Horizon</p>
                     <div className="flex items-center gap-1.5 mt-1">

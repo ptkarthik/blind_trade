@@ -138,11 +138,16 @@ export function DealCard({ signal, rank, onClick }: DealCardProps) {
                             </div>
                             <div className="flex gap-2 mt-0.5 flex-wrap">
                                 <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-500 uppercase tracking-tighter`}>
-                                    SCORE: {signal.score}
+                                    SCORE: {typeof signal.score === 'number' ? signal.score.toFixed(0) : signal.score}
                                 </span>
                                 {signal.market_cap_category && (
                                     <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-500 uppercase tracking-tighter">
                                         {signal.market_cap_category}
+                                    </span>
+                                )}
+                                {signal.hold_duration && !isIntraday && (
+                                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 uppercase tracking-tight flex items-center gap-1">
+                                        ⏱ {signal.hold_duration}
                                     </span>
                                 )}
                                 {signal.accumulation_status && (
@@ -184,97 +189,105 @@ export function DealCard({ signal, rank, onClick }: DealCardProps) {
                 </div>
 
                 {/* Middle Section: Price Info */}
-                <div className="flex flex-col md:flex-row gap-6 border-t border-b border-slate-200/40 py-5 mt-2">
-                    <div className="flex-1 flex items-center justify-between px-2 sm:border-r border-slate-200/30">
+                <div className="border-t border-b border-slate-200/40 py-4 mt-2 mb-2">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 px-2">
+                        {/* Current (LTP) */}
                         <div className="flex flex-col text-left">
-                            <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase mb-1">{isIntraday ? 'ENTRY PRICE' : 'CURRENT (LTP)'}</span>
-                            <span className="text-xl font-black tabular-nums tracking-tighter text-slate-400">₹{typeof signal.price === 'number' ? signal.price.toLocaleString() : 'N/A'}</span>
-                        </div>
-                        <div className="h-10 w-px bg-slate-200/40 mx-4 hidden sm:block" />
-                        <div className="flex flex-col text-right pr-4">
-                            <span className="text-[10px] font-black text-primary tracking-wider uppercase mb-1 flex items-center justify-end gap-1">
-                                <div className="h-1.5 w-1.5 rounded-full bg-primary" /> {isIntraday ? 'VIRTUAL SL' : 'SMART ENTRY'}
-                            </span>
-                            <span className={`text-3xl font-black tabular-nums tracking-tighter ${textColor} drop-shadow-sm`}>
-                                ₹{(isIntraday ? signal.stop_loss : signal.entry)?.toLocaleString() ?? 'N/A'}
+                            <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase mb-1">LTP</span>
+                            <span className="text-xl font-black tabular-nums tracking-tighter text-slate-500">
+                                ₹{typeof signal.price === 'number' ? signal.price.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : 'N/A'}
                             </span>
                         </div>
-                    </div>
 
-                    <div className="flex flex-col justify-center px-4 border-l border-slate-200/30 hidden xl:flex">
-                        <div className="flex flex-col">
-                            <span className="text-[9px] font-black text-emerald-600/70 uppercase mb-0.5">{isIntraday ? 'INTRADAY TARGET' : '3Y TARGET & ROI:'}</span>
+                        {/* Smart Entry */}
+                        <div className="flex flex-col text-left">
+                            <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase mb-1">SMART ENTRY</span>
+                            <span className="text-xl font-black tabular-nums tracking-tighter text-slate-500">
+                                ₹{typeof signal.entry === 'number' ? signal.entry.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : 'N/A'}
+                            </span>
+                        </div>
+
+                        {/* Stop Loss (or Virtual SL for Intraday) */}
+                        <div className="flex flex-col text-left lg:border-l lg:border-slate-200/30 lg:pl-4">
+                            <span className="text-[10px] font-black text-primary tracking-wider uppercase mb-1 flex items-center gap-1">
+                                <div className="h-1.5 w-1.5 rounded-full bg-primary" /> {isIntraday ? 'VIRTUAL SL' : 'STOP LOSS'}
+                            </span>
+                            <span className={`text-xl font-black tabular-nums tracking-tighter text-red-600 drop-shadow-sm`}>
+                                {typeof signal.stop_loss === 'number' ? `₹${signal.stop_loss.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : 'N/A'}
+                            </span>
+                        </div>
+
+                        {/* Target */}
+                        <div className="flex flex-col text-left">
+                            <span className="text-[10px] font-black text-emerald-600/70 tracking-wider uppercase mb-1 flex items-center gap-1">
+                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> TARGET
+                            </span>
                             <div className="flex items-baseline gap-1.5">
-                                <span className="text-emerald-700 font-bold text-sm">₹{typeof signal.target === 'number' ? signal.target.toLocaleString() : 'N/A'}</span>
+                                <span className="text-xl font-black tabular-nums tracking-tighter text-emerald-600 drop-shadow-sm">
+                                    ₹{typeof signal.target === 'number' ? signal.target.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : 'N/A'}
+                                </span>
                                 {(!isIntraday && signal.investment_advisory?.targets?.projected_cagr) && (
-                                    <span className="text-[10px] font-black text-emerald-500">
+                                    <span className="text-[10px] font-black text-emerald-500 hidden sm:inline-block">
                                         (+{signal.investment_advisory.targets.projected_cagr}%)
                                     </span>
                                 )}
                             </div>
                         </div>
-                        <div className="h-px w-10 bg-slate-200 my-1" />
-                        <div className="flex items-center gap-2">
-                            <span className={`text-[9px] font-black ${isIntraday ? 'text-primary' : 'text-red-600/70'} uppercase`}>{isIntraday ? 'RR RATIO:' : 'STOP:'}</span>
-                            <span className={`font-bold text-sm ${isIntraday ? 'text-primary' : 'text-red-700'}`}>
-                                {isIntraday ? '1:1.5' : `₹${signal.stop_loss?.toLocaleString()}`}
-                            </span>
-                        </div>
-                    </div>
-
-                    <div className="flex-[1.5] grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                            <span className="text-[9px] font-black text-emerald-600/80 tracking-widest uppercase flex items-center gap-1">
-                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> BULLISH DRIVERS
-                            </span>
-                            <div className="space-y-1">
-                                {strengths.slice(0, 3).map((r, i) => (
-                                    <div key={i} className="flex items-start justify-between text-[10px] p-1.5 rounded-lg border bg-emerald-500/5 border-emerald-100/30 leading-tight">
-                                        <span className="font-bold text-slate-700 mr-2">{r.text}</span>
-                                        <span className="font-black text-emerald-600 shrink-0">{r.value}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="space-y-1.5">
-                            <span className="text-[9px] font-black text-red-600/80 tracking-widest uppercase flex items-center gap-1">
-                                <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> RISK FACTORS
-                            </span>
-                            <div className="space-y-1">
-                                {weaknesses.slice(0, 3).map((r, i) => (
-                                    <div key={i} className="flex items-start justify-between text-[10px] p-1.5 rounded-lg bg-red-500/[0.03] border border-red-100/30 leading-tight">
-                                        <span className="font-bold text-slate-700 mr-2">{r.text}</span>
-                                        <span className="font-black text-red-600 shrink-0">{r.value}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
                     </div>
                 </div>
 
-                {/* Strategy Summary Verdict */}
-                <div className="flex flex-col gap-2">
-                    <div className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-dashed ${isBuy ? 'bg-emerald-500/[0.02] border-emerald-200/50' : isHold ? 'bg-amber-500/[0.02] border-amber-200/50' : 'bg-red-500/[0.02] border-red-200/50'}`}>
-                        <div className={`h-1.5 w-1.5 rounded-full ${isBuy ? 'bg-emerald-500' : isNeutral ? 'bg-amber-500' : 'bg-red-500'} animate-pulse`} />
-                        <span className={`text-[10px] font-bold italic ${textColor}/90 leading-tight`}>
-                            {signal.verdict || signal.strategic_summary || "Strategic alignment confirmed by multi-engine sweep."}
+                <div className="flex-[1.5] grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                        <span className="text-[9px] font-black text-emerald-600/80 tracking-widest uppercase flex items-center gap-1">
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> BULLISH DRIVERS
                         </span>
+                        <div className="space-y-1">
+                            {strengths.slice(0, 3).map((r, i) => (
+                                <div key={i} className="flex items-start justify-between text-[10px] p-1.5 rounded-lg border bg-emerald-500/5 border-emerald-100/30 leading-tight">
+                                    <span className="font-bold text-slate-700 mr-2">{r.text}</span>
+                                    <span className="font-black text-emerald-600 shrink-0">{r.value}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <span className="text-[9px] font-black text-red-600/80 tracking-widest uppercase flex items-center gap-1">
+                            <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> RISK FACTORS
+                        </span>
+                        <div className="space-y-1">
+                            {weaknesses.slice(0, 3).map((r, i) => (
+                                <div key={i} className="flex items-start justify-between text-[10px] p-1.5 rounded-lg bg-red-500/[0.03] border border-red-100/30 leading-tight">
+                                    <span className="font-bold text-slate-700 mr-2">{r.text}</span>
+                                    <span className="font-black text-red-600 shrink-0">{r.value}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                <div className="flex items-center gap-1.5 mt-2">
-                    <button className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest shadow-sm transition-all text-white ${isBuy ? 'bg-emerald-600 hover:bg-emerald-700' :
-                        isNeutral ? 'bg-amber-500 hover:bg-amber-600' :
-                            'bg-red-600 hover:bg-red-700'
-                        }`}>
-                        {isIntraday ? 'View Day Setup' : 'View Deep Report'}
-                    </button>
-                    {signal.analysis_mode === 'on-demand' && (
-                        <span className="text-[9px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-md ml-auto">
-                            REAL-TIME ANALYSIS
-                        </span>
-                    )}
+            {/* Strategy Summary Verdict */}
+            <div className="flex flex-col gap-2">
+                <div className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-dashed ${isBuy ? 'bg-emerald-500/[0.02] border-emerald-200/50' : isHold ? 'bg-amber-500/[0.02] border-amber-200/50' : 'bg-red-500/[0.02] border-red-200/50'}`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${isBuy ? 'bg-emerald-500' : isNeutral ? 'bg-amber-500' : 'bg-red-500'} animate-pulse`} />
+                    <span className={`text-[10px] font-bold italic ${textColor}/90 leading-tight`}>
+                        {signal.verdict || signal.strategic_summary || "Strategic alignment confirmed by multi-engine sweep."}
+                    </span>
                 </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 mt-2">
+                <button className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest shadow-sm transition-all text-white ${isBuy ? 'bg-emerald-600 hover:bg-emerald-700' :
+                    isNeutral ? 'bg-amber-500 hover:bg-amber-600' :
+                        'bg-red-600 hover:bg-red-700'
+                    }`}>
+                    {isIntraday ? 'View Day Setup' : 'View Deep Report'}
+                </button>
+                {signal.analysis_mode === 'on-demand' && (
+                    <span className="text-[9px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-md ml-auto">
+                        REAL-TIME ANALYSIS
+                    </span>
+                )}
             </div>
         </div>
     );

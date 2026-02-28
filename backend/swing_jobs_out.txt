@@ -1,0 +1,6 @@
+=== Recent Swing Jobs ===
+ID: 007f6ab1b0d14ff5a0166501ba04cae4 | Type: swing_scan | Status: completed | Created: 2026-02-27 16:56:23.603459 | Error: None
+ID: eb0a18f0d3ff433c87f1c3ec9d7bc09d | Type: swing_scan | Status: completed | Created: 2026-02-27 16:51:05.760375 | Error: None
+ID: 61ed01e7922e44f0afceca5d3704cbb1 | Type: swing_scan | Status: failed | Created: 2026-02-27 16:47:35.620640 | Error: System restarted while job was active.
+ID: 2f25cbc9647746c595d4df8e1b8fccf5 | Type: swing_scan | Status: stopped | Created: 2026-02-27 16:42:23.239945 | Error: None
+ID: 7496bcd30ca54174a34868ca1262f32c | Type: swing_scan | Status: completed | Created: 2026-02-27 16:37:41.489450 | Error: None

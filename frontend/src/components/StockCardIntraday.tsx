@@ -68,26 +68,32 @@ export function StockCardIntraday({ signal, onClick }: StockCardIntradayProps) {
             </div>
 
             {/* --- ACTION ZONE (The "Trade" Setup) --- */}
-            <div className="flex items-center gap-2 py-3 border-t border-b border-slate-200/50 my-2">
+            <div className="grid grid-cols-4 gap-2 py-3 border-t border-b border-slate-200/50 my-2">
                 <div className="flex flex-col gap-0.5">
-                    <span className="text-[10px] uppercase font-bold text-emerald-500">Entry</span>
-                    <span className="font-mono font-bold text-emerald-300">
-                        {typeof signal.entry === 'number' ? `₹${signal.entry.toLocaleString()}` : '---'}
-                    </span>
-                    <span className="text-[9px] text-emerald-500/50">Zone</span>
-                </div>
-
-                <div className="flex flex-col gap-0.5 border-l border-white/10 pl-6">
-                    <span className="text-[10px] uppercase font-bold text-red-500">Stop Loss</span>
-                    <span className="font-mono font-bold text-red-300">
-                        {typeof signal.stop_loss === 'number' ? `₹${signal.stop_loss.toLocaleString()}` : '---'}
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400">LTP</span>
+                    <span className="font-mono font-bold text-slate-600 text-xs sm:text-sm">
+                        {typeof signal.price === 'number' ? `₹${signal.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
                     </span>
                 </div>
 
-                <div className="flex flex-col gap-0.5 border-l border-white/10 pl-6">
-                    <span className="text-[10px] uppercase font-bold text-blue-500">Target</span>
-                    <span className="font-mono font-bold text-blue-300">
-                        {typeof signal.target === 'number' ? `₹${signal.target.toLocaleString()}` : '---'}
+                <div className="flex flex-col gap-0.5 border-l border-slate-200/50 pl-2">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-emerald-500">Entry</span>
+                    <span className="font-mono font-bold text-emerald-600 text-xs sm:text-sm">
+                        {typeof signal.entry === 'number' ? `₹${signal.entry.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    </span>
+                </div>
+
+                <div className="flex flex-col gap-0.5 border-l border-slate-200/50 pl-2">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-red-500">Stop Loss</span>
+                    <span className="font-mono font-bold text-red-600 text-xs sm:text-sm">
+                        {typeof signal.stop_loss === 'number' ? `₹${signal.stop_loss.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    </span>
+                </div>
+
+                <div className="flex flex-col gap-0.5 border-l border-slate-200/50 pl-2">
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-blue-500">Target</span>
+                    <span className="font-mono font-bold text-blue-600 text-xs sm:text-sm">
+                        {typeof signal.target === 'number' ? `₹${signal.target.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
                     </span>
                 </div>
             </div>

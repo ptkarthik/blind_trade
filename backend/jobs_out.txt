@@ -1,0 +1,16 @@
+=== Recent Jobs ===
+ID: c479892b126b4523bc8ba6dbf7a55ff8 | Type: intraday | Status: completed | Created: 2026-02-27 16:09:40.860618
+ID: 22007822475c469ca177b446fd603736 | Type: intraday | Status: completed | Created: 2026-02-27 08:50:01.751250
+ID: 7085d64e56394434b9a0119b8f34c1fb | Type: intraday | Status: failed | Created: 2026-02-27 08:40:58.085513
+ID: 0c256f4c54bc4ddea63ee24b95d93434 | Type: intraday | Status: completed | Created: 2026-02-27 05:21:19.777277
+ID: 1482eedd0299447dabaae8d07747a694 | Type: intraday | Status: completed | Created: 2026-02-27 04:48:03.493100
+ID: f98cb001692c4922816529c26a07e324 | Type: intraday | Status: completed | Created: 2026-02-27 04:19:41.076951
+ID: 61dadbae8bb446b49d475f9fc97490ce | Type: intraday | Status: failed | Created: 2026-02-27 04:18:42.160676
+ID: eef3375d88a44b8099a4f5f53d089609 | Type: intraday | Status: failed | Created: 2026-02-27 04:16:53.532743
+ID: 3fbf6566a2c34ae89008248d8fa23821 | Type: intraday | Status: completed | Created: 2026-02-27 04:10:46.104771
+ID: 335691b16642448b9adb8da1127a8d27 | Type: intraday | Status: failed | Created: 2026-02-27 04:09:31.805557
+ID: 4c01686be9864cebb2549aae5863f050 | Type: intraday | Status: failed | Created: 2026-02-27 03:53:41.157083
+ID: 329847d014a24aa284aeb6591d157d55 | Type: intraday | Status: stopped | Created: 2026-02-27 03:49:06.995894
+ID: 58b0d0eeb5a14d25b0f6d4938dd7262d | Type: intraday | Status: failed | Created: 2026-02-27 03:47:06.480622
+ID: 30bd465850af4bc891e5ab69a9f8410f | Type: intraday | Status: failed | Created: 2026-02-27 03:09:35.788021
+ID: a770bbce1bff42c691bb3caad552a9cc | Type: intraday_scan | Status: failed | Created: 2026-02-27 03:07:34.325236

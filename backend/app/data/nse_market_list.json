@@ -2750,11 +2750,6 @@
         "raw_symbol": "EASEMYTRIP"
     },
     {
-        "symbol": "EASTSILK.NS",
-        "name": "Eastern Silk Industries Limited",
-        "raw_symbol": "EASTSILK"
-    },
-    {
         "symbol": "EBGNG.NS",
         "name": "GNG Electronics Limited",
         "raw_symbol": "EBGNG"
@@ -3348,6 +3343,11 @@
         "symbol": "GATEWAY.NS",
         "name": "Gateway Distriparks Limited",
         "raw_symbol": "GATEWAY"
+    },
+    {
+        "symbol": "GAUDIUMIVF.NS",
+        "name": "Gaudium IVF and Women Health Limited",
+        "raw_symbol": "GAUDIUMIVF"
     },
     {
         "symbol": "GAYAHWS.NS",
@@ -5760,9 +5760,9 @@
         "raw_symbol": "LTFOODS"
     },
     {
-        "symbol": "LTIM.NS",
+        "symbol": "LTM.NS",
         "name": "LTIMindtree Limited",
-        "raw_symbol": "LTIM"
+        "raw_symbol": "LTM"
     },
     {
         "symbol": "LTTS.NS",
@@ -8856,7 +8856,7 @@
     },
     {
         "symbol": "SHRADHA.NS",
-        "name": "Shradha Infraprojects Limited",
+        "name": "Shradha Realty Limited",
         "raw_symbol": "SHRADHA"
     },
     {

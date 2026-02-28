@@ -53,7 +53,7 @@ class IntradayEngine:
         except:
             return {"score": 50, "bias": "Neutral"}
 
-    async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None):
+    async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None, fast_fail: bool = False):
         """
         Professional Intraday Analysis with Multi-Timeframe & Market Context.
         """
@@ -62,7 +62,7 @@ class IntradayEngine:
             if job_id and self.job_states.get(job_id, {}).get("stop_requested"): return None
 
             # 1. Fetch ONLY 5m OHLC Data (5 days)
-            df_5m = await market_service.get_ohlc(sym, period="5d", interval="5m")
+            df_5m = await market_service.get_ohlc(sym, period="5d", interval="5m", fast_fail=fast_fail)
             
             if df_5m is None or df_5m.empty or len(df_5m) < 40:
                 print(f"⚠️ Intraday Analysis skipped for {sym}: Insufficient data (5m).")

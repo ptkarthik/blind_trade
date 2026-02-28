@@ -156,7 +156,7 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
     for s in candidates:
         try:
             if mode == "intraday":
-                analysis = await intraday_engine.analyze_stock(s)
+                analysis = await intraday_engine.analyze_stock(s, fast_fail=True)
             else:
                 # 1. Fetch Market Context (Regime & Macro) to ensure scoring alignment with Scan
                 regime = await longterm_scanner_engine._detect_market_regime()
@@ -167,7 +167,8 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
                     s, 
                     weights=regime["weights"], 
                     regime_label=regime["label"], 
-                    macro_data=macro
+                    macro_data=macro,
+                    fast_fail=True
                 )
             if analysis: break
         except Exception as e:

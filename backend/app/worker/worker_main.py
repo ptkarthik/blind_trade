@@ -1,7 +1,11 @@
 import sys
 import os
+import socket
 # Ensure backend dir is in path BEFORE other imports
 sys.path.append(os.getcwd())
+
+# Prevent thread pool exhaustion from rogue hanging network requests
+socket.setdefaulttimeout(15.0)
 
 import asyncio
 from sqlalchemy import select
@@ -210,7 +214,8 @@ if __name__ == "__main__":
         # Increase default thread pool size for massive parallel yfinance fetches
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=200)
+        # Use 300 to give plenty of headroom for timed-out but still draining sockets
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=300)
         loop.set_default_executor(executor)
         loop.run_until_complete(worker_loop())
     except KeyboardInterrupt:

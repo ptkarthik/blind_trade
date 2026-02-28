@@ -197,7 +197,7 @@ class LongTermScannerEngine:
         }
         return self.sanitize(final_payload)
 
-    async def analyze_stock(self, sym, weights=None, regime_label="Standard", macro_data=None, job_id=None):
+    async def analyze_stock(self, sym, weights=None, regime_label="Standard", macro_data=None, job_id=None, fast_fail=False):
         """
         Single Stock Analysis - Robust Wrapper
         """
@@ -224,7 +224,7 @@ class LongTermScannerEngine:
         try:
             # 1. Parallel Fetch Data (Comprehensive)
             # We bundle all independent fetches into one gather to minimize wall-clock time
-            ohlc_task = market_service.get_ohlc(sym, period="5y", interval="1wk")
+            ohlc_task = market_service.get_ohlc(sym, period="5y", interval="1wk", fast_fail=fast_fail)
             price_task = market_service.get_live_price(sym)
             fund_task = market_service.get_fundamentals(sym)
             meta_task = market_service.get_symbol_metadata(sym)
@@ -234,11 +234,15 @@ class LongTermScannerEngine:
             
             # Unpack with safety checks
             df = primary_results[0] if not isinstance(primary_results[0], Exception) else pd.DataFrame()
+            if df is None or df.empty or len(df) < 50:
+                if not job_id: print(f"⚠️ Skipping {sym}: Insufficient historical data.")
+                return None
+                
             price_data = primary_results[1] if not isinstance(primary_results[1], Exception) else {}
-            fund = primary_results[2] if not isinstance(primary_results[2], Exception) else {}
-            metadata = primary_results[3] if not isinstance(primary_results[3], Exception) else {}
+            fund_data = primary_results[2] if not isinstance(primary_results[2], Exception) else {}
+            meta_data = primary_results[3] if not isinstance(primary_results[3], Exception) else {}
             
-            sector_name = metadata.get("sector", "Unknown")
+            sector_name = meta_data.get("sector", "Unknown")
             
             # 2. Secondary Contextual Parallel Fetch
             index_task = market_service.get_index_performance(sector_name)
