@@ -262,11 +262,14 @@ class LongTermScannerEngine:
             import numpy as np
             is_valid_price = real_price is not None and not (isinstance(real_price, float) and np.isnan(real_price)) and real_price > 0
             is_valid_df = not df.empty and len(df) > 20
+            
+            # Phase 33 Core Adjustments: > 500 Cr Market Cap Filter
+            is_valid_mcap = market_cap is not None and market_cap > 5_000_000_000
              
-            print(f"DEBUG: {sym} -> Price: {real_price} (Valid: {is_valid_price}), OHLC Rows: {len(df)} (Valid: {is_valid_df})")
+            print(f"DEBUG: {sym} -> Price: {real_price} (Valid: {is_valid_price}), OHLC Rows: {len(df)} (Valid: {is_valid_df}), MCap: {market_cap}")
 
-            if not is_valid_df or not is_valid_price: 
-                print(f"⚠️ [DEBUG] {sym}: Data Unavailable or Invalid (OHLC: {len(df)}, Price: {real_price})")
+            if not is_valid_df or not is_valid_price or not is_valid_mcap: 
+                print(f"⚠️ [DEBUG] {sym}: Data Unavailable or Junk Filter Failed (OHLC: {len(df)}, Price: {real_price}, MCap: {market_cap})")
                 return None
 
             # 3. TA Analysis
@@ -275,8 +278,8 @@ class LongTermScannerEngine:
                 print(f"⚠️ [DEBUG] {sym}: TA Analysis Failed")
                 return None
             
-            fund_res = await asyncio.to_thread(fundamental_engine.analyze, fund, hist_financials)
-            risk_res = await asyncio.to_thread(risk_engine.analyze, ext, fund, df)
+            fund_res = await asyncio.to_thread(fundamental_engine.analyze, fund_data, hist_financials)
+            risk_res = await asyncio.to_thread(risk_engine.analyze, ext, fund_data, df)
             sector_res = await asyncio.to_thread(sector_engine.analyze, df, index_df, sector_name)
             
             # --- PROFESSIONAL ADAPTIVE SCORING (Phase 33) ---
@@ -352,6 +355,8 @@ class LongTermScannerEngine:
                 final_score -= 20 # Crush dead stocks in momentum scan
 
             final_score = round(final_score, 1)
+            # Strict Score Clamping (Max 100)
+            final_score = min(max(final_score, 0), 100)
             
             # 5. Extract Details for UI and Logic (Moved Up to avoid crash)
             ta_details = []
@@ -757,19 +762,34 @@ class LongTermScannerEngine:
 
     async def _detect_market_regime(self) -> dict:
         """
-        Detects Market Regime using Nifty & VIX (Phase 33).
+        Detects Market Regime using dynamic percentiles of Nifty & VIX (Phase 33/Core Update).
         Returns weights for the session.
         """
+        import numpy as np
+        
         try:
             status = await market_service.get_market_status()
             vix = status.get("india_vix", 15)
-            nifty = status.get("nifty_50", 0)
             
-            # Simple Bear/Bull Check
-            # In a real app, we'd compare Nifty to its 200 EMA here.
-            # For now, we use VIX as the primary proxy.
+            # Fetch 1 year of VIX history to calculate percentiles dynamically
+            vix_hist = await market_service.get_ohlc("^INDIAVIX", period="1y", interval="1d")
             
-            if vix > 22:
+            is_bearish = False
+            is_bullish = False
+            
+            if not vix_hist.empty and len(vix_hist) > 50:
+                vix_values = vix_hist['close'].dropna()
+                p80 = np.percentile(vix_values, 80)
+                p20 = np.percentile(vix_values, 20)
+                
+                is_bearish = vix > p80
+                is_bullish = vix < p20
+            else:
+                # Fallback to hardcoded safe values if history fetch fails
+                is_bearish = vix > 22
+                is_bullish = vix < 15
+            
+            if is_bearish:
                 # BEAR/CRASH Regime: Focus on Cash & Quality
                 return {
                     "label": "Bearish (High Volatility)",
@@ -777,7 +797,7 @@ class LongTermScannerEngine:
                         "fundamental": 0.50, "trend": 0.15, "momentum": 0.05, "volume": 0.15, "risk": 0.15
                     }
                 }
-            elif vix < 15:
+            elif is_bullish:
                 # BULL Regime: Focus on Momentum & Trend
                 return {
                     "label": "Bullish (Gaining Momentum)",

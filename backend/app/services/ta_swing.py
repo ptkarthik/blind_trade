@@ -25,31 +25,34 @@ class SwingTechnicalAnalysis:
         reasons = []
 
         # 1. Macro Trend Filter (SMA 50 and SMA 200)
-        # Condition: The stock must be in an overall uptrend (trading consistently above its 50 SMA).
+        # Professional standard: Price must be above both 50 and 200 SMAs for high-probability setups.
         sma_50 = SMAIndicator(close=df['close'], window=50).sma_indicator().iloc[-1]
-        is_macro_bullish = close > sma_50
+        sma_200 = SMAIndicator(close=df['close'], window=200).sma_indicator().iloc[-1]
+        
+        is_macro_bullish = (close > sma_50) and (close > sma_200)
         
         if not is_macro_bullish:
-            return {"match": False, "reason": "Fails Macro Uptrend Filter (Below 50 SMA)"}
+            reason = "Below 50 SMA" if close < sma_50 else "Below 200 SMA (No Stage 2 Uptrend)"
+            return {"match": False, "reason": f"Fails Macro Trend Logic ({reason})"}
             
         reasons.append({
-            "text": "Above 50 SMA (Uptrend)",
+            "text": "Strong Macro Trend (Above 50/200 SMA)",
             "type": "positive",
             "label": "MACRO",
-            "value": f"SMA: {round(sma_50, 2)}"
+            "value": f"SMA50: {round(sma_50, 2)}"
         })
 
-        # 2. Support Zones (EMA 20 or SMA 50) - 1.5% Tolerance Bounce
+        # 2. Support Zones (EMA 20 or SMA 50) - 2.5% Tolerance Bounce (Relaxed from 1.5%)
         ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
         
-        # Check if price is within +/- 1.5% of either support line
-        ema_20_bounce = (ema_20 * 0.985) <= close <= (ema_20 * 1.015)
-        sma_50_bounce = (sma_50 * 0.985) <= close <= (sma_50 * 1.015)
+        # Check if price is within +/- 2.5% of either support line
+        ema_20_bounce = (ema_20 * 0.975) <= close <= (ema_20 * 1.025)
+        sma_50_bounce = (sma_50 * 0.975) <= close <= (sma_50 * 1.025)
         
         is_support_bounce = ema_20_bounce or sma_50_bounce
         
         if not is_support_bounce:
-            return {"match": False, "reason": "Not in Support Bounce Zone"}
+            return {"match": False, "reason": "Not in Support Bounce Zone (2.5% Tolerance)"}
             
         bounce_target = "EMA 20" if ema_20_bounce else "SMA 50"
         bounce_val = ema_20 if ema_20_bounce else sma_50
@@ -60,35 +63,45 @@ class SwingTechnicalAnalysis:
             "value": f"{bounce_target}: {round(bounce_val, 2)}"
         })
 
-        # 2b. Candlestick Confirmation (Hammer or Bullish Engulfing)
-        body_size = abs(latest['close'] - latest['open'])
-        lower_wick = latest['open'] - latest['low'] if latest['close'] > latest['open'] else latest['close'] - latest['low']
-        upper_wick = latest['high'] - latest['close'] if latest['close'] > latest['open'] else latest['high'] - latest['open']
+        # 2b. Candlestick Confirmation (Hammer, Pin Bar, or Bullish Engulfing)
+        # Check LATEST and PREVIOUS for confirmation (Double window)
+        def detect_bullish_pattern(candle, previous):
+            body = abs(candle['close'] - candle['open'])
+            l_wick = candle['open'] - candle['low'] if candle['close'] > candle['open'] else candle['close'] - candle['low']
+            u_wick = candle['high'] - candle['close'] if candle['close'] > candle['open'] else candle['high'] - candle['open']
+            
+            # Hammer / Pin Bar: Long lower wick (>= 1.5x body), small upper wick
+            is_pin = (l_wick >= (1.5 * body)) and (u_wick <= body) and (body >= 0)
+            
+            # Bullish Engulfing
+            is_green = candle['close'] > candle['open']
+            prev_red = previous['close'] < previous['open']
+            is_engulfing = is_green and prev_red and (candle['open'] <= previous['close']) and (candle['close'] >= previous['open'])
+            
+            return "Hammer/Pin Bar" if is_pin else "Bullish Engulfing" if is_engulfing else None
+
+        # Check Latest
+        pattern = detect_bullish_pattern(latest, prev)
+        # Check Previous (Shifted)
+        if not pattern and len(df) >= 3:
+             pattern = detect_bullish_pattern(prev, df.iloc[-3])
         
-        # Hammer logic: Long lower wick (>= 2x body), small upper wick
-        is_hammer = (lower_wick >= (2 * body_size)) and (upper_wick <= body_size) and (body_size > 0)
-        
-        # Bullish Engulfing: Green candle completely covers previous red candle
-        is_green = latest['close'] > latest['open']
-        prev_is_red = prev['close'] < prev['open']
-        engulfing = is_green and prev_is_red and (latest['open'] <= prev['close']) and (latest['close'] >= prev['open'])
-        
-        if not (is_hammer or engulfing):
-            return {"match": False, "reason": "No Bullish Candlestick Confirmation (Need Hammer or Engulfing)"}
+        if not pattern:
+            return {"match": False, "reason": "No Bullish Candle Confirmation (Hammer/Pin/Engulfing)"}
             
         reasons.append({
-            "text": "Hammer" if is_hammer else "Bullish Engulfing",
+            "text": pattern,
             "type": "positive",
             "label": "CANDLE",
             "value": "Confirmed"
         })
 
-        # 3. Momentum Base (RSI 40-60)
+        # 3. Momentum Base (RSI 35-65) - Widened from 38-62 based on feedback
         rsi_14 = RSIIndicator(close=df['close'], window=14).rsi().iloc[-1]
-        is_rsi_valid = 40 <= rsi_14 <= 60
+        is_rsi_valid = 35 <= rsi_14 <= 65
         
         if not is_rsi_valid:
-            return {"match": False, "reason": f"RSI ({round(rsi_14, 1)}) outside 40-60 base"}
+            return {"match": False, "reason": f"RSI ({round(rsi_14, 1)}) outside 35-65 base"}
             
         reasons.append({
             "text": "RSI building momentum",
@@ -97,12 +110,12 @@ class SwingTechnicalAnalysis:
             "value": round(rsi_14, 1)
         })
 
-        # 4. Volume Confirmation (Current Vol > 20 Vol MA)
+        # 4. Volume Confirmation (Current Vol > 1.2x 20 Vol MA) - Strict Surge based on feedback
         vol_ma_20 = df['volume'].rolling(20).mean().iloc[-1]
-        is_vol_confirmed = latest['volume'] > vol_ma_20
+        is_vol_confirmed = latest['volume'] > (vol_ma_20 * 1.2)
         
         if not is_vol_confirmed:
-            return {"match": False, "reason": "Fails Volume Surge"}
+            return {"match": False, "reason": "No Institutional Volume Surge (> 1.2x)"}
             
         vol_ratio = latest['volume'] / vol_ma_20 if vol_ma_20 > 0 else 1
         reasons.append({

@@ -13879,5 +13879,30 @@
         "sector": "General",
         "market_cap_category": "Small",
         "market_cap_value": 0
+    },
+    "GAUDIUMIVF.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "LTM.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "TODAY_DEBUG.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "TODAY_DEBUG.BO": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "TODAY_DEBUG": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
     }
 }

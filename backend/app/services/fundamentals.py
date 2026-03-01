@@ -17,7 +17,7 @@ class FundamentalAnalysisEngine:
         Main entry point.
         """
         if not info:
-             return {"score": 0, "rating": "Unknown", "details": ["No Data"], "metrics": {}}
+             return {"score": 0, "rating": "Unknown", "details": [{"text": "Data Unavailable", "type": "neutral", "label": "DATA", "value": "Missing"}], "metrics": {}}
 
         # 1. Extract & Clean Data
         data = self._clean_data(info)
@@ -53,6 +53,29 @@ class FundamentalAnalysisEngine:
         dcf_data = self._calculate_intrinsic_value(data)
         val_gap = dcf_data["gap_pct"]
         
+        # Phase 33 Core Adjustments: Junk Filters (ROCE & Sales Growth)
+        roce = data.get("roce")
+        rev_growth = data.get("revenue_growth")
+        rev_cagr = data.get("rev_cagr") if data.get("rev_cagr") is not None else rev_growth
+        
+        sector = data.get("sector", "Unknown")
+        pb = data.get("pb")
+        pb_mean = data.get("pb_mean", 2.5)
+        
+        # Cyclical Exemption: Metals/Energy etc. at cyclical bottoms (deep value)
+        cyclical_sectors = ["Metal", "Energy", "Infrastructure", "Mining", "Commodities"]
+        is_cyclical = any(s in sector for s in cyclical_sectors)
+        cyclical_exemption = is_cyclical and pb is not None and (pb < 1.2 or pb < (pb_mean * 0.8))
+        
+        junk_flags = []
+        if not cyclical_exemption:
+            if roce is not None and roce < 0.12:
+                junk_flags.append(f"Low Capital Efficiency (ROCE < 12%)")
+            if rev_cagr is not None and rev_cagr <= 0:
+                junk_flags.append("Stagnant/Negative Sales Growth")
+            
+        is_junk = len(junk_flags) > 0
+        
         # 4. Weighted Aggregate
         # Re-weight: Growth(20), Profit(20), Value(15), Health(15), FCF(15), Piotroski(15)
         # Plus a bonus/penalty for DCF Gap
@@ -65,6 +88,10 @@ class FundamentalAnalysisEngine:
         # DCF Bonus: If undervalued by > 20%, add up to 10 points
         if val_gap > 20: final_score += min(10, (val_gap - 20) / 2)
         elif val_gap < -20: final_score -= min(10, abs(val_gap + 20) / 2)
+        
+        # Apply Junk Penalty (Structural Invalidation)
+        if is_junk:
+            final_score = min(final_score, 40.0) # Cap score in HOLD territory to neutralize technical fakeouts
         
         # 5. Generate Insight
         details = self._generate_insights(data, profit_score, valuation_score, health_score, growth_score)
@@ -85,6 +112,10 @@ class FundamentalAnalysisEngine:
         if red_flags:
             for flag in red_flags:
                 details.append({"text": flag, "type": "negative", "label": "QUALITY", "value": "Red Flag"})
+                
+        if is_junk:
+            for flag in junk_flags:
+                details.append({"text": flag, "type": "negative", "label": "JUNK FILTER", "value": "Failed"})
 
         rating = "HOLD"
         if final_score >= 80: rating = "STRONG BUY 💎"
@@ -131,7 +162,8 @@ class FundamentalAnalysisEngine:
             "free_cashflow": info.get("freeCashflow"),
             "net_income": info.get("netIncomeToCommon") or info.get("netIncome"),
             "promoter_holding": info.get("heldPercentInsiders", 0) * 100, # Convert to %
-            "insider_buying": info.get("insiderPurchasePercent", 0)
+            "insider_buying": info.get("insiderPurchasePercent", 0),
+            "roce": info.get("returnOnCapitalEmployed") or info.get("returnOnEquity") 
         }
 
     def _calculate_de(self, info: Dict) -> float:

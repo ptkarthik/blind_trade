@@ -72,29 +72,32 @@ class LongTermTechnicalAnalysis:
         7. Price is within 25% of 52-week high
         """
         try:
-            if len(df) < 260: return {"passed": False, "details": "Not enough history"}
+            if len(df) < 55: return {"passed": False, "details": "Not enough history"}
             
             close = df['close']
             
-            sma_50 = close.rolling(window=50).mean()
-            sma_150 = close.rolling(window=150).mean()
-            sma_200 = close.rolling(window=200).mean()
+            # Adjusted for Weekly Data Input (1wk intervals)
+            sma_10w = close.rolling(window=10).mean() # Daily 50 equiv
+            sma_30w = close.rolling(window=30).mean() # Daily 150 equiv
+            sma_40w = close.rolling(window=40).mean() # Daily 200 equiv
+            sma_50w = close.rolling(window=50).mean() # True 50-Week SMA
             
             current_close = close.iloc[-1]
-            c_50 = sma_50.iloc[-1]
-            c_150 = sma_150.iloc[-1]
-            c_200 = sma_200.iloc[-1]
+            c_50 = sma_10w.iloc[-1]
+            c_150 = sma_30w.iloc[-1]
+            c_200 = sma_40w.iloc[-1]
+            c_50_week = sma_50w.iloc[-1]
             
-            # Check 200 SMA Trend (compare to 20 days ago)
-            c_200_prev = sma_200.iloc[-20]
+            # Check Trend (compare to 4 weeks ago)
+            c_200_prev = sma_40w.iloc[-4]
             trend_200_up = c_200 > c_200_prev
             
             # 52-Week High/Low
-            low_52 = df['low'].tail(260).min()
-            high_52 = df['high'].tail(260).max()
+            low_52 = df['low'].tail(52).min()
+            high_52 = df['high'].tail(52).max()
             
             abv_low = current_close > (low_52 * 1.25)
-            near_high = current_close > (high_52 * 0.75) # Within 25% of high means > 75% of high value
+            near_high = current_close > (high_52 * 0.75) 
             
             # Condition Checks
             c1 = current_close > c_150 and current_close > c_200
@@ -117,6 +120,7 @@ class LongTermTechnicalAnalysis:
                 "reason": reasons[0] if reasons else "Mixed Signals",
                 "sma_50": c_50,
                 "sma_200": c_200,
+                "sma_50_week": c_50_week,
                 "high_52": high_52
             }
         except:
@@ -213,24 +217,24 @@ class LongTermTechnicalAnalysis:
         template = LongTermTechnicalAnalysis.check_trend_template(df)
         ema_50 = template.get("sma_50", close)
         ema_200 = template.get("sma_200", close)
+        sma_50_week = template.get("sma_50_week", close)
         
         if template["passed"]:
             trend_score = 100
             groups["Trend"]["details"].append({"text": "Minervini Stage 2 Template", "type": "positive", "label": "TREND", "value": "Passed"})
         else:
-            # Partial Credit
-            if close > ema_200:
+            # Partial Credit: Guardrail uses the 50-Week SMA for a true long-term hold
+            if close > sma_50_week:
                 trend_score = 60
-                groups["Trend"]["details"].append({"text": "Above 200 EMA", "type": "positive", "label": "TREND", "value": "Bullish"})
+                groups["Trend"]["details"].append({"text": "Above 50-Week SMA", "type": "positive", "label": "TREND", "value": "Bullish"})
             else:
                 trend_score = 0
-                groups["Trend"]["details"].append({"text": "Below 200 EMA", "type": "negative", "label": "TREND", "value": "Bearish"})
+                groups["Trend"]["details"].append({"text": "Below 50-Week SMA", "type": "negative", "label": "TREND", "value": "Bearish"})
         
-        # 50 DMA Pullback Detection
-        # If Price is above 200EMA but within 2-3% of 50EMA (and above it OR slightly below)
+        # 10-Week Pullback Detection (equivalent to 50 DMA)
         dist_to_50 = (close - ema_50) / ema_50
         if 0 < dist_to_50 < 0.03 and trend_score >= 60:
-             groups["Trend"]["details"].append({"text": "Pullback to 50 DMA", "type": "positive", "label": "SETUP", "value": "Buy Zone"})
+             groups["Trend"]["details"].append({"text": "Pullback to 10-Wk MA (50DMA)", "type": "positive", "label": "SETUP", "value": "Buy Zone"})
              trend_score += 10
 
         # 2. Volume Analysis
@@ -265,14 +269,13 @@ class LongTermTechnicalAnalysis:
             "trend_score": trend_score,
             "mom_score": mom_score,
             "groups": groups,
-            "ema_20": ema_50, 
             "ema_50_val": ema_50,
-            "ema_200_val": ema_200,
+            "ema_200_val": sma_50_week, # Expose 50-Week SMA to UI
             "rsi": rsi,
             "atr": (df['high'] - df['low']).rolling(14).mean().iloc[-1],
-            "is_bullish_trend": close > ema_200,
+            "is_bullish_trend": close > sma_50_week,
             "trend": "BULLISH" if trend_score >= 50 else "BEARISH",
-            "support": round(ema_50 * 0.98, 2) if trend_score > 60 else round(ema_200 * 0.95, 2),
+            "support": round(ema_50 * 0.98, 2) if trend_score > 60 else round(sma_50_week * 0.95, 2),
             "resistance": round(template.get("high_52", close*1.2), 2),
             "drawdown": dd_data,
             "recovery": recovery_data,

@@ -233,14 +233,18 @@ function App() {
   // 4. Logic: Completion Refresh
   useEffect(() => {
     if (scanJob?.status === 'completed' || scanJob?.status === 'stopped') {
-      if (scanJob?.id) {
+      // ONLY pass the jobId if the completed job actually belongs to the active tab's mode.
+      // Otherwise, an intraday job finishing in the background will overwrite the swing tab's data!
+      const currentJobType = mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan';
+
+      if (scanJob?.id && scanJob?.type === currentJobType) {
         fetchSignals(true, scanJob.id);
       } else {
         fetchSignals(true);
       }
       fetchSectorSignals(true);
     }
-  }, [scanJob?.status]);
+  }, [scanJob?.status, mode]);
 
   const analyzeSymbol = async (symbol: string) => {
     setSearching(true);

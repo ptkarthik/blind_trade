@@ -1,0 +1,14 @@
+--- DB Verification --
+intraday Latest: 2026-02-28 15:12:48.494232
+Count: 2198
+Top 5: ['3MINDIA.NS', 'AFFLE.NS', 'ATLANTAELE.NS', 'AVADHSUGAR.NS', 'AVROIND.NS']
+
+swing_scan Latest: 2026-02-28 15:50:48.932262
+Count: 3
+Top 5: ['VIJAYA.NS', 'INDIAGLYCO.NS', 'COALINDIA.NS']
+
+full_scan Latest: 2026-02-26 06:18:25.161779
+Count: 1428
+Top 5: ['SHRIPISTON.NS', 'SILVERTUC.NS', 'BEL.NS', 'THANGAMAYL.NS', 'SILGO.NS']
+
+-----------------------

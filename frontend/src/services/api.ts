@@ -2,7 +2,7 @@ import axios from 'axios';
 import axiosRetry from 'axios-retry';
 
 const api = axios.create({
-    baseURL: 'http://localhost:8010/api/v1',
+    baseURL: 'http://localhost:8012/api/v1',
     timeout: 120000,
     headers: {
         'Content-Type': 'application/json',

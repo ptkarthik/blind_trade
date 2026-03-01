@@ -13,8 +13,8 @@ echo [0/4] Cleaning up old processes...
 taskkill /F /FI "WINDOWTITLE eq Blind Trade*" /IM cmd.exe >nul 2>&1
 
 :: 2. Murder by Port (Reliable)
-:: Port 8010 (API)
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":8010" ^| find "LISTENING"') do taskkill /f /pid %%a >nul 2>&1
+:: Port 8012 (API)
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":8012" ^| find "LISTENING"') do taskkill /f /pid %%a >nul 2>&1
 :: Port 8000 (Docs)
 for /f "tokens=5" %%a in ('netstat -aon ^| find ":8000" ^| find "LISTENING"') do taskkill /f /pid %%a >nul 2>&1
 :: Port 5173 (Frontend)
@@ -25,7 +25,7 @@ echo Done.
 :: 3. Start Backend API
 echo.
 echo [1/4] Starting Backend Server (API)...
-start "Blind Trade Backend API" cmd /k "cd backend && venv\Scripts\activate && uvicorn app.main:app --reload --port 8010"
+start "Blind Trade Backend API" cmd /k "cd backend && venv\Scripts\activate && uvicorn app.main:app --reload --port 8012"
 
 :: 4. Start Backend Worker
 echo.
@@ -47,7 +47,7 @@ echo ===================================================
 echo               ALL SYSTEMS GO 🚀
 echo ===================================================
 echo.
-echo 1. Backend API : http://localhost:8010/docs
+echo 1. Backend API : http://localhost:8012/docs
 echo 2. Worker      : Running in background window
 echo 3. Frontend    : http://localhost:5173
 echo.

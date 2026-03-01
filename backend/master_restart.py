@@ -27,10 +27,21 @@ def kill_python():
 
 def start_services():
     print("🚀 Starting API and Workers...")
+    
+    # Robust venv path (relative to this script)
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(backend_dir, "venv", "Scripts", "python.exe")
+    
+    if not os.path.exists(venv_python):
+        # Fallback to system python if venv not found (though venv is preferred)
+        print(f"⚠️ Venv Python not found at {venv_python}, falling back to system 'python'")
+        venv_python = "python"
+
     # Start API
     api_proc = subprocess.Popen(
-        ["python", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8010"],
-        creationflags=subprocess.CREATE_NEW_CONSOLE
+        [venv_python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8012"],
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        cwd=backend_dir
     )
     print(f"📡 API started (PID {api_proc.pid})")
     time.sleep(3)
@@ -39,34 +50,38 @@ def start_services():
     lt_env = os.environ.copy()
     lt_env["WORKER_TYPE"] = "longterm"
     lt_proc = subprocess.Popen(
-        ["python", "app/worker/worker_main.py"],
+        [venv_python, "app/worker/worker_main.py"],
         env=lt_env,
-        creationflags=subprocess.CREATE_NEW_CONSOLE
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        cwd=backend_dir
     )
     print(f"📡 Longterm Worker started (PID {lt_proc.pid})")
 
     int_env = os.environ.copy()
     int_env["WORKER_TYPE"] = "intraday"
     int_proc = subprocess.Popen(
-        ["python", "app/worker/worker_main.py"],
+        [venv_python, "app/worker/worker_main.py"],
         env=int_env,
-        creationflags=subprocess.CREATE_NEW_CONSOLE
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        cwd=backend_dir
     )
     print(f"📡 Intraday Worker started (PID {int_proc.pid})")
 
     swg_env = os.environ.copy()
     swg_env["WORKER_TYPE"] = "swing"
     swg_proc = subprocess.Popen(
-        ["python", "app/worker/worker_main.py"],
+        [venv_python, "app/worker/worker_main.py"],
         env=swg_env,
-        creationflags=subprocess.CREATE_NEW_CONSOLE
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        cwd=backend_dir
     )
     print(f"📡 Swing Worker started (PID {swg_proc.pid})")
     
     # Start Automated Cron Scheduler
     sched_proc = subprocess.Popen(
-        ["python", "scheduler.py"],
-        creationflags=subprocess.CREATE_NEW_CONSOLE
+        [venv_python, "scheduler.py"],
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        cwd=backend_dir
     )
     print(f"⏱️ Cron Scheduler started (PID {sched_proc.pid})")
 

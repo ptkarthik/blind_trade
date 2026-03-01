@@ -12,6 +12,10 @@ from app.services.utils import sanitize_data # Use shared version
 import asyncio
 import numpy as np
 import uuid
+import datetime
+
+with open("signals_runtime_check.txt", "a") as f:
+    f.write(f"[{datetime.datetime.now()}] Signals.py loaded from: {__file__} (TOTAL_COUNT_IS_HERE)\n")
 
 router = APIRouter()
 
@@ -29,7 +33,9 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
     Returns structured Top 100 buys, sells, holds for the dashboard.
     """
     try:
-        job_type = "full_scan" if mode == "longterm" else "intraday"
+        if mode == "longterm": job_type = "full_scan"
+        elif mode == "swing": job_type = "swing_scan"
+        else: job_type = "intraday"
         
         # Allow results from completed, processing (live), and stopped (partial) jobs
         # Favor jobs that actually have results data, then order by most recent
@@ -43,9 +49,6 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
         res = await db.execute(query)
         valid_job = res.scalars().first()
         
-        if not valid_job:
-             return sanitize_json_data({"buys": [], "sells": [], "holds": [], "total_count": 0, "message": f"No completed {mode} scan found."})
-
         if not valid_job or not valid_job.result:
              return sanitize_json_data({"buys": [], "sells": [], "holds": [], "total_count": 0})
 
@@ -70,15 +73,15 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
     Returns signals grouped by industry sectors for heatmaps.
     """
     try:
-        job_type = "full_scan" if mode == "longterm" else "intraday"
-        # Allow results from completed, processing (live), and stopped (partial) jobs
+        if mode == "longterm": job_type = "full_scan"
+        elif mode == "swing": job_type = "swing_scan"
+        else: job_type = "intraday"
+        
         # SMARTER PICK: Favor jobs that actually have result data, then by latest update.
-        # This prevents a fresh 0% scan from 'masking' the results of a 90% scan.
         query = select(Job).where(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing", "stopped"])
         ).order_by(
-            (func.json_extract(Job.result, '$.sectors').isnot(None)).desc(),
             (func.json_extract(Job.result, '$.data').isnot(None)).desc(),
             Job.updated_at.desc()
         ).limit(1)
@@ -88,10 +91,6 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
         if not valid_job or not valid_job.result:
             return {}
             
-        # FAST PATH: Use pre-calculated sectors if available (O(1) fetch)
-        if "sectors" in valid_job.result:
-            return sanitize_json_data(valid_job.result["sectors"])
-
         data = valid_job.result.get("data", [])
         
         timestamp = ""
@@ -105,21 +104,17 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
         
         # Dynamic Aggregation
         response = {}
-        
         for stock_data in data:
             try:
                 sym = stock_data.get("symbol", "UNKNOWN")
                 sector = stock_data.get("sector")
                 
-                # Fallback to Market Service if sector is missing in job result
                 if not sector or sector == "Unknown":
                     sector = market_service.get_sector_for_symbol(sym)
                     stock_data["sector"] = sector
                 
-                # Default bucket if still unknown
                 if not sector: sector = "General"
                 
-                # Initialize sector bucket if new
                 if sector not in response:
                     response[sector] = {"buys": [], "sells": [], "holds": [], "last_updated": timestamp}
                 
@@ -183,7 +178,9 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
 @router.get("/portfolio")
 async def get_portfolio_analysis(mode: str = "longterm", db: AsyncSession = Depends(get_db)):
     try:
-        job_type = "full_scan" if mode == "longterm" else "intraday"
+        if mode == "longterm": job_type = "full_scan"
+        elif mode == "swing": job_type = "swing_scan"
+        else: job_type = "intraday"
         query = select(Job).where(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing"])

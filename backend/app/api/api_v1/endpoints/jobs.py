@@ -17,7 +17,7 @@ class JobCreate(BaseModel):
     type: str # 'full_scan', 'sector_scan', 'intraday', or 'swing_scan'
 
 class JobSchema(BaseModel):
-    id: uuid.UUID
+    id: str
     type: str
     status: str
     result: Optional[Any]
@@ -237,7 +237,7 @@ async def resume_scan(job_type: Optional[str] = None, db: AsyncSession = Depends
     return job
 
 @router.get("/{job_id}/results")
-async def get_job_results(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_job_results(job_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get the full results data for a specific job.
     """

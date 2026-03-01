@@ -100,7 +100,7 @@ class SwingEngine:
                 "sector": sector,
                 "price": round(real_price, 2),
                 "score": 100, # Swing logic is binary. 100% means True setup.
-                "signal": "SWING BUY",
+                "signal": "BUY",
                 "confidence": "Confirmed Breakdown Bounce",
                 "reasons": swing_result.get("reasons", []),
                 # Specific Logistics tracking for Swing Trading

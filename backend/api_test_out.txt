@@ -1,0 +1,9 @@
+--- API DEBUG TEST (Port 8011) ---
+Testing: http://localhost:8011/api/v1/signals/today_debug?mode=swing
+  SUCCESS: Mode: swing | Top: None | Job: 67ffedb8-195e-4b98-a37f-fbfd1a005bd3 | Type: swing_scan
+Testing: http://localhost:8011/api/v1/signals/today_debug?mode=intraday
+  SUCCESS: Mode: intraday | Top: 3MINDIA.NS | Job: 2ea72dce-3e42-4b16-b7e7-b116488c9ca6 | Type: intraday
+Testing: http://localhost:8011/api/v1/signals/sectors_debug?mode=swing
+  SUCCESS: Mode: swing | Top: None | Job: 67ffedb8-195e-4b98-a37f-fbfd1a005bd3 | Type: swing_scan
+Testing: http://localhost:8011/api/v1/signals/sectors_debug?mode=intraday
+  SUCCESS: Mode: intraday | Top: 3MINDIA.NS | Job: 2ea72dce-3e42-4b16-b7e7-b116488c9ca6 | Type: intraday

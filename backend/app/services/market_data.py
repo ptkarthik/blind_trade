@@ -24,7 +24,7 @@ class MarketDataService:
         self.index_cache = {}
         self.financials_cache = {}
         self.extended_data_cache = {}
-        self.CACHE_DURATION = 60 # seconds generic price
+        self.CACHE_DURATION = 10 # seconds generic price (Reduced from 60 for real-time accuracy)
         self.INDEX_CACHE_DURATION = 3600 * 6 # 6 hours for sector indices
         self.EXTENDED_CACHE_DURATION = 3600 * 24 # 24 hours for holders/news
 
@@ -398,27 +398,26 @@ class MarketDataService:
                 def _fetch_yf():
                     ticker = yf.Ticker(ticker_symbol)
                     
+                    # 1. Try History first for accuracy (Reliable session close)
+                    hist = ticker.history(period="1d")
+                    if not hist.empty:
+                        p = hist["Close"].iloc[-1]
+                        pc = hist["Open"].iloc[0] # Approx prev or day open
+                        v = hist["Volume"].iloc[-1]
+                        # Try to get market cap from fast_info if possible
+                        try: mc = ticker.fast_info.market_cap
+                        except: mc = 0
+                        return {"price": p, "prev_close": pc, "volume": v, "market_cap": mc}
+                    
+                    # 2. Fallback to fast_info (Only if history is empty)
                     try:
                         p = ticker.fast_info.last_price
                         pc = ticker.fast_info.previous_close
                         v = ticker.fast_info.last_volume
                         mc = ticker.fast_info.market_cap
+                        return {"price": p, "prev_close": pc, "volume": v, "market_cap": mc}
                     except Exception:
-                         # Use 5d for weekend/after-hours robustness
-                         hist = ticker.history(period="5d")
-                         if hist.empty:
-                             # Try yf.download as last resort for live price
-                             hist = yf.download(ticker_symbol, period="5d", interval="1d", progress=False)
-                         
-                         if hist.empty: raise ValueError("No Data")
-                         p = hist["Close"].iloc[-1]
-                         pc = hist["Open"].iloc[0]
-                         v = hist["Volume"].iloc[-1]
-                         mc = 0
-                    
-                    if p is None or (isinstance(p, float) and np.isnan(p)) or p <= 0:
-                         raise ValueError("Invalid Price")
-                    return {"price": p, "prev_close": pc, "volume": v, "market_cap": mc}
+                         raise ValueError("No Data")
                 
                 import numpy as np
                 data = await asyncio.wait_for(asyncio.to_thread(_fetch_yf), timeout=12.0)

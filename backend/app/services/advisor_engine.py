@@ -41,7 +41,7 @@ class AdvisorEngine:
         
         # 3. Smart Structural Stop Loss
         # -----------------------------------------------------------
-        stop_loss = self._determine_longterm_stop(price, ta, risk)
+        stop_loss = self._determine_longterm_stop(price, ta, risk, driver=driver)
         
         # 4. Scenario Analysis (Risk-Adjusted Expectancy)
         # -----------------------------------------------------------
@@ -49,12 +49,16 @@ class AdvisorEngine:
 
         # 5. Smart Entry (Institutional Zones)
         # -----------------------------------------------------------
-        entry_analysis = self._determine_smart_entry(price, ta, mode="longterm", driver=driver)
+        entry_analysis = self._determine_smart_entry(price, ta, mode="longterm", driver=driver, metrics=metrics)
 
         # 6. Trend & Review Cycle
         # -----------------------------------------------------------
         trend_status = self._analyze_trend_slope(ta)
         review_cycle = "Weekly" if driver == "MOMENTUM" else "Quarterly"
+        
+        # 7. Rebalancing Rule
+        # -----------------------------------------------------------
+        rebalancing_rule = "Time Stop: Flag for review if Holding > 18 Months AND Return < 5% AND Div Yield < 3%."
 
         # 7. Construct The Verdict
         # -----------------------------------------------------------
@@ -77,6 +81,7 @@ class AdvisorEngine:
             "scenarios": scenarios,
             "trend_status": trend_status,
             "review_cycle": review_cycle,
+            "rebalancing_rule": rebalancing_rule,
             "confidence": f"{score}%",
             "fair_value": metrics.get("intrinsic_value", price),
             "strategy_tag": "[LONG TERM STEATEGY]"
@@ -140,11 +145,11 @@ class AdvisorEngine:
             
         # 3. Blended Target based on Driver
         if driver == "MOMENTUM":
-            target = (tech_target * 0.70) + (fund_target * 0.30)
-            logic = "Volatility Expansion (Aggressive)"
+            target = price * 2.0
+            logic = "100% Capital Extraction Milestone. (Sell half, flag remainder free-ride)"
         elif driver == "VALUE":
-            target = (fund_target * 0.80) + (tech_target * 0.20)
-            logic = "Fair Value Convergence"
+            target = intrinsic * 1.10
+            logic = "Mean Reversion (10% Premium to DCF Intrinsic Value)"
         else:
             target = (fund_target * 0.50) + (tech_target * 0.50)
             logic = f"{int(cagr*100)}% Compounding Growth"
@@ -163,17 +168,29 @@ class AdvisorEngine:
             "blend_logic": logic
         }
 
-    def _determine_longterm_stop(self, price, ta, risk):
+    def _determine_longterm_stop(self, price, ta, risk, driver="QUALITY"):
         """
         Structural stops for investments.
         """
-        ema_200 = ta.get("ema_200_val", 0)
+        # Phase 33 Core Update: No technical stops for Value Plays!
+        if driver == "VALUE":
+            return {
+                "stop_price": 0.0, 
+                "type": "Fundamental Invalidation",
+                "risk_pct": 0.0,
+                "trailing_logic": {
+                    "activation_target": 0.0,
+                    "buffer": "Exit if EPS drops > 20% YoY for 2 Quarters OR ROCE < 10%"
+                }
+            }
+            
+        ema_200 = ta.get("ema_200_val", 0) # Mapped to 50-Week SMA from ta_longterm.py
         atr = ta.get("atr", price * 0.03)
         
         # 1. Structural Floor
         if ema_200 > 0 and price > ema_200:
             stop = ema_200
-            typ = "200 EMA (Structural)"
+            typ = "50-Week SMA (Structural)"
         else:
             # 2. Volatility Stop (2x Weekly ATR)
             stop = price - (atr * 3)
@@ -254,15 +271,16 @@ class AdvisorEngine:
     # 🟡 SHARED UTILITIES (Smart Entry & Scenarios)
     # =========================================================================
 
-    def _determine_smart_entry(self, price, ta, mode="longterm", driver="QUALITY"):
+    def _determine_smart_entry(self, price, ta, mode="longterm", driver="QUALITY", metrics=None):
         """
         Calculates optimized entry points based on strategy.
         """
         vwap = ta.get("vwap_val", 0)
         ema_200 = ta.get("ema_200_val", 0)
-        ema_50 = ta.get("ema_50_val", 0)
+        ema_50 = ta.get("ema_50_val", 0) # 10-Week SMA in Longterm
         levels = ta.get("levels", [])
         supports = [l for l in levels if l.get("type") == "support"] if isinstance(levels, list) else []
+        if metrics is None: metrics = {}
         
         entry = price
         typ = "Market"
@@ -276,22 +294,32 @@ class AdvisorEngine:
         
         elif mode == "longterm":
             if driver == "MOMENTUM":
-                # Don't wait too long for momentum
-                entry = price
-                typ = "Market (Breakout)"
-                rationale = "Momentum is active. Buy at Market to capture move."
+                # Buy the Pullback logically
+                if ema_50 > 0 and (ema_50 * 0.98) <= price <= (ema_50 * 1.05):
+                    entry = price
+                    typ = "Market (10-Week Pullback)"
+                    rationale = "Low risk entry at the 10-Week moving average support."
+                else:
+                    entry = ema_50 if ema_50 > 0 else price * 0.95
+                    typ = "Limit @ 10-Week SMA"
+                    rationale = "Wait for low-volume pullback to the 10-Week structural support."
+                    
             elif driver == "VALUE":
-                # Hunt for deep support
-                if supports:
-                    s1 = supports[0]["price"]
-                    entry = s1
-                    typ = f"Limit @ Support ({supports[0]['label']})"
-                    rationale = "Wait for deep value support test."
+                intrinsic = metrics.get("intrinsic_value", price)
+                roce = metrics.get("roce", 0)
+                if price <= intrinsic * 0.70 and roce >= 0.12:
+                    entry = price
+                    typ = "Market (Deep Discount)"
+                    rationale = f"30%+ discount to intrinsic value with healthy >12% ROCE."
+                else:
+                    entry = intrinsic * 0.70
+                    typ = "Limit (Wait for Margin of Safety)"
+                    rationale = "Wait for at least a 30% discount to calculated intrinsic value."
             else:
                  # Growth/Quality - Buy pullbacks
                  if ema_50 > 0:
                      entry = ema_50
-                     typ = "Limit @ 50 EMA"
+                     typ = "Limit @ 10-Week SMA"
                      rationale = "Accumulate on structural trend pullback."
 
         # Safety: Ensure entry isn't wildly far from price (miss risk)

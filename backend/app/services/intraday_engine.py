@@ -61,14 +61,17 @@ class IntradayEngine:
             # CHECK STOP 1
             if job_id and self.job_states.get(job_id, {}).get("stop_requested"): return None
 
-            # 1. Fetch ONLY 5m OHLC Data (5 days)
-            df_5m = await market_service.get_ohlc(sym, period="5d", interval="5m", fast_fail=fast_fail)
+            # 1. Fetch 5m OHLC & ABSOLUTE LATEST Price (Fixes Kite Discrepancy)
+            ohlc_task = market_service.get_ohlc(sym, period="5d", interval="5m", fast_fail=fast_fail)
+            live_price_task = market_service.get_latest_price(sym)
+            df_5m, live_price = await asyncio.gather(ohlc_task, live_price_task)
             
             if df_5m is None or df_5m.empty or len(df_5m) < 40:
                 print(f"⚠️ Intraday Analysis skipped for {sym}: Insufficient data (5m).")
                 return None
             
-            real_price = df_5m['close'].iloc[-1]
+            # Use Live price if valid, else fallback to latest candle close
+            real_price = live_price if live_price > 0 else df_5m['close'].iloc[-1]
             if real_price <= 0: return None
 
             # 2. Resample 5m to 15m Locally
