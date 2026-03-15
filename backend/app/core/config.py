@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+    
+    # Regional Settings
+    MARKET_TIMEZONE: str = "Asia/Kolkata"
 
     class Config:
         case_sensitive = True

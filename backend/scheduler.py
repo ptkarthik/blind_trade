@@ -8,7 +8,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-API_URL = "http://localhost:8010/api/v1/jobs/scan"
+API_URL = "http://localhost:8012/api/v1/jobs/scan"
 
 def trigger_intraday_scan():
     """Trigger the Intraday Scan for Morning ORB and Midday Trend."""
@@ -37,13 +37,23 @@ def trigger_swing_scan():
 if __name__ == "__main__":
     logger.info("🚀 Blind Trade Automated Scheduler Starting...")
     logger.info("Market Hours (IST): Mon-Fri")
+    logger.info("- 09:20 AM: Early Bird 'Gap & Go' Intraday Scan")
     logger.info("- 09:45 AM: Morning ORB Intraday Scan")
+    logger.info("- 10:30 AM: Bullish Pullback Intraday Scan")
     logger.info("- 01:15 PM: Midday Trend Intraday Scan")
     logger.info("- 03:15 PM: Pre-close Swing Scan")
 
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
-    # 1. Morning ORB Scan (9:45 AM)
+    # 1. Early Bird Scan (9:20 AM)
+    scheduler.add_job(
+        trigger_intraday_scan, 
+        CronTrigger(day_of_week='mon-fri', hour=9, minute=20),
+        id='early_bird_scan',
+        name='Early Bird Intraday Scan'
+    )
+
+    # 2. Morning ORB Scan (9:45 AM)
     scheduler.add_job(
         trigger_intraday_scan, 
         CronTrigger(day_of_week='mon-fri', hour=9, minute=45),
@@ -51,7 +61,15 @@ if __name__ == "__main__":
         name='Morning ORB Intraday Scan'
     )
 
-    # 2. Midday Trend Continuation Scan (1:15 PM)
+    # 3. Pullback Setup Scan (10:30 AM)
+    scheduler.add_job(
+        trigger_intraday_scan, 
+        CronTrigger(day_of_week='mon-fri', hour=10, minute=30),
+        id='pullback_scan',
+        name='Bullish Pullback Intraday Scan'
+    )
+
+    # 4. Midday Trend Continuation Scan (1:15 PM)
     scheduler.add_job(
         trigger_intraday_scan, 
         CronTrigger(day_of_week='mon-fri', hour=13, minute=15),

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Activity, Loader2 } from 'lucide-react';
+import { X, Activity, Loader2, Sparkles } from 'lucide-react';
 import { InvestmentAnalysis } from './InvestmentAnalysis';
 
 interface AnalysisModalProps {
@@ -27,9 +27,20 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
     const isLongTerm = displayData.analysis_mode === 'LONGTERM_INVEST';
 
     // Split reasons into categories for better UI
-    const safeReasons = Array.isArray(data.reasons) ? data.reasons : [];
+    const safeReasons = Array.isArray(displayData.reasons) ? displayData.reasons : [];
     const bullishReasons = safeReasons.filter((r: any) => r.type === "positive");
     const bearishReasons = safeReasons.filter((r: any) => r.type === "negative");
+
+    // Specialist Tag Parser
+    const parseSetupTags = (setupStr: string) => {
+        if (!setupStr) return [];
+        // Matches things like [🚀 ORB BREAKOUT] or [💎 SQUEEZE]
+        const matches = setupStr.match(/\[(.*?)\]/g);
+        return matches ? matches.map(m => m.slice(1, -1)) : [];
+    };
+
+    const setupTags = parseSetupTags(data.setup_tag || "");
+    const isUltraHigh = data.score >= 92 || setupTags.some(t => t.includes("💎") || t.includes("⚖️"));
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -82,21 +93,87 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                 </div>
 
                                 {/* Strategic Verdict Summary */}
-                                <div className={`max-w-xl w-full p-4 rounded-2xl border border-dashed flex items-center gap-4 transition-all duration-500 ${data.score >= 60 ? 'bg-emerald-500/[0.03] border-emerald-200' :
+                                <div className={`max-w-xl w-full p-6 rounded-3xl border-2 border-dashed flex flex-col gap-4 transition-all duration-500 relative overflow-hidden ${data.score >= 60 ? 'bg-emerald-500/[0.03] border-emerald-200' :
                                     data.score >= 40 ? 'bg-amber-500/[0.03] border-amber-200' :
                                         'bg-red-500/[0.03] border-red-200'
                                     }`}>
-                                    <div className={`h-3 w-3 rounded-full shrink-0 ${data.score >= 60 ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' :
-                                        data.score >= 40 ? 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]' :
-                                            'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'
-                                        } animate-pulse`} />
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground opacity-60">Strategic Verdict</span>
-                                        <p className="text-sm font-bold text-slate-700 italic leading-tight">
-                                            "{data.strategic_summary || "Multi-engine analysis confirms signal integrity based on current market pulse."}"
+
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground opacity-60">Strategic Verdict</span>
+                                            {data.logic_type && (
+                                                <h4 className={`text-xl font-black mt-1 flex items-center gap-2 ${data.score >= 60 ? 'text-emerald-600' : data.score >= 40 ? 'text-amber-600' : 'text-red-600'}`}>
+                                                    {isUltraHigh && <Sparkles className="h-5 w-5 text-amber-500 animate-pulse" />}
+                                                    {data.logic_type.replace('_', ' ')}
+                                                </h4>
+                                            )}
+                                        </div>
+                                        <div className={`h-8 w-8 rounded-xl shrink-0 flex items-center justify-center ${data.score >= 60 ? 'bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.4)]' :
+                                            data.score >= 40 ? 'bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.4)]' :
+                                                'bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.4)]'
+                                            } animate-pulse`}>
+                                            {isUltraHigh ? <span className="text-white text-lg font-black">💎</span> : <Activity className="text-white h-4 w-4" />}
+                                        </div>
+                                    </div>
+
+                                    <div className="relative z-10">
+                                        <p className="text-base font-bold text-slate-700 italic leading-relaxed border-l-4 border-slate-200 pl-4 py-1">
+                                            "{data.strategic_summary || data.verdict || "Multi-engine analysis confirms signal integrity based on current market pulse."}"
                                         </p>
                                     </div>
+
+                                    {/* Specialist Setup Badges */}
+                                    <div className="flex gap-2 flex-wrap">
+                                        {setupTags.map((tag, i) => {
+                                            const isDiamond = tag.includes("💎") || tag.includes("⚖️") || tag.includes("🌀");
+                                            return (
+                                                <span
+                                                    key={i}
+                                                    className={`text-[9px] font-black px-2 py-1 rounded-md border tracking-wider uppercase transition-all shadow-sm ${isDiamond
+                                                        ? 'bg-primary text-white border-primary shadow-primary/20 scale-105'
+                                                        : 'bg-white border-slate-200 text-slate-500'
+                                                        }`}
+                                                >
+                                                    {tag}
+                                                </span>
+                                            );
+                                        })}
+                                        {data.chase?.is_chasing && (
+                                            <span className="text-[9px] font-black px-2 py-1 rounded-md bg-red-500 text-white border-red-600 animate-pulse shadow-red-200 shadow-md">
+                                                🚨 OVER-EXTENDED
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
+
+                                {/* --- SCORE IMPACT ANALYSIS (NEW: Specialist Transparency) --- */}
+                                {safeReasons.some((r: any) => r.impact) && (
+                                    <div className="w-full max-w-xl bg-slate-50 border border-slate-200 rounded-3xl p-5 shadow-sm">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Score Impact Analysis</h4>
+                                            <div className="flex items-center gap-1">
+                                                <div className="h-1 w-8 bg-emerald-400 rounded-full" />
+                                                <div className="h-1 w-8 bg-red-400 rounded-full" />
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {safeReasons.filter((r: any) => r.impact).map((reason: any, idx: number) => (
+                                                <div key={idx} className={`flex items-center justify-between p-3 rounded-2xl border ${reason.impact > 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] font-black opacity-40 uppercase">{reason.label}</span>
+                                                        <span className="text-xs font-bold text-slate-700">{reason.text}</span>
+                                                    </div>
+                                                    <div className={`text-sm font-black ${reason.impact > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                        {reason.impact > 0 ? `+${reason.impact}` : reason.impact}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] italic text-slate-400 text-center">
+                                            *Impact values are relative weighted points based on Specialist Logic
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Engine Impact Bars (Visual Transparency) */}
                                 {data.weights && (
@@ -351,8 +428,13 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                                         <p className="text-[10px] text-muted-foreground font-medium opacity-60">Insight contribution identified by AI</p>
                                                     </div>
                                                 </div>
-                                                <div className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-white shadow-sm border border-emerald-100 text-emerald-600 tabular-nums">
-                                                    {indicator.value}
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <div className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-white shadow-sm border border-emerald-100 text-emerald-600 tabular-nums">
+                                                        {indicator.value}
+                                                    </div>
+                                                    {indicator.impact && (
+                                                        <span className="text-[9px] font-black text-emerald-500">+{indicator.impact} pts</span>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))
@@ -389,8 +471,13 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                                         <p className="text-[10px] text-muted-foreground font-medium opacity-60">Potential volatility threat</p>
                                                     </div>
                                                 </div>
-                                                <div className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-white shadow-sm border border-red-100 text-red-600 tabular-nums">
-                                                    {indicator.value}
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <div className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-white shadow-sm border border-red-100 text-red-600 tabular-nums">
+                                                        {indicator.value}
+                                                    </div>
+                                                    {indicator.impact && (
+                                                        <span className="text-[9px] font-black text-red-500">{indicator.impact} pts</span>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))
@@ -408,6 +495,22 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                 Disclaimer: This report is generated by algorithms based on historical price data.
                                 It does not constitute financial advice. Market risks apply.
                             </p>
+                        </div>
+
+                        {/* --- SPECIALIST TIP (Phase 45) --- */}
+                        <div className="mx-6 mb-8 p-6 rounded-3xl bg-primary/5 border border-primary/20 flex items-start gap-4">
+                            <div className="h-10 w-10 rounded-2xl bg-primary flex items-center justify-center shrink-0 shadow-lg shadow-primary/20">
+                                <Sparkles className="text-white h-5 w-5" />
+                            </div>
+                            <div>
+                                <h4 className="text-sm font-black text-primary uppercase tracking-[0.1em]">Specialist Tip</h4>
+                                <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
+                                    {data.logic_type === 'EXHAUSTED' ? "Stock is too far from base. Entering here has low R:R. Wait for a retest of the daily VWAP or 9EMA before sizing in." :
+                                        data.logic_type === 'PULLBACK_ENTRY' ? "This is a high-probability institutional entry zone. Ensure the price sustains above the support level with volume support before confirming." :
+                                            data.logic_type === 'ORB_BREAKOUT' ? "Opening Range Breakouts are aggressive. Use a tight stop at the 15-minute low to protect capital against false breakouts." :
+                                                "Always align your entry with the broader market trend. If Nifty 50 is weak, even the best setups can fail due to systematic risk."}
+                                </p>
+                            </div>
                         </div>
                     </>
                 )}

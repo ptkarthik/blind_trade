@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, ArrowUpRight, ArrowDownRight, AlertTriangle } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, AlertTriangle } from 'lucide-react';
 import { StockCardLongTerm } from './StockCardLongTerm';
 import { StockCardIntraday } from './StockCardIntraday';
 import { StockCardSwing } from './StockCardSwing';
@@ -15,13 +15,11 @@ interface SectorData {
 
 interface SectorDealsProps {
     data: Record<string, SectorData>;
-    loading: boolean;
     mode: 'intraday' | 'longterm' | 'swing';
-    onRefresh: () => void;
     onSignalClick: (signal: Signal) => void;
 }
 
-export function SectorDeals({ data, loading, mode, onRefresh, onSignalClick }: SectorDealsProps) {
+export function SectorDeals({ data, mode, onSignalClick }: SectorDealsProps) {
     const [selectedSector, setSelectedSector] = useState<string>("All Sectors");
     const [capFilter, setCapFilter] = useState<"All" | "Large" | "Mid" | "Small">("All");
 
@@ -78,7 +76,16 @@ export function SectorDeals({ data, loading, mode, onRefresh, onSignalClick }: S
         return signals.filter(s => s.market_cap_category === capFilter);
     };
 
-    const displayBuys = filterSignals(currentData.buys || []);
+    const allCurrentBuys = filterSignals(currentData.buys || []);
+
+    // Extract Pioneer Prime entries (Must be a BUY, and have the special tags)
+    const isPioneer = (s: Signal) =>
+        (s?.verdict?.includes('PIONEER PRIME') || s?.verdict?.includes('RS LEADER')) &&
+        s.score >= 85;
+
+    const displayPioneer = allCurrentBuys.filter(isPioneer);
+    const displayBuys = allCurrentBuys.filter(s => !isPioneer(s)); // Remove from standard buys
+
     const displaySells = filterSignals(currentData.sells || []);
     const displayHolds = filterSignals(currentData.holds || []);
 
@@ -104,14 +111,7 @@ export function SectorDeals({ data, loading, mode, onRefresh, onSignalClick }: S
                         </span>
                     )}
                 </div>
-                <button
-                    onClick={onRefresh}
-                    disabled={loading}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
-                >
-                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    Refresh Results
-                </button>
+
             </div>
 
             {/* Controls Row: Sectors + Cap Filter */}
@@ -150,16 +150,40 @@ export function SectorDeals({ data, loading, mode, onRefresh, onSignalClick }: S
                 </div>
             </div>
 
-            {/* Content Area */}
+            {/* Pioneer Prime VIP Lane */}
+            {displayPioneer.length > 0 && (
+                <div className="mb-8 space-y-4 animate-in fade-in slide-in-from-bottom-4 relative">
+                    {/* Background glow effect for VIP section */}
+                    <div className="absolute -inset-4 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent rounded-3xl -z-10 blur-xl"></div>
+
+                    <h3 className="text-2xl font-black flex items-center gap-2 text-amber-500 uppercase tracking-widest">
+                        <span className="text-2xl">👑</span> Pioneer Prime Lookouts
+                    </h3>
+                    <p className="text-sm text-amber-600/80 font-medium -mt-2 mb-4">
+                        Ultra-high conviction setups featuring immense Relative Strength and Institutional Flow.
+                    </p>
+
+                    {/* Horizontal scroll for Pioneer cards to make them distinct from the vertical grid */}
+                    <div className="flex overflow-x-auto pb-4 gap-6 scrollbar-thin scrollbar-thumb-amber-200 snap-x">
+                        {displayPioneer.map((signal, idx) => (
+                            <div key={signal.symbol} className="min-w-[320px] md:min-w-[400px] snap-start">
+                                {renderCard(signal, idx)}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Standard Content Area */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {/* TOP BUYS */}
                 <div className="space-y-4">
                     <h3 className="text-xl font-bold flex items-center gap-2 text-emerald-600">
-                        <ArrowUpRight className="h-6 w-6" /> Top 100 Buys
+                        <ArrowUpRight className="h-6 w-6" /> Standard Buys
                     </h3>
                     <div className="space-y-4 max-h-[800px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-emerald-200">
                         {displayBuys.length > 0 ? (
-                            displayBuys.slice(0, 100).map((signal, idx) => renderCard(signal, idx))
+                            displayBuys.slice(0, 100).map((signal, idx) => renderCard(signal, idx + displayPioneer.length))
                         ) : (
                             <EmptyState type="BUY" filter={capFilter} />
                         )}

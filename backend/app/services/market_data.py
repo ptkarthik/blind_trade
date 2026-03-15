@@ -379,15 +379,20 @@ class MarketDataService:
                 return result
 
             except Exception as e:
-                msg = str(e)
-                if "credits" in msg or "RATE_LIMIT" in msg or "429" in msg:
-                    print(f"⚠️ TwelveData Rate Limit/Credits exhausted. Disabling TwelveData for this session.")
+                msg = str(e).upper()
+                if "CREDITS" in msg:
+                    print(f"⚠️ TwelveData Credits Exhausted. Disabling.")
                     self.td_disabled = True
-                print(f"TwelveData failed for {symbol}: {e}. Falling back to Yahoo.")
+                elif "429" in msg or "RATE_LIMIT" in msg:
+                    # Speed Optimization: Don't disable permanently for 429, just skip this symbol
+                    # to allow others to try TD later.
+                    print(f"🕒 TwelveData Rate Limited for {symbol}. Skipping to fallback.")
+                else:
+                    print(f"TwelveData failed for {symbol}: {e}. Falling back to Yahoo.")
 
-        # 2. Fallback to Yahoo Finance (Multiple Candidates)
+        # 2. Fallback to Yahoo Finance (Multiple Candidates only if symbolic)
         base_sym = symbol.replace(".NS", "").replace(".BO", "")
-        if not symbol.startswith("^"):
+        if not symbol.startswith("^") and "." not in symbol:
             candidates = [f"{base_sym}.NS", f"{base_sym}.BO", base_sym]
         else:
             candidates = [symbol]
@@ -420,7 +425,8 @@ class MarketDataService:
                          raise ValueError("No Data")
                 
                 import numpy as np
-                data = await asyncio.wait_for(asyncio.to_thread(_fetch_yf), timeout=12.0)
+                yf_data_timeout = 8.0 # Faster for UI
+                data = await asyncio.wait_for(asyncio.to_thread(_fetch_yf), timeout=yf_data_timeout)
                 price = data.get("price")
                 prev_close = data.get("prev_close")
                 
@@ -627,6 +633,10 @@ class MarketDataService:
         return {}
 
 
+    async def get_historical_intraday(self, symbol: str, interval: str = "15m", period: str = "1mo") -> pd.DataFrame:
+        """Alias for get_ohlc with intraday defaults."""
+        return await self.get_ohlc(symbol, period=period, interval=interval)
+
     async def get_ohlc(self, symbol: str, period: str = "1mo", interval: str = "1d", fast_fail: bool = False) -> pd.DataFrame:
         """
         Fetch OHLCV data with TwelveData -> Yahoo -> Empty Fallback.
@@ -659,58 +669,60 @@ class MarketDataService:
                     df.columns = [c.lower() for c in df.columns]
                     return df
             except Exception as e:
-                msg = str(e)
-                if "credits" in msg or "429" in msg:
-                    print(f"⚠️ TwelveData Credits Exhausted (OHLC). Disabling TwelveData.")
+                msg = str(e).upper()
+                if "CREDITS" in msg:
+                    print(f"⚠️ TwelveData Credits Exhausted (OHLC). Disabling.")
                     self.td_disabled = True
-                print(f"TwelveData OHLC failed for {symbol}: {e}")
+                elif "429" in msg:
+                    print(f"🕒 TwelveData Rate Limited (OHLC) for {symbol}. Skipping.")
+                else:
+                    print(f"TwelveData OHLC failed for {symbol}: {e}")
 
-        # 2. Fallback to Yahoo Finance (Multiple Candidates)
+        # 2. Fallback to Yahoo Finance (Multiple Candidates only if symbolic)
         base_sym = symbol.replace(".NS", "").replace(".BO", "")
-        if not symbol.startswith("^"):
+        if not symbol.startswith("^") and "." not in symbol:
             candidates = [f"{base_sym}.NS", f"{base_sym}.BO", base_sym]
         else:
             candidates = [symbol]
 
         for ticker_symbol in candidates:
+            # 1. Prioritize yf.Ticker history (Safer for concurrency than yf.download)
             try:
+                yf_timeout = 8.0 if fast_fail else 15.0
                 def _fetch_yf_hist():
-                    # Rotate User-Agent and use session
+                    # Each task gets a fresh Ticker instance
                     ticker = yf.Ticker(ticker_symbol)
-                    try:
-                        # For Zomato and similar, sometimes 7d works better for 15m
-                        effective_period = "7d" if interval == "15m" and period == "5d" else period
-                        hist = ticker.history(period=effective_period, interval=interval)
-                    except Exception: return pd.DataFrame()
-                    
+                    # For Intraday, 7d period is safer to ensure we have prev day for pivots
+                    effective_period = "7d" if interval in ["5m", "15m"] else period
+                    hist = ticker.history(period=effective_period, interval=interval)
                     if not hist.empty:
                         hist.columns = [c.lower() for c in hist.columns]
                     return hist
 
-                df = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_hist), timeout=15.0)
+                df = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_hist), timeout=yf_timeout)
                 
                 if not df.empty and len(df) >= (5 if "1d" in interval else 2):
-                    df.columns = [c.lower() for c in df.columns]
-                    # Handle MultiIndex if present (yfinance sometimes returns this)
+                    # Handle MultiIndex if present
                     if isinstance(df.columns, pd.MultiIndex): 
-                        # Flatten it
                         df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
                     return df
-            except Exception:
-                pass # Fallthrough to proxy
+            except Exception as e:
+                # print(f"yf.Ticker failed for {ticker_symbol}: {e}")
+                pass
 
-            # Try yf.download before Proxy (yfindownload is often more robust)
+            # 2. Fallback to yf.download only if Ticker fails
             try:
+                dl_timeout = 12.0 if fast_fail else 20.0
                 def _fetch_yf_dl():
                     return yf.download(ticker_symbol, period=period, interval=interval, progress=False)
-                df_dl = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_dl), timeout=20.0)
+                df_dl = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_dl), timeout=dl_timeout)
                 if not df_dl.empty and len(df_dl) > 2:
                     if isinstance(df_dl.columns, pd.MultiIndex):
                         df_dl.columns = df_dl.columns.get_level_values(0)
                     df_dl.columns = [c.lower() for c in df_dl.columns]
-                    print(f"✅ yf.download Success for {ticker_symbol}")
                     return df_dl
-            except: pass
+            except Exception:
+                pass
 
             if fast_fail:
                 print(f"⏩ fast_fail enabled for {symbol}, bypassing proxy retry loop.")
@@ -789,5 +801,69 @@ class MarketDataService:
         except Exception as e:
             print(f"Status check failed: {e}")
             return {"nifty_50": 0.0, "india_vix": 0.0, "status": "UNKNOWN"}
+
+    async def get_advance_decline_ratio(self) -> float:
+        """
+        Calculates the Advance/Decline ratio for the overall market.
+        Uses the top ~50-100 highly liquid stocks from the static map to approximate 
+        the market breadth quickly without hitting rate limits.
+        """
+        try:
+            # We use a strategic subset (Large Caps & Top Mid Caps) to gauge institutional breadth quickly
+            sample_symbols = [s for s, sec in self.SECTOR_MAP.items()][:80] # Take first 80 for speed
+            
+            def _fetch_ad():
+                advances = 0
+                declines = 0
+                for sym in sample_symbols:
+                    ticker_str = f"{sym}.NS"
+                    try:
+                        ticker = yf.Ticker(ticker_str)
+                        last = ticker.fast_info.last_price
+                        prev = ticker.fast_info.previous_close
+                        if last > prev:
+                            advances += 1
+                        elif last < prev:
+                            declines += 1
+                    except Exception:
+                        pass
+                
+                # Prevent ZeroDivisionError
+                if declines == 0:
+                    return advances if advances > 0 else 1.0
+                return advances / declines
+
+            # A/D calculation takes a few seconds due to 80 requests, but we only do it once per run_scan
+            ratio = await asyncio.wait_for(asyncio.to_thread(_fetch_ad), timeout=15.0)
+            print(f"📊 Market Breath: A/D Ratio = {ratio:.2f}")
+            return ratio
+            
+        except Exception as e:
+            print(f"Advance/Decline check failed: {e}")
+            return 1.0 # Neutral fallback
+
+    async def get_sector_performances(self) -> Dict[str, float]:
+        """
+        Calculates the day change percentage for all sector indices.
+        Returns a map of {Sector Name: change_pct}.
+        """
+        try:
+            sector_perfs = {}
+            def _fetch_indices():
+                for sector, symbol in self.INDEX_MAP.items():
+                    try:
+                        ticker = yf.Ticker(symbol)
+                        last = ticker.fast_info.last_price
+                        prev = ticker.fast_info.previous_close
+                        change_pct = ((last - prev) / prev) * 100
+                        sector_perfs[sector] = change_pct
+                    except Exception:
+                        sector_perfs[sector] = 0.0
+                return sector_perfs
+                
+            return await asyncio.wait_for(asyncio.to_thread(_fetch_indices), timeout=10.0)
+        except Exception as e:
+            print(f"Sector performance check failed: {e}")
+            return {}
 
 market_service = MarketDataService()

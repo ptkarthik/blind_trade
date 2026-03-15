@@ -48,7 +48,6 @@ function App() {
     sells: Signal[];
   }
   const [sectorSignals, setSectorSignals] = useState<Record<string, SectorData>>({});
-  const [loadingSector, setLoadingSector] = useState(false);
   const [activeTab, setActiveTab] = useState<'deals' | 'portfolio'>('deals');
 
   const openAnalysis = (signal: Signal) => {
@@ -86,16 +85,13 @@ function App() {
     }
   };
 
-  const fetchSectorSignals = async (silent = false) => {
-    if (!silent && !Object.keys(sectorSignals).length) setLoadingSector(true);
+  const fetchSectorSignals = async () => {
     try {
       const sectorRes = await signalApi.getSectorSignals(mode);
       setSectorSignals(sectorRes.data);
       localStorage.setItem(`sector_v2_${mode}`, JSON.stringify(sectorRes.data));
     } catch (e) {
       console.error("Auto-sector refresh failed", e);
-    } finally {
-      if (!silent) setLoadingSector(false);
     }
   };
 
@@ -196,7 +192,7 @@ function App() {
   useEffect(() => {
     if (scanJob?.status === 'processing') {
       // fetchSignals(true); // DISABLED: Don't poll full results every 2s, only progress
-      fetchSectorSignals(true);
+      fetchSectorSignals();
     }
   }, [scanJob?.progress, scanJob?.updated_at]); // Trigger on job updates
 
@@ -214,7 +210,6 @@ function App() {
 
     // 2. We only set high-level loading flags
     setLoading(true);
-    setLoadingSector(true);
 
     // Clear modals & reset state appropriately on mode switch
     setIsModalOpen(false);
@@ -242,7 +237,7 @@ function App() {
       } else {
         fetchSignals(true);
       }
-      fetchSectorSignals(true);
+      fetchSectorSignals();
     }
   }, [scanJob?.status, mode]);
 
@@ -301,7 +296,7 @@ function App() {
           {/* Search Bar with Suggestions - Keyed by mode for state isolation */}
           <SearchBox key={mode} onSelect={analyzeSymbol} />
 
-          <div className="flex gap-4 text-sm hidden md:flex items-center">
+          <div className="flex gap-4 text-sm items-center flex-wrap">
             {/* Context-aware Start Button */}
             {(!jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan'] ||
               !['pending', 'processing', 'paused'].includes(jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan']?.status)) && (
@@ -569,9 +564,7 @@ function App() {
             <ErrorBoundary>
               <SectorDeals
                 data={sectorSignals}
-                loading={loadingSector}
                 mode={mode}
-                onRefresh={() => fetchSectorSignals(false)}
                 onSignalClick={openAnalysis}
               />
             </ErrorBoundary>

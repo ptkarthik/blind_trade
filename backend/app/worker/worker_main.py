@@ -68,21 +68,47 @@ async def manage_recurring_scans():
             if active_res.scalars().first():
                 continue # Already busy
             
-            # 2. Get the latest completed/failed job of this type
-            history_query = select(Job).where(Job.type == job_type).order_by(Job.created_at.desc()).limit(1)
-            history_res = await session.execute(history_query)
-            last_job = history_res.scalars().first()
-            
+            # 2. Timing Logic
             should_trigger = False
-            if not last_job:
-                should_trigger = True # Never run before
+            
+            if job_type == "intraday":
+                # V3.2 Specialized Timing Windows
+                local_now = datetime.now() # Assumes server is in Market Timezone or handled via offsets
+                cur_time = local_now.strftime("%H:%M")
+                
+                windows = [
+                    ("09:25", "09:35"), # Early Institutional
+                    ("10:00", "10:15"), # Setup Detection
+                    ("11:30", "11:40"), # Continuation
+                    ("14:30", "15:00")  # Power Hour
+                ]
+                
+                in_window = any(start <= cur_time <= end for start, end in windows)
+                
+                if in_window:
+                    # Check if we already ran in THIS window
+                    # We look for a job created within the last 15 minutes to avoid double triggers in the same window
+                    history_query = select(Job).where(Job.type == job_type).order_by(Job.created_at.desc()).limit(1)
+                    history_res = await session.execute(history_query)
+                    last_job = history_res.scalars().first()
+                    
+                    if not last_job or (datetime.utcnow() - last_job.created_at) > timedelta(minutes=15):
+                        should_trigger = True
             else:
-                elapsed = datetime.utcnow() - last_job.updated_at
-                if elapsed >= RECURRENCE_INTERVAL:
+                # Standard 10min recurrence for others
+                history_query = select(Job).where(Job.type == job_type).order_by(Job.created_at.desc()).limit(1)
+                history_res = await session.execute(history_query)
+                last_job = history_res.scalars().first()
+                
+                if not last_job:
                     should_trigger = True
+                else:
+                    elapsed = datetime.utcnow() - last_job.updated_at
+                    if elapsed >= RECURRENCE_INTERVAL:
+                        should_trigger = True
             
             if should_trigger:
-                log(f"⏰ [SCHEDULER] Auto-triggering {job_type} (10min interval reached)")
+                log(f"⏰ [SCHEDULER] Auto-triggering {job_type}")
                 new_job = Job(type=job_type, status="pending")
                 session.add(new_job)
                 await session.commit()

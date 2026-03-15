@@ -110,11 +110,6 @@
         "raw_symbol": "AAVAS"
     },
     {
-        "symbol": "ABAN.NS",
-        "name": "Aban Offshore Limited",
-        "raw_symbol": "ABAN"
-    },
-    {
         "symbol": "ABB.NS",
         "name": "ABB India Limited",
         "raw_symbol": "ABB"
@@ -298,6 +293,11 @@
         "symbol": "AEGISVOPAK.NS",
         "name": "Aegis Vopak Terminals Limited",
         "raw_symbol": "AEGISVOPAK"
+    },
+    {
+        "symbol": "AEPL.NS",
+        "name": "Artemis Electricals and Projects Limited",
+        "raw_symbol": "AEPL"
     },
     {
         "symbol": "AEQUS.NS",
@@ -1450,6 +1450,11 @@
         "raw_symbol": "BHAGYANGR"
     },
     {
+        "symbol": "BHANDA-RE2.NS",
+        "name": "Bhandari Hosiery Exports Limited-RE",
+        "raw_symbol": "BHANDA-RE2"
+    },
+    {
         "symbol": "BHANDARI.NS",
         "name": "Bhandari Hosiery Exports Limited",
         "raw_symbol": "BHANDARI"
@@ -2048,6 +2053,11 @@
         "symbol": "CLEAN.NS",
         "name": "Clean Science and Technology Limited",
         "raw_symbol": "CLEAN"
+    },
+    {
+        "symbol": "CLEANMAX.NS",
+        "name": "Clean Max Enviro Energy Solutions Limited",
+        "raw_symbol": "CLEANMAX"
     },
     {
         "symbol": "CLEDUCATE.NS",
@@ -3950,6 +3960,11 @@
         "raw_symbol": "HCG"
     },
     {
+        "symbol": "HCG-RE.NS",
+        "name": "Healthcare Global Enterprises Limited-RE",
+        "raw_symbol": "HCG-RE"
+    },
+    {
         "symbol": "HCL-INSYS.NS",
         "name": "HCL Infosystems Limited",
         "raw_symbol": "HCL-INSYS"
@@ -4393,6 +4408,11 @@
         "symbol": "IMPAL.NS",
         "name": "India Motor Parts and Accessories Limited",
         "raw_symbol": "IMPAL"
+    },
+    {
+        "symbol": "INA.NS",
+        "name": "Insolation Energy Limited",
+        "raw_symbol": "INA"
     },
     {
         "symbol": "INCREDIBLE.NS",
@@ -5385,6 +5405,11 @@
         "raw_symbol": "KOTHARIPRO"
     },
     {
+        "symbol": "KOTYARK.NS",
+        "name": "Kotyark Industries Limited",
+        "raw_symbol": "KOTYARK"
+    },
+    {
         "symbol": "KPEL.NS",
         "name": "K.P. Energy Limited",
         "raw_symbol": "KPEL"
@@ -6038,6 +6063,11 @@
         "symbol": "MARKSANS.NS",
         "name": "Marksans Pharma Limited",
         "raw_symbol": "MARKSANS"
+    },
+    {
+        "symbol": "MARSONS.NS",
+        "name": "Marsons Limited",
+        "raw_symbol": "MARSONS"
     },
     {
         "symbol": "MARUTI.NS",
@@ -7005,9 +7035,9 @@
         "raw_symbol": "OMINFRAL"
     },
     {
-        "symbol": "ONECAP-RE.NS",
-        "name": "Onelife Capital Advisors Limited-RE",
-        "raw_symbol": "ONECAP-RE"
+        "symbol": "OMNI.NS",
+        "name": "Omnitech Engineering Limited",
+        "raw_symbol": "OMNI"
     },
     {
         "symbol": "ONELIFECAP.NS",
@@ -7483,6 +7513,11 @@
         "symbol": "PNGJL.NS",
         "name": "P N Gadgil Jewellers Limited",
         "raw_symbol": "PNGJL"
+    },
+    {
+        "symbol": "PNGSREVA.NS",
+        "name": "PNGS Reva Diamond Jewellery Limited",
+        "raw_symbol": "PNGSREVA"
     },
     {
         "symbol": "POCL.NS",
@@ -8340,11 +8375,6 @@
         "raw_symbol": "SADBHIN"
     },
     {
-        "symbol": "SADHNA-RE.NS",
-        "name": "Sadhana Nitrochem Limited-RE",
-        "raw_symbol": "SADHNA-RE"
-    },
-    {
         "symbol": "SADHNANIQ.NS",
         "name": "Sadhana Nitrochem Limited",
         "raw_symbol": "SADHNANIQ"
@@ -8650,6 +8680,11 @@
         "raw_symbol": "SECURKLOUD"
     },
     {
+        "symbol": "SEDEMAC.NS",
+        "name": "SEDEMAC Mechatronics Limited",
+        "raw_symbol": "SEDEMAC"
+    },
+    {
         "symbol": "SEJALLTD.NS",
         "name": "Sejal Glass Limited",
         "raw_symbol": "SEJALLTD"
@@ -8923,11 +8958,6 @@
         "symbol": "SHYAMTEL.NS",
         "name": "Shyam Telecom Limited",
         "raw_symbol": "SHYAMTEL"
-    },
-    {
-        "symbol": "SICAL-RE.NS",
-        "name": "Sical Logistics Ltd-RE",
-        "raw_symbol": "SICAL-RE"
     },
     {
         "symbol": "SICALLOG.NS",
@@ -9270,6 +9300,11 @@
         "raw_symbol": "SRM"
     },
     {
+        "symbol": "SRTL.NS",
+        "name": "Shree Ram Twistex Limited",
+        "raw_symbol": "SRTL"
+    },
+    {
         "symbol": "SSDL.NS",
         "name": "Saraswati Saree Depot Limited",
         "raw_symbol": "SSDL"
@@ -9598,6 +9633,11 @@
         "symbol": "SWANCORP.NS",
         "name": "SWAN CORP LIMITED",
         "raw_symbol": "SWANCORP"
+    },
+    {
+        "symbol": "SWANDEF.NS",
+        "name": "Swan Defence and Heavy Industries Limited",
+        "raw_symbol": "SWANDEF"
     },
     {
         "symbol": "SWARAJENG.NS",
@@ -10673,6 +10713,11 @@
         "symbol": "VISHWARAJ.NS",
         "name": "Vishwaraj Sugar Industries Limited",
         "raw_symbol": "VISHWARAJ"
+    },
+    {
+        "symbol": "VITAL.NS",
+        "name": "Vital Chemtech Limited",
+        "raw_symbol": "VITAL"
     },
     {
         "symbol": "VIVIDHA.NS",

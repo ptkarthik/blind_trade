@@ -21,11 +21,10 @@ router = APIRouter()
 
 def sanitize_json_data(data):
     """
-    Optimized for Speed: Data is already sanitized during the scan process 
-    before being saved to the database. Bypassing second-pass recursion here 
-    significantly improves UI responsiveness during mode toggles.
+    Ensures data is JSON-serializable by cleaning NaNs and Infinity.
+    Required for on-demand analysis results.
     """
-    return data
+    return sanitize_data(data)
 
 @router.get("/today")
 async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(get_db)):
@@ -152,6 +151,10 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
         try:
             if mode == "intraday":
                 analysis = await intraday_engine.analyze_stock(s, fast_fail=True)
+            elif mode == "swing":
+                # Ensure Swing mode uses the specialized Swing Engine
+                from app.services.swing_engine import swing_engine
+                analysis = await swing_engine.analyze_stock(s)
             else:
                 # 1. Fetch Market Context (Regime & Macro) to ensure scoring alignment with Scan
                 regime = await longterm_scanner_engine._detect_market_regime()

@@ -287,10 +287,21 @@ class AdvisorEngine:
         rationale = "Standard Entry"
         
         if mode == "intraday":
-            if vwap > 0:
-                entry = vwap
+            exhaustion = ta.get("exhaustion", {"is_exhausted": False})
+            pullback = ta.get("pullback", {"is_pullback": False})
+            
+            if exhaustion["is_exhausted"]:
+                entry = vwap if vwap > 0 else price * 0.98
+                typ = "Avoid Chasing"
+                rationale = "Price is overextended (>3.5% from open). Wait for a dip to VWAP/EMA."
+            elif pullback["is_pullback"]:
+                entry = price
+                typ = "Market (Pullback Entry)"
+                rationale = f"Clean pullback to {pullback.get('type', 'Support')}. High-probability entry setup."
+            else:
+                entry = vwap if vwap > 0 else price
                 typ = "Limit @ VWAP"
-                rationale = "Institutional Liquidity Zone"
+                rationale = "Wait for price to test the institutional volume anchor (VWAP)."
         
         elif mode == "longterm":
             if driver == "MOMENTUM":

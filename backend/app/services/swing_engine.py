@@ -93,21 +93,72 @@ class SwingEngine:
             name = company_data.get("shortName", sym)
             sector = market_service.get_sector_for_symbol(sym)
 
-            # 4. Pack successful setups
+            # 4. Senior Specialist Scoring & Tagging
+            # Swing setups are high-probability but we want to rank them for the user.
+            base_score = 70 # Base for successful match
+            setup_tag = ""
+            
+            # Bonus for strong volume
+            vol_reason = next((r for r in swing_result.get("reasons", []) if r["label"] == "VOLUME"), {})
+            vol_val_str = str(vol_reason.get("value", "1.0"))
+            try:
+                vol_ratio = float(vol_val_str.replace("x Avg", ""))
+                if vol_ratio > 1.8:
+                    base_score += 15
+                    setup_tag += " [🚀 VOL SURGE]"
+                elif vol_ratio > 1.4:
+                    base_score += 5
+            except: pass
+            
+            # Bonus for specific support bounce
+            support_reason = next((r for r in swing_result.get("reasons", []) if r["label"] == "SUPPORT"), {})
+            if "SMA 50" in support_reason.get("text", ""):
+                 base_score += 10 # SMA 50 is a stronger structural level
+                 setup_tag += " [💎 SMA 50 BOUNCE]"
+            else:
+                 setup_tag += " [🎯 EMA 20 BOUNCE]"
+
+            # Multi-Timeframe Alignment (Simple Check)
+            # A stock in Stage 2 (Above 50/200) is already good, but we check if MA order is perfect
+            sma_50 = next((r for r in swing_result.get("reasons", []) if r["label"] == "MACRO"), {}).get("value", 0)
+            # Hard check: Are we near 52w high? (Momentum alignment)
+            is_breakout = df_1d['close'].iloc[-1] > df_1d['high'].tail(60).max() * 0.98
+            if is_breakout:
+                 base_score += 7
+                 setup_tag += " [🚀 NEAR HIGH]"
+
+            final_score = round(min(100, base_score), 1)
+
+            # 5. Advisor Engine Integration (Consistency across search)
+            from app.services.advisor_engine import advisor_engine
+            advisory = advisor_engine.generate_advice(
+                sym, real_price, company_data, {}, {}, {}, None, mode="swing"
+            )
+
+            # 6. Pack successful setups
             return {
                 "symbol": sym,
                 "name": name,
                 "sector": sector,
                 "price": round(real_price, 2),
-                "score": 100, # Swing logic is binary. 100% means True setup.
+                "score": final_score,
                 "signal": "BUY",
-                "confidence": "Confirmed Breakdown Bounce",
+                "confidence": "💎 Elite Setup" if final_score >= 90 else "Specialist Recommended",
+                "setup_tag": setup_tag.strip(),
+                "verdict": f"SWING: BUY ({final_score}% Conviction). {setup_tag}. {advisory.get('entry_analysis', {}).get('rationale', 'Confirmed bounce.')}",
+                "strategic_summary": advisory.get('entry_analysis', {}).get('rationale', 'Confirmed bounce.'),
                 "reasons": swing_result.get("reasons", []),
-                # Specific Logistics tracking for Swing Trading
                 "entry": swing_result.get("entry", round(real_price, 2)),
                 "stop_loss": swing_result.get("stop_loss"),
                 "target": swing_result.get("target"),
-                "hold_duration": swing_result.get("hold_duration")
+                "hold_duration": swing_result.get("hold_duration"),
+                "analysis_mode": "batch", # Standard batch-style display
+                "alpha_intel": {
+                    "growth_probability": "High" if final_score > 85 else "Medium",
+                    "risk_level": "Low" if final_score > 80 else "Medium",
+                    "suggested_hold": swing_result.get("hold_duration"),
+                    "confidence": f"{final_score}%"
+                }
             }
 
         except Exception as e:

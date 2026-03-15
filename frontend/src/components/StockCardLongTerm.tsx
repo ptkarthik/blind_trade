@@ -1,6 +1,6 @@
 
 import type { Signal } from './DealCard';
-import { TrendingUp, ShieldCheck, Activity, Clock } from 'lucide-react';
+import { ShieldCheck, Activity, Clock } from 'lucide-react';
 
 interface StockCardLongTermProps {
     signal: Signal;
@@ -38,8 +38,6 @@ export function StockCardLongTerm({ signal, rank, onClick }: StockCardLongTermPr
     const instReason = safeReasons.find(r => r?.label === "INSTITUTIONAL");
     const sponsorship = instReason?.value || "Neutral";
 
-    // Value Formatting Helpers
-    const formatPrice = (p: any) => typeof p === 'number' && !isNaN(p) ? `₹${p.toLocaleString()}` : '₹---';
 
     return (
         <div

@@ -1,0 +1,47 @@
+{
+    "Technology": {
+        "buys": [
+            {
+                "symbol": "MOCK.NS",
+                "score": 99.5,
+                "signal": "PIONEER BUY",
+                "confidence": "\ud83d\udc51 A-Plus Setup",
+                "verdict": "\ud83d\udee1\ufe0f [\ud83d\udc8e SPECIALIST V3] PIONEER BUY (\ud83d\udc51 A-Plus Setup) [\ud83d\udc51 PIONEER PRIME] [\ud83d\ude80 RS LEADER] [\ud83d\udc8e SQUEEZE]. [\ud83d\udca1 ENTRY] Standard entry.",
+                "logic_type": "MOMENTUM",
+                "price": 100.0,
+                "reasons": [
+                    {
+                        "text": "Market RS Leader",
+                        "type": "positive",
+                        "label": "ALPHA",
+                        "value": "+2.5% vs Nifty",
+                        "impact": 25
+                    }
+                ],
+                "support": 95.0,
+                "target": 110.0,
+                "stop_loss": 95.0,
+                "entry": 100.0,
+                "market_cap_category": "Large"
+            },
+            {
+                "symbol": "NORMAL.NS",
+                "score": 60.0,
+                "signal": "BUY",
+                "confidence": "Moderate Confidence",
+                "verdict": "\ud83d\udee1\ufe0f [\ud83d\udc8e SPECIALIST V3] BUY. [\ud83d\udca1 ENTRY] Standard entry.",
+                "logic_type": "MOMENTUM",
+                "price": 100.0,
+                "reasons": [],
+                "support": 95.0,
+                "target": 110.0,
+                "stop_loss": 95.0,
+                "entry": 100.0,
+                "market_cap_category": "Large"
+            }
+        ],
+        "sells": [],
+        "holds": [],
+        "last_updated": "Just Now"
+    }
+}

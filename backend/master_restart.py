@@ -38,8 +38,11 @@ def start_services():
         venv_python = "python"
 
     # Start API
+    api_env = os.environ.copy()
+    api_env["PYTHONPATH"] = backend_dir
     api_proc = subprocess.Popen(
         [venv_python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8012"],
+        env=api_env,
         creationflags=subprocess.CREATE_NEW_CONSOLE,
         cwd=backend_dir
     )
@@ -49,6 +52,7 @@ def start_services():
     # Start Workers
     lt_env = os.environ.copy()
     lt_env["WORKER_TYPE"] = "longterm"
+    lt_env["PYTHONPATH"] = backend_dir
     lt_proc = subprocess.Popen(
         [venv_python, "app/worker/worker_main.py"],
         env=lt_env,
@@ -59,6 +63,7 @@ def start_services():
 
     int_env = os.environ.copy()
     int_env["WORKER_TYPE"] = "intraday"
+    int_env["PYTHONPATH"] = backend_dir
     int_proc = subprocess.Popen(
         [venv_python, "app/worker/worker_main.py"],
         env=int_env,
@@ -69,6 +74,7 @@ def start_services():
 
     swg_env = os.environ.copy()
     swg_env["WORKER_TYPE"] = "swing"
+    swg_env["PYTHONPATH"] = backend_dir
     swg_proc = subprocess.Popen(
         [venv_python, "app/worker/worker_main.py"],
         env=swg_env,
@@ -78,8 +84,11 @@ def start_services():
     print(f"📡 Swing Worker started (PID {swg_proc.pid})")
     
     # Start Automated Cron Scheduler
+    sched_env = os.environ.copy()
+    sched_env["PYTHONPATH"] = backend_dir
     sched_proc = subprocess.Popen(
         [venv_python, "scheduler.py"],
+        env=sched_env,
         creationflags=subprocess.CREATE_NEW_CONSOLE,
         cwd=backend_dir
     )

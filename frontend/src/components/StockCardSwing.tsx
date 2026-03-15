@@ -8,6 +8,15 @@ interface Props {
 }
 
 export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
+    // Specialist Tag Parser
+    const parseSetupTags = (setupStr: string) => {
+        if (!setupStr) return [];
+        const matches = setupStr.match(/\[(.*?)\]/g);
+        return matches ? matches.map(m => m.slice(1, -1)) : [];
+    };
+
+    const setupTags = parseSetupTags(signal.setup_tag || "");
+
     return (
         <div
             className="bg-card border border-border shadow-md rounded-2xl p-5 hover:border-primary/50 transition-all cursor-pointer relative overflow-hidden group flex flex-col h-full"
@@ -26,6 +35,13 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
 
                 <div className="flex flex-col items-end">
                     <ScoreGauge score={signal.score} />
+                    <div className="flex gap-1 mt-1">
+                        {setupTags.map((tag, i) => (
+                            <span key={i} className={`text-[8px] font-black px-1.5 py-0.5 rounded border border-slate-200 uppercase tracking-tighter ${tag.includes('💎') ? 'bg-primary text-white border-primary' : 'bg-white text-muted-foreground'}`}>
+                                {tag}
+                            </span>
+                        ))}
+                    </div>
                     <span className="text-[10px] font-bold uppercase tracking-widest text-primary mt-1">{signal.confidence}</span>
                 </div>
             </div>
