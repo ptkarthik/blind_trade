@@ -219,7 +219,7 @@ class IntradayEngine:
             inst_bonus = mtf_bonus = acc_bonus = accumulation_bonus = 0
             institutional_volume_bonus = trend_bonus = vwap_reclaim_bonus = 0
             trend_dir_bonus = sector_bonus = daily_momentum_bonus = 0
-            alpha_bonus = regime_bonus = ad_bonus = liquidity_bonus = 0
+            regime_bonus = ad_bonus = liquidity_bonus = 0
             vwap_bonus = vol_acc_bonus = 0
             liq_accel_bonus = liq_accel_penalty = 0
             volume_validation_state = "PASSED"
@@ -360,10 +360,8 @@ class IntradayEngine:
             trend_bonus = 0
             trend_momentum_state = "NEUTRAL"
             
-            if adx_val < 20:
-                trend_penalty = -15
-                trend_momentum_state = "WEAK_TREND"
-                reasons.append({"text": "Weak Trend Momentum", "type": "negative", "label": "ADX", "value": f"{adx_val}", "impact": -15})
+            if adx_val < 18:
+                pass # Hard block handled in Signal Classification
             elif adx_val > 25 and adx_slope > 0:
                 trend_bonus = 10
                 trend_momentum_state = "RISING_STRENGTH"
@@ -378,7 +376,7 @@ class IntradayEngine:
             trap_penalty = 0
             if trap_move_detected:
                 trap_penalty = -30
-                reasons.append({"text": "Liquidity Trap Detected", "type": "negative", "label": "TRAP", "value": "ALERT", "impact": -30})
+                reasons.append({"text": "Trap Condition Met", "type": "negative", "label": "TRAP", "value": "ALERT", "impact": -30})
 
             # MODULE 5 V6.2: TREND DIRECTION GUARD
             trend_direction_state = trend_guard.get("trend_direction_state", "NEUTRAL_TREND")
@@ -586,44 +584,6 @@ class IntradayEngine:
                         "impact": -8
                     })
             
-            # --- Phase 1: Dynamic Market Context (Beta/Alpha / Relative Strength) ---
-            # --- Phase 1: Dynamic Market Context (Beta/Alpha / Relative Strength) ---
-            index_change = index_ctx.get("day_change_pct", 0.0)
-            
-            # RS = Stock % change − Nifty % change
-            rs_alpha = day_change_pct - index_change
-            alpha_bonus = 0
-            
-            if rs_alpha > 2.0:
-                alpha_bonus = 10
-                reasons.append({
-                    "text": "Market RS Leader",
-                    "type": "positive",
-                    "label": "ALPHA",
-                    "value": f"+{round(rs_alpha, 2)}% vs Nifty",
-                    "impact": alpha_bonus
-                })
-                print(f"🚀 {sym} is a Market RS Leader! Alpha: +{rs_alpha:.2f}%")
-                
-            elif rs_alpha >= 1.0 and rs_alpha <= 2.0:
-                alpha_bonus = 5
-                reasons.append({
-                    "text": "Strong Relative Strength",
-                    "type": "positive",
-                    "label": "ALPHA",
-                    "value": f"+{round(rs_alpha, 2)}% vs Nifty",
-                    "impact": alpha_bonus
-                })
-                
-            elif rs_alpha < 0:
-                alpha_bonus = -8
-                reasons.append({
-                    "text": "Market Relative Weakness",
-                    "type": "negative",
-                    "label": "ALPHA",
-                    "value": f"{round(rs_alpha, 2)}% vs Nifty",
-                    "impact": alpha_bonus
-                })
             
             # Attach index_change to the stock's context state
             has_rs_leader_tag = (rs_alpha > 2.0 and index_change < -0.3)
@@ -813,7 +773,6 @@ class IntradayEngine:
             sector_bonus = 0 # This is already `sector_bonus`
             liq_accel_bonus = 0
             vol_acc_bonus = 0 # This is already `vol_acc_bonus`
-            extra_pattern_bonus = 0
 
             exhaustion_penalty = 0
             context_penalty = 0
@@ -877,33 +836,12 @@ class IntradayEngine:
                 trend_bonus += 10
                 reasons.append({"text": "Confirmed Trend Momentum", "type": "positive", "label": "ADX", "value": f"{round(adx_val,1)}", "impact": 10})
             
-            # ORB Analysis
-            orb = ta_15m.get("orb", {})
-            if orb.get("status") == "Breakout":
-                if rvol_val > 1.8:
-                    extra_pattern_bonus += 15
-                    reasons.append({"text": "Confirmed ORB Breakout", "type": "positive", "label": "ORB", "value": f"{round(rvol_val,2)}x", "impact": 15})
-                else:
-                    extra_pattern_bonus -= 5 # Penalty for weak ORB
 
             # Time of Day Bias
             now_time = now_timing.time()
-            if time(9,15) <= now_time <= time(10,30):
-                extra_pattern_bonus += 10
-                reasons.append({"text": "Power Hour Momentum", "type": "positive", "label": "TIME", "value": "Morning Surge", "impact": 10})
-            elif time(12,0) <= now_time <= time(13,30):
-                chop_penalty -= 10
-            elif now_time >= time(15,0):
-                chop_penalty -= 15
 
             # Market Alpha & Regime (Module 6)
             index_change = index_ctx.get("day_change_pct", 0.0)
-            rs_alpha = day_change_pct - index_change
-            if rs_alpha > 2.0:
-                alpha_bonus = 10
-                reasons.append({"text": "Market RS Leader", "type": "positive", "label": "ALPHA", "value": f"+{round(rs_alpha,1)}%", "impact": 10})
-            elif rs_alpha < 0:
-                alpha_bonus = -8
             
             regime = index_ctx.get("market_regime", "Mixed")
             if regime == "Mixed": regime_adj = -5
@@ -912,18 +850,18 @@ class IntradayEngine:
             # --- PHASE 6: V6.3 STANDARDIZED EXECUTION FLOW ---
             
             # FIX 3 (Patch 4): Institutional Momentum Cap Rule
-            # Triggers: Liquidity Accel, SMA Breakout, VWAP Reclaim, ADX Trend
-            is_sma_breakout = acc.get("accumulation_detected") and acc.get("is_breakout") and rvol_val >= 1.8
+            # Triggers: Liquidity Accel, Institutional Ignition, VWAP Reclaim, ADX Trend
+            is_institutional_ignition = rvol_val >= 2.5
             if (liquidity_acceleration_state == "ACCELERATION_CONFIRMED" and 
-                is_sma_breakout and 
+                is_institutional_ignition and 
                 vwap_reclaim_bonus > 0 and 
                 trend_bonus > 0):
                 
-                inst_mom_total = liq_accel_bonus + accumulation_bonus + vwap_reclaim_bonus + trend_bonus
+                inst_mom_total = liq_accel_bonus + rvol_bonus + vwap_reclaim_bonus + trend_bonus
                 if inst_mom_total > 45:
                     scale = 45.0 / inst_mom_total
                     liq_accel_bonus *= scale
-                    accumulation_bonus *= scale
+                    rvol_bonus *= scale
                     vwap_reclaim_bonus *= scale
                     trend_bonus *= scale
                     reasons.append({
@@ -942,7 +880,7 @@ class IntradayEngine:
                 institutional_volume_bonus + trend_bonus + vwap_reclaim_bonus + 
                 trend_dir_bonus + sector_bonus + liq_accel_bonus + 
                 vol_acc_bonus + accumulation_bonus + daily_momentum_bonus +
-                alpha_bonus + ad_bonus + vwap_bonus + extra_pattern_bonus
+                ad_bonus + vwap_bonus
             )
             
             m1_8_penalty_total = (
@@ -1005,7 +943,6 @@ class IntradayEngine:
             setup_tag = ""
             if "PRIME" in signal_type: setup_tag += " [💎 PRIME]"
             if mtf_ctx.get("is_bullish"): setup_tag += " [🌀 1H ALIGN]"
-            if rs_alpha > 2.0: setup_tag += " [🚀 RS LEADER]"
 
             return {
                 "symbol": sym,
