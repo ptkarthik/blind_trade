@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from ta.volume import MFIIndicator
 from ta.trend import ADXIndicator, EMAIndicator
+from ta.volatility import AverageTrueRange
 from app.services.liquidity_service import liquidity_service
 
 class IntradayTechnicalAnalysis:
@@ -41,13 +42,19 @@ class IntradayTechnicalAnalysis:
         """
         try:
             vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
+            
+            # Ensure scalars (handle potential duplicate columns/Series)
             vwap_now = vwap_series.iloc[-1]
+            vwap_now = float(vwap_now.iloc[0]) if hasattr(vwap_now, "iloc") else float(vwap_now)
+            
             close_now = df['close'].iloc[-1]
+            close_now = float(close_now.iloc[0]) if hasattr(close_now, "iloc") else float(close_now)
             
             # 1. Slope Calculation (Last 5 candles)
             lookback = 5
             if len(vwap_series) >= lookback:
                 vwap_prev = vwap_series.iloc[-lookback]
+                vwap_prev = float(vwap_prev.iloc[0]) if hasattr(vwap_prev, "iloc") else float(vwap_prev)
                 slope_up = vwap_now > vwap_prev
             else:
                 slope_up = False
@@ -622,23 +629,23 @@ class IntradayTechnicalAnalysis:
             breakout_level = 0
             breakout_level_source = "None"
             
-            # 1. Higher Priority: Previous Day High
-            if pdh > current_price and (pdh - current_price) / current_price < 0.03:
+            # 1. Higher Priority: Previous Day High (Within 3% range)
+            if pdh > 0 and abs(pdh - current_price) / current_price < 0.03:
                 breakout_level = pdh
                 breakout_level_source = "Prev_Day_High"
             
             # 2. Medium Priority: Opening Range High (If PDH not valid)
-            elif orb_high > current_price and (orb_high - current_price) / current_price < 0.03:
+            elif orb_high > 0 and abs(orb_high - current_price) / current_price < 0.03:
                 breakout_level = orb_high
                 breakout_level_source = "OR_High"
                 
             # 3. Standard Priority: Swing High (If others not valid)
-            elif swing_high > current_price and (swing_high - current_price) / current_price < 0.03:
+            elif swing_high > 0 and abs(swing_high - current_price) / current_price < 0.03:
                 breakout_level = swing_high
                 breakout_level_source = "Swing_High"
                 
             # 4. Fallback: VWAP Res
-            elif vwap_res > current_price and (vwap_res - current_price) / current_price < 0.03:
+            elif vwap_res > 0 and abs(vwap_res - current_price) / current_price < 0.03:
                 breakout_level = vwap_res
                 breakout_level_source = "VWAP_Res"
             
@@ -709,7 +716,7 @@ class IntradayTechnicalAnalysis:
             reclaim_vol_avg = df['volume'].iloc[-check_count:].mean() if candle_hold_count > 0 else 0
             
             price_reclaim = False
-            if candle_hold_count >= 3 and reclaim_vol_avg >= vol_ma:
+            if candle_hold_count >= 2 and reclaim_vol_avg >= vol_ma:
                 price_reclaim = True
 
             return {
@@ -732,89 +739,135 @@ class IntradayTechnicalAnalysis:
             return {"liquidity_sweep": False}
 
     @staticmethod
-    def detect_market_structure(df: pd.DataFrame) -> dict:
+    def detect_trend_direction(df: pd.DataFrame) -> dict:
         """
-        V5: Validate intraday trend structure using last 5 candles.
-        Detects HH/HL (Bullish) vs LH/LL (Bearish).
+        V6.2: Trend Direction Guard using EMA 20/50 alignment.
+        Fast (EMA20) must be above Slow (EMA50) for Bullish trend.
         """
         try:
-            if len(df) < 5: return {"market_structure_state": "NEUTRAL_STRUCTURE"}
+            if len(df) < 50: return {"trend_direction_state": "NEUTRAL_TREND", "ema_alignment": False}
             
-            latest = df.iloc[-1]
-            prev = df.iloc[-2]
+            ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+            ema_50_series = EMAIndicator(close=df['close'], window=50).ema_indicator()
             
-            # Bullish Structure Conditions: latest_high > previous_high AND latest_low > previous_low
-            is_hh = latest['high'] > prev['high']
-            is_hl = latest['low'] > prev['low']
+            ema_20 = ema_20_series.iloc[-1]
+            ema_20_prev = ema_20_series.iloc[-2]
+            ema_50 = ema_50_series.iloc[-1]
             
-            # Bearish Structure Conditions: Lower High OR Lower Low
-            is_lh = latest['high'] < prev['high']
-            is_ll = latest['low'] < prev['low']
+            ema_alignment = ema_20 > ema_50
+            slope_20 = ema_20 - ema_20_prev
             
-            if is_hh and is_hl:
+            # Use 0.01% of price as a threshold for "positive" slope to avoid noise
+            slope_threshold = ema_20 * 0.0001
+            
+            if not ema_alignment:
+                state = "BEARISH_TREND"
+            elif slope_20 > slope_threshold:
+                state = "BULLISH_TREND"
+            else:
+                state = "NEUTRAL_TREND"
+                
+            return {
+                "trend_direction_state": state,
+                "ema_alignment": ema_alignment,
+                "ema_20": round(ema_20, 2),
+                "ema_50": round(ema_50, 2),
+                "slope_20": round(slope_20, 4)
+            }
+        except Exception as e:
+            print(f"Error in Trend Direction Detection: {e}")
+            return {"trend_direction_state": "NEUTRAL_TREND", "ema_alignment": False}
+
+    @staticmethod
+    def detect_market_structure(df: pd.DataFrame) -> dict:
+        """
+        V6.3: Market Structure Validation using last 5 candles.
+        Detects BULLISH/BEARISH/NEUTRAL structures based on structural HH/HL or LH/LL.
+        """
+        try:
+            if len(df) < 6: return {"market_structure_state": "NEUTRAL_STRUCTURE"}
+            
+            # Lookback window: last 5 candles excluding current
+            # prev_window = df.iloc[-6:-1]
+            prev_high = df['high'].iloc[-6:-1].max()
+            prev_low = df['low'].iloc[-6:-1].min()
+            
+            latest_high = df['high'].iloc[-1]
+            latest_low = df['low'].iloc[-1]
+            
+            # Structure rules
+            if latest_high > prev_high and latest_low > prev_low:
                 state = "BULLISH_STRUCTURE"
-            elif is_lh or is_ll:
+            elif latest_high < prev_high or latest_low < prev_low:
                 state = "BEARISH_STRUCTURE"
-                # If it's LH/LL, block buy signal
             else:
                 state = "NEUTRAL_STRUCTURE"
                 
             return {
                 "market_structure_state": state,
-                "is_hh": is_hh,
-                "is_hl": is_hl,
-                "is_lh": is_lh,
-                "is_ll": is_ll
+                "latest_high": round(float(latest_high), 2),
+                "latest_low": round(float(latest_low), 2),
+                "prev_high": round(float(prev_high), 2),
+                "prev_low": round(float(prev_low), 2)
             }
-        except:
+        except Exception as e:
+            print(f"Error in Market Structure Detection: {e}")
             return {"market_structure_state": "NEUTRAL_STRUCTURE"}
 
     @staticmethod
     def detect_liquidity_trap(df: pd.DataFrame) -> dict:
         """
-        V6: Detects stop-hunt spikes designed to trap breakout traders.
-        If 3 out of 4 conditions are met, trap_move_detected = True.
+        V6.3 Clarification: Detects stop-hunt spikes with range expansion confirmation.
+        A trap is detected ONLY if ALL 4 conditions are met:
+        1. Volume Spike > 1.8x
+        2. Upper Wick > 50% of candle
+        3. Close in bottom 30%
+        4. Range Expansion Ratio >= 1.7
         """
         try:
             if len(df) < 20: return {"trap_move_detected": False}
             
             latest = df.iloc[-1]
-            prev = df.iloc[-2]
             
-            # 1. Candle range > 2x average candle range (20p)
-            candle_ranges = (df['high'] - df['low']).rolling(20).mean()
-            avg_range = candle_ranges.iloc[-2]
-            current_range = latest['high'] - latest['low']
-            cond_1 = current_range > (2.0 * avg_range) if avg_range > 0 else False
+            # 1. Volume spike ratio > 1.8x volume_ma(10)
+            vol_ma_series = df['volume'].rolling(10).mean()
+            vol_ma = vol_ma_series.iloc[-2] if not np.isnan(vol_ma_series.iloc[-2]) else vol_ma_series.iloc[-1]
+            volume_spike_ratio = latest['volume'] / vol_ma if not np.isnan(vol_ma) and vol_ma > 0 else 1.0
+            cond_vol = volume_spike_ratio > 1.8
             
-            # 2. Upper wick > 50% of candle body
-            body_size = abs(latest['close'] - latest['open'])
+            # 2. Upper wick > 50% of candle
+            candle_range = latest['high'] - latest['low']
             upper_wick = latest['high'] - max(latest['close'], latest['open'])
-            cond_2 = upper_wick > (0.5 * body_size) if body_size > 0 else upper_wick > 0
+            upper_wick_ratio = upper_wick / candle_range if candle_range > 0 else 0
+            cond_wick = upper_wick_ratio > 0.50
             
-            # 3. Volume spike > 1.8x volume_ma(20)
-            vol_ma = df['volume'].rolling(20).mean().iloc[-2]
-            cond_3 = latest['volume'] > (1.8 * vol_ma) if vol_ma > 0 else False
+            # 3. Close position formula (low to high range ratio)
+            # close_position = (close - low) / (high - low)
+            close_position = (latest['close'] - latest['low']) / candle_range if candle_range > 0 else 0.5
+            cond_close = close_position <= 0.30
             
-            # 4. Price closes back inside previous range (Failed breakout proxy)
-            # "Previous range" defined as [prev_low, prev_high]
-            cond_4 = latest['close'] <= prev['high'] and latest['close'] >= prev['low']
+            # 4. Range Expansion Confirmation (10-candle average)
+            ranges = (df['high'] - df['low']).rolling(10).mean()
+            avg_range = ranges.iloc[-2] if not np.isnan(ranges.iloc[-2]) else ranges.iloc[-1]
+            range_expansion_ratio = candle_range / avg_range if not np.isnan(avg_range) and avg_range > 0 else 1.0
+            cond_range = range_expansion_ratio >= 1.7
             
-            conditions_met = sum([cond_1, cond_2, cond_3, cond_4])
-            trap_move_detected = conditions_met >= 3
+            trap_move_detected = cond_vol and cond_wick and cond_close and cond_range
             
             return {
                 "trap_move_detected": trap_move_detected,
-                "conditions_count": conditions_met,
+                "trap_range_expansion": cond_range, # FIX 4 (Patch 1): Metadata alignment
+                "range_expansion_ratio": round(range_expansion_ratio, 2), # FIX 2 (Patch 2)
                 "details": {
-                    "range_spike": cond_1,
-                    "upper_wick": cond_2,
-                    "vol_spike": cond_3,
-                    "re-entry": cond_4
+                    "vol_spike": cond_vol,
+                    "upper_wick_ratio": round(upper_wick_ratio, 2),
+                    "close_position": round(close_position, 2),
+                    "range_expansion_ratio": round(range_expansion_ratio, 2)
                 }
             }
-        except:
-            return {"trap_move_detected": False}
+        except Exception as e:
+            # print(f"Error in Liquidity Trap Detection: {e}") # Debugging
+            return {"trap_move_detected": False, "trap_range_expansion": False}
 
     @staticmethod
     def detect_smart_money_accumulation(df: pd.DataFrame) -> dict:
@@ -877,11 +930,24 @@ class IntradayTechnicalAnalysis:
             vwap_accumulation_support = touches >= 2
 
             # --- 5. ACCUMULATION CONFIRMATION ---
+            # V6.1: Accumulation must last minimum 4 candles
+            # We verify that consolidation was valid for at least 4 bars
+            def is_consolidating(idx_offset):
+                slice_df = df.iloc[idx_offset-20:idx_offset] if idx_offset >= 20 else df.iloc[:idx_offset]
+                if slice_df.empty: return False
+                s_high = slice_df['high'].max()
+                s_low = slice_df['low'].min()
+                s_range = (s_high - s_low) / (slice_df['close'].iloc[-1] if not slice_df['close'].empty else 1) * 100
+                return s_range < 2.5
+
+            duration_validation = all([is_consolidating(i) for i in range(len(df), len(df)-4, -1)])
+            
             accumulation_detected = (
                 consolidation_zone and 
                 volume_accumulation and 
                 higher_lows_pattern and 
-                vwap_accumulation_support
+                vwap_accumulation_support and
+                duration_validation
             )
 
             # --- 7. BREAKOUT & INVALIDATION DATA ---
@@ -1063,14 +1129,19 @@ class IntradayTechnicalAnalysis:
         if df.empty or len(df) < 20: return {}
         
         latest = df.iloc[-1]
-        close = latest['close']
         
         # 1. VWAP (30% weight in engine) - Daily anchor is standard
         vwap_ctx = IntradayTechnicalAnalysis.analyze_vwap_advanced(df)
+        
+        # Ensure close and vwap are scalars (handle potential duplicate columns/Series)
+        close = latest['close']
         vwap = vwap_ctx["vwap_val"]
         
+        close_val = float(close.iloc[0]) if hasattr(close, "iloc") else float(close)
+        vwap_val = float(vwap.iloc[0]) if hasattr(vwap, "iloc") else float(vwap)
+        
         # STRICT VWAP: Must be > 0.2% above VWAP to be considered truly bullish and not just chopping around it
-        vwap_score = 100 if close > vwap * 1.002 else (50 if close > vwap else 0)
+        vwap_score = 100 if vwap_val > 0 and close_val > vwap_val * 1.002 else (50 if vwap_val > 0 and close_val > vwap_val else 0)
         vwap_status = "Price > VWAP (Trend)" if vwap_score == 100 else ("Chopping at VWAP" if vwap_score == 50 else "Price < VWAP")
         
         # 2. Advanced Volume Analysis (V3.2: ADV20 & Same-Time RVOL)
@@ -1090,25 +1161,11 @@ class IntradayTechnicalAnalysis:
         if avg_vol_at_time > 0:
             rvol = current_vol / avg_vol_at_time
         else:
-            # Improvement 2 V4: Use time-normalized benchmark fallback
-            # Formula: current_vol / (ADV20 / candles_per_day)
-            # Assuming 6.25 hour day for NSE = 25 candles (15m) or 75 candles (5m)
-            # Let's dynamically calculate candles per day from the current dataframe window
-            try:
-                today_date = current_dt.date()
-                candles_today = len(df[df.index.date == today_date])
-                # If we are early in the day, we need total expected candles
-                # Standard NSE: 09:15 to 15:30 = 375 minutes
-                interval_min = (df.index[1] - df.index[0]).seconds / 60
-                total_expected_candles = 375 / interval_min if interval_min > 0 else 25
-                
-                avg_candle_vol = adv20 / total_expected_candles if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
-                rvol = current_vol / avg_candle_vol if avg_candle_vol > 0 else 1.0
-                rvol_time_reference = f"AVG_{int(interval_min)}m"
-            except:
-                vol_ma = df['volume'].rolling(20).mean().iloc[-1]
-                rvol = current_vol / vol_ma if vol_ma > 0 else 1.0
-                rvol_time_reference = "MA20"
+            # Fallback: RVOL = Current Volume / (ADV20 / 25 expected candles per session)
+            # Standard time-normalized intraday benchmarking divisor fixed at 25
+            avg_candle_vol = adv20 / 25 if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
+            rvol = current_vol / avg_candle_vol if avg_candle_vol > 0 else 1.0
+            rvol_time_reference = "ADV25_FALLBACK"
             
         cvd_ctx = IntradayTechnicalAnalysis.calculate_cvd_proxy(df)
         
@@ -1270,8 +1327,8 @@ class IntradayTechnicalAnalysis:
         pullback = IntradayTechnicalAnalysis.identify_pullback(df, close)
         squeeze = IntradayTechnicalAnalysis.detect_squeeze(df)
         divergence = IntradayTechnicalAnalysis.detect_rsi_divergence(df)
-        trap = IntradayTechnicalAnalysis.detect_wash_and_rinse(df)
-        sweep = IntradayTechnicalAnalysis.detect_liquidity_sweep(df)
+        trap = IntradayTechnicalAnalysis.detect_liquidity_trap(df)
+        sweep = IntradayTechnicalAnalysis.detect_stop_hunt_sweep(df)
         poc_bounce = IntradayTechnicalAnalysis.detect_poc_bounce(df)
         
         # Anti-Chasing: Distance from ideal entry (VWAP or Pivot)
@@ -1292,6 +1349,7 @@ class IntradayTechnicalAnalysis:
             "pivot_score": pivot_score,
             "pa_score": pa_score,
             "adx_score": adx_ctx["score"],
+            "adx_details": adx_ctx,
             "fan_bonus": fan_ctx["score_bonus"],
             "vwap_val": vwap,
             "pivot_val": pivots.get("P", 0),
@@ -1317,6 +1375,7 @@ class IntradayTechnicalAnalysis:
             "trap": trap,
             "sweep": sweep,
             "poc_bounce": poc_bounce,
+            "trap_range_expansion": trap.get("trap_range_expansion", False),
             "chase": {
                 "is_chasing": is_chasing,
                 "dist_atr": round(chase_dist, 2)

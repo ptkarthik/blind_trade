@@ -207,29 +207,51 @@ class IntradayEngine:
         """
         Professional Intraday Analysis with Multi-Timeframe & Market Context.
         """
+        reasons = [] # INITIALIZE UNIVERSAL REASONS LIST
+        setup_tag = "" # INITIALIZE TAGS FOR SCORING ALIGNMENT
+        block_trade = False
+        block_reason = ""
+        
+        # --- SCORING INITIALIZATION ---
+        pullback_bonus = reclaim_bonus = sweep_bonus = squeeze_bonus = 0
+        gap_bonus = poc_bonus = fan_bonus = rvol_bonus = 0
+        inst_bonus = mtf_bonus = acc_bonus = accumulation_bonus = 0
+        institutional_volume_bonus = trend_bonus = vwap_reclaim_bonus = 0
+        trend_dir_bonus = sector_bonus = daily_momentum_bonus = 0
+        regime_bonus = ad_bonus = liquidity_bonus = 0
+        vwap_bonus = vol_acc_bonus = 0
+        liq_accel_bonus = liq_accel_penalty = 0
+        mtf_penalty = 0
+        regime_adj = 0
+        breadth_bonus = breadth_penalty = 0
+        volume_validation_state = "PASSED"
+        is_volume_block = False
+        
+        exhaustion_penalty = dev_penalty = context_penalty = 0
+        overheat_penalty = chop_penalty = volume_penalty = 0
+        structure_penalty = fake_breakout_penalty = vwap_ext_penalty = 0
+        # V6.3 Sequential Refactor
+        trend_penalty = trap_penalty = trend_dir_penalty = 0
+        sector_penalty_v6_3 = 0
+        block_trade = False
+        block_reason = ""
+        
+        # V6.3+ Institutional Flow Metrics
+        delivery_ratio = None
+        volume_zscore = 0
+        avg_range_10 = 0
+        candle_range = 0
+        
+        # V6.3+ Technical & Scoring Metrics
+        volatility_bonus = 0
+        float_rotation_bonus = 0
+        atr_5 = atr_20 = 0
+        atr_ratio = 1.0
+        free_float = 0
+
         try:
             # CHECK STOP 1
             if job_id and self.job_states.get(job_id, {}).get("stop_requested"): return None
-
-            reasons = [] # INITIALIZE UNIVERSAL REASONS LIST
-            
-            # --- SCORING INITIALIZATION ---
-            pullback_bonus = reclaim_bonus = sweep_bonus = squeeze_bonus = 0
-            gap_bonus = poc_bonus = fan_bonus = rvol_bonus = 0
-            inst_bonus = mtf_bonus = acc_bonus = accumulation_bonus = 0
-            institutional_volume_bonus = trend_bonus = vwap_reclaim_bonus = 0
-            trend_dir_bonus = sector_bonus = daily_momentum_bonus = 0
-            regime_bonus = ad_bonus = liquidity_bonus = 0
-            vwap_bonus = vol_acc_bonus = 0
-            liq_accel_bonus = liq_accel_penalty = 0
-            volume_validation_state = "PASSED"
-            is_volume_block = False
-            
-            exhaustion_penalty = dev_penalty = context_penalty = 0
-            overheat_penalty = chop_penalty = volume_penalty = 0
-            structure_penalty = fake_breakout_penalty = vwap_ext_penalty = 0
-            trend_penalty = trap_penalty = trend_dir_penalty = 0
-            sector_penalty_v6_3 = 0
 
             # 1. Fetch 30d OHLC for ADV20/RVOL Benchmark & ABSOLUTE LATEST Price
             # We need 30d to ensure we have at least 20 trading days of data
@@ -245,7 +267,10 @@ class IntradayEngine:
             df_hist.attrs["symbol"] = sym
 
             # Extract 5m data for the last 3 days for timing and micro-patterns
-            df_5m = await market_service.get_ohlc(sym, period="3d", interval="5m", fast_fail=fast_fail)
+            task_5m = market_service.get_ohlc(sym, period="3d", interval="5m", fast_fail=fast_fail)
+            task_1h = market_service.get_ohlc(sym, period="7d", interval="1h", fast_fail=fast_fail)
+            df_5m, df_1h = await asyncio.gather(task_5m, task_1h)
+            
             if df_5m is None or df_5m.empty: return None
             
             if df_5m is None or df_5m.empty or len(df_5m) < 40:
@@ -287,7 +312,7 @@ class IntradayEngine:
             # CHECK STOP 4
             if job_id and self.job_states.get(job_id, {}).get("stop_requested"): return None
             
-            # 3. Technical Analysis (Intraday Mode)
+            # Technical Indicators
             ta_15m = ta_intraday.IntradayTechnicalAnalysis.analyze_stock(df_15m)
             sweep = ta_intraday.IntradayTechnicalAnalysis.detect_stop_hunt_sweep(df_15m)
             acc = ta_intraday.IntradayTechnicalAnalysis.detect_smart_money_accumulation(df_15m)
@@ -296,205 +321,143 @@ class IntradayEngine:
             trend_guard = ta_intraday.IntradayTechnicalAnalysis.detect_trend_direction(df_15m)
             if not ta_15m: return None
             
-            # 5m Momentum & Entry timing
-            ta_5m = await asyncio.to_thread(ta_intraday.analyze_stock, df_5m)
+            ta_5m = await asyncio.to_thread(ta_intraday.IntradayTechnicalAnalysis.analyze_stock, df_5m)
             
-            # 1H Multi-Timeframe Confirmation
-            mtf_ctx = {"is_bullish": False, "reason": "No 1H Data"} # Defensive fallback: Don't confirm if data missing
+            mtf_ctx = {"is_bullish": False, "reason": "No 1H Data"}
             if df_1h is not None and not df_1h.empty:
-                ta_1h = await asyncio.to_thread(ta_intraday.analyze_stock, df_1h)
+                ta_1h = await asyncio.to_thread(ta_intraday.IntradayTechnicalAnalysis.analyze_stock, df_1h)
                 mtf_ctx = {
                     "is_bullish": ta_1h.get("is_bullish_trend", False),
                     "score": ta_1h.get("vwap_score", 50),
                     "trend": ta_1h.get("trend", "NEUTRAL")
                 }
             
-            # 4. Professional Weighted Scoring (User 5-Indicator Custom Algorithm)
+            # Initial Metrics
             vwap_score = ta_15m.get("vwap_score", 50)
             pa_score = ta_15m.get("pa_score", 50)
-            pivot_score = ta_15m.get("pivot_score", 50)
-            
-            # User noted EMAs are best on 1m, 3m, 5m. Use 5m if available
-            ema_score = ta_5m.get("ema_score", 50) if ta_5m else ta_15m.get("ema_score", 50)
-            
-            # ADX Score (Trend Strength)
             adx_score = ta_15m.get("adx_score", 50)
-            
-            # V3.2 RVOL & ADV Metadata from TA
             rvol_val = ta_15m.get("rvol_val", 1.0)
             adv20 = ta_15m.get("adv20", 0)
-            liq_level = ta_15m.get("liq_level", "Unknown")
-            
-            # MODULE 5 V5: Institutional Volume Confirmation
-            vol_ma = df_5m['volume'].rolling(20).mean().iloc[-1]
-            current_volume = df_5m['volume'].iloc[-1]
-            volume_expansion_ratio = current_volume / vol_ma if vol_ma > 0 else 1.0
-            institutional_volume_flag = False
-            volume_penalty = 0
-            
-            # Fix 1: Standardization - Volume guard now uses RVOL 
-            if rvol_val < 1.0:
-                volume_validation_state = "LOW_VOLUME_BLOCK"
-                reasons.append({"text": "Low Volume Validation Block", "type": "negative", "label": "VOLUME", "value": f"{round(rvol_val,2)}x", "impact": 0})
-                # Note: Penalty scoring (-25) is handled centrally in Module 2 for rvol < 1.0
-            elif volume_expansion_ratio >= 1.8:
-                institutional_volume_flag = True
-                reasons.append({"text": "Institutional Volume Surge", "type": "positive", "label": "INSTITUTIONAL", "value": f"{round(volume_expansion_ratio,2)}x", "impact": 10})
-                # Bonus will be added to base score later
-
-            # MODULE 12 V6: VWAP DEVIATION GUARD
             vwap_val = ta_15m.get("vwap_val", real_price)
-            vwap_deviation_pct = ((real_price - vwap_val) / vwap_val * 100) if vwap_val > 0 else 0.0
-            vwap_ext_penalty = 0
-            if vwap_deviation_pct > 4.0:
-                reasons.append({"text": "Critical VWAP Extension", "type": "negative", "label": "RISK", "value": f"{round(vwap_deviation_pct,1)}%", "impact": 0})
-            elif vwap_deviation_pct > 2.5:
-                vwap_ext_penalty = -20
-                reasons.append({"text": "Extended above fair value", "type": "negative", "label": "VWAP", "value": f"{round(vwap_deviation_pct,1)}%", "impact": -20})
-
-            # MODULE 13 V6: TREND MOMENTUM EXPANSION FILTER
-            adx_ctx = ta_15m.get("adx_details", {"adx": 0, "is_rising": False, "adx_slope": 0.0})
-            adx_val = adx_ctx.get("adx", 0)
-            adx_slope = adx_ctx.get("adx_slope", 0)
-            trend_penalty = 0
-            trend_bonus = 0
-            trend_momentum_state = "NEUTRAL"
+            vwap_deviation_pct = abs(real_price - vwap_val) / vwap_val * 100 if vwap_val > 0 else 0
             
-            if adx_val < 18:
-                pass # Hard block handled in Signal Classification
-            elif adx_val > 25 and adx_slope > 0:
-                trend_bonus = 10
-                trend_momentum_state = "RISING_STRENGTH"
-                reasons.append({"text": "Rising Trend Momentum", "type": "positive", "label": "ADX", "value": f"+{round(adx_slope,2)}", "impact": 10})
-            elif adx_slope < 0:
-                trend_momentum_state = "FALLING_STRENGTH"
-                reasons.append({"text": "Fading Momentum", "type": "neutral", "label": "ADX", "value": f"{round(adx_slope,2)}", "impact": 0})
-
-            # MODULE 14 V6: LIQUIDITY TRAP DETECTOR
+            # --- STABILITY PATCH: SAFE METRIC EXTRACTION ---
+            # Extract metrics from technical objects defensively
+            adx_val = ta_15m.get("adx_details", {}).get("adx", 0)
+            adx_slope = ta_15m.get("adx_details", {}).get("adx_slope", 0)
+            adx_is_rising = ta_15m.get("adx_details", {}).get("is_rising", False)
+            
             trap_move_detected = trap.get("trap_move_detected", False)
-            trap_range_expansion = trap.get("trap_range_expansion", False)
-            trap_penalty = 0
-            if trap_move_detected:
-                trap_penalty = -30
-                reasons.append({"text": "Trap Condition Met", "type": "negative", "label": "TRAP", "value": "ALERT", "impact": -30})
-
-            # MODULE 5 V6.2: TREND DIRECTION GUARD
             trend_direction_state = trend_guard.get("trend_direction_state", "NEUTRAL_TREND")
-            ema_alignment = trend_guard.get("ema_alignment", False)
-            trend_dir_penalty = 0
-            trend_dir_bonus = 0
-            if trend_direction_state == "BEARISH_TREND":
-                trend_dir_penalty = -25
-                reasons.append({"text": "Bearish Trend Guard (EMA 20/50)", "type": "negative", "label": "TREND", "value": "BEARISH", "impact": -25})
-            elif trend_direction_state == "BULLISH_TREND":
-                trend_dir_bonus = 8
-                reasons.append({"text": "Bullish Trend Alignment", "type": "positive", "label": "TREND", "value": "BULLISH", "impact": 8})
-
-            # MODULE 5 V6.3: MARKET STRUCTURE VALIDATION
             market_structure_state = structure.get("market_structure_state", "NEUTRAL_STRUCTURE")
-            structure_penalty = 0
-            if market_structure_state == "BEARISH_STRUCTURE":
-                structure_penalty = -30
-                reasons.append({"text": "Bearish Market Structure (LH/LL)", "type": "negative", "label": "STRUCTURE", "value": "BEARISH", "impact": -30})
-            elif market_structure_state == "BULLISH_STRUCTURE":
-                reasons.append({"text": "Bullish Market Structure (HH/HL)", "type": "positive", "label": "STRUCTURE", "value": "BULLISH", "impact": 0})
-
-            # MODULE 1 V6.3: SECTOR MOMENTUM VALIDATION
-            sector = market_service.get_sector_for_symbol(sym)
-            sector_densities = global_index_ctx.get("sector_densities", {})
-            sector_density = sector_densities.get(sector, 0.0)
-            sector_strength = False
-            sector_bonus = 0
-            sector_penalty_v6_3 = 0
+            # --- END STABILITY PATCH ---
             
-            if sector_density >= 0.40:
-                sector_strength = True
-                sector_bonus = 6
-                reasons.append({"text": "High Sector Participation", "type": "positive", "label": "SECTOR", "value": f"{round(sector_density*100,0)}%", "impact": 6})
-            elif sector_density < 0.15:
-                # Isolated move, could be low institutional support
-                sector_penalty_v6_3 = -10
-                reasons.append({"text": "Low Sector Density", "type": "negative", "label": "SECTOR", "value": f"{round(sector_density*100,0)}%", "impact": -10})
+            # --- INSTITUTIONAL FLOW METRIC CALCULATIONS ---
+            if len(df_15m) >= 10:
+                v_series = df_15m['volume'].iloc[-20:] # 20 period window for Z-Score
+                if v_series.std() > 0:
+                    volume_zscore = (df_15m['volume'].iloc[-1] - v_series.mean()) / v_series.std()
+                
+                ranges = (df_15m['high'] - df_15m['low']).iloc[-10:]
+                avg_range_10 = ranges.mean()
+                candle_range = df_15m['high'].iloc[-1] - df_15m['low'].iloc[-1]
+            
+            delivery_ratio = index_ctx.get("delivery_ratio") # Expected optional input
+            
+            # --- VOLATILITY & FLOAT METRICS ---
+            fund_data = await market_service.get_fundamentals(sym)
+            free_float = fund_data.get("floatShares", fund_data.get("marketCap", 0) * 0.4 / real_price) # Fallback to 40% MCAP if unknown
+            
+            if len(df_15m) >= 20:
+                atr_20_series = ta_intraday.AverageTrueRange(high=df_15m['high'], low=df_15m['low'], close=df_15m['close'], window=20).average_true_range()
+                atr_5_series = ta_intraday.AverageTrueRange(high=df_15m['high'], low=df_15m['low'], close=df_15m['close'], window=5).average_true_range()
+                atr_20 = float(atr_20_series.iloc[-1])
+                atr_5 = float(atr_5_series.iloc[-1])
+                atr_ratio = atr_5 / max(atr_20, 0.0001)
 
-            # MODULE 5 V6.1: VWAP RECLAIM BONUS
-            vwap_reclaim_bonus = 0
+            regime = index_ctx.get("market_regime", "Mixed")
+            # --- PHASE 0: Pre-Scoring Metrics & Standard Guards ---
+            # Module 12: VWAP Deviation Guard (Hard Block)
+            if vwap_deviation_pct > 4.0: block_trade, block_reason = True, "Critical VWAP Extension"
+            
+            # Enhancement: ATR-Adjusted Deviation Guard
+            if atr_20 > 0:
+                vwap_atr_ratio = abs(real_price - vwap_val) / atr_20
+                if vwap_atr_ratio > 2.5:
+                    block_trade, block_reason = True, "Excessive VWAP Extension"
+            
+            # Module 13: ADX Filter (Hard Block)
+            if adx_val < 18: block_trade, block_reason = True, "Weak ADX Momentum"
+            
+            # Module 6: Market Regime (Hard Block)
+            if regime == "Strong Bearish": block_trade, block_reason = True, "Market Regime: Strong Bearish"
+
+            # Module 14: Liquidity Trap Detector (Hard Block)
+            if trap_move_detected: block_trade, block_reason = True, "Institutional Trap"
+            
+            # Enhancement: VWAP Reclaim Failure Trap
             if len(df_15m) >= 3:
                 vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df_15m)
-                # Cross above and hold for 2 candles (current & prev above, candle before that below)
-                if (df_15m['close'].iloc[-1] > vwap_series.iloc[-1] and 
-                    df_15m['close'].iloc[-2] > vwap_series.iloc[-2] and 
-                    df_15m['close'].iloc[-3] < vwap_series.iloc[-3]):
-                    
-                    if rvol_val > 1.5:
-                        vwap_reclaim_bonus = 15
-                        reasons.append({"text": "Institutional VWAP Reclaim", "type": "positive", "label": "VWAP", "value": "RECLAIM", "impact": 15})
-            
-            rvol_bonus = 0
-            if rvol_val > 2.5:
-                rvol_bonus = 18
-                reasons.append({"text": "Institutional RVOL Ignition", "type": "positive", "label": "RVOL", "value": f"{round(rvol_val,2)}x", "impact": 18})
-            elif rvol_val > 1.5:
-                rvol_bonus = 10
-                reasons.append({"text": "Strong Relative Volume", "type": "positive", "label": "RVOL", "value": f"{round(rvol_val,2)}x", "impact": 10})
-
-            # Phase 2: EMA Fan & Convergence Bonuses
-            fan_bonus = ta_15m.get("fan_bonus", 0)
-            
-            # Market Context (Bonus/Malus applied later outside the 100% boundary)
-            index_score = index_ctx.get("score", 50)
-            
-            # MODULE 2: RVOL & Liquidity Acceleration
-            # Default state
-            liquidity_acceleration_state = "NEUTRAL"
-            acceleration_detected = False
-            liq_accel_bonus = 0
-            liq_accel_penalty = 0
-            volume_candle_sequence = []
-            
-            if len(df_15m) >= 3:
-                # FIX 1: Candle Definitions (Completed 15-minute candles only)
-                v1 = float(df_15m['volume'].iloc[-3]) # Volume of candle -3 (completed)
-                v2 = float(df_15m['volume'].iloc[-2]) # Volume of candle -2 (completed)
-                v3 = float(df_15m['volume'].iloc[-1]) # Volume of candle -1 (completed)
-                # Note: Currently forming candle is NEVER used.
-                volume_candle_sequence = [v1, v2, v3]
+                # Price broke above but fell back below within 2 candles with decreasing volume
+                p1, p2, p3 = df_15m['close'].iloc[-3], df_15m['close'].iloc[-2], df_15m['close'].iloc[-1]
+                v1, v2, v3 = df_15m['volume'].iloc[-3], df_15m['volume'].iloc[-2], df_15m['volume'].iloc[-1]
+                vwap1, vwap2, vwap3 = vwap_series.iloc[-3], vwap_series.iloc[-2], vwap_series.iloc[-1]
                 
-                # Condition A: True Acceleration
-                is_accel = v3 > v2 and v2 > v1 and v3 >= 1.2 * v2
-                acceleration_detected = is_accel
-                # FIX 2 (Patch 4): Deterministic Priority Mapping
-                # 1. EXHAUSTION_WARNING (Highest Priority)
-                if rvol_val >= 2.0 and v3 < v2:
-                    liquidity_acceleration_state = "EXHAUSTION_WARNING"
-                    liq_accel_penalty = -12
-                    reasons.append({"text": "Institutional Exhaustion Alert", "type": "negative", "label": "VOL", "value": "EXHAUSTION", "impact": -12})
-                # 2. ACCELERATION_CONFIRMED
-                elif is_accel:
-                    liquidity_acceleration_state = "ACCELERATION_CONFIRMED"
-                    liq_accel_bonus = 6
-                    reasons.append({"text": "Confirmed Liquidity Acceleration", "type": "positive", "label": "LIQUIDITY", "value": "ACCEL", "impact": 6})
-                    
-                    # Institutional Ignition (Additive +10 if RVOL >= 2.5)
-                    if rvol_val >= 2.5:
-                        liq_accel_bonus += 10
-                        reasons.append({"text": "Strong Institutional Ignition", "type": "positive", "label": "IGNITION", "value": "STRONG", "impact": 10})
-                # 3. NEUTRAL
-                else:
-                    liquidity_acceleration_state = "NEUTRAL"
-                    if rvol_val > 1.5:
-                        liq_accel_penalty = -8
-                        reasons.append({"text": "Weak Volume Participation (Slow Start)", "type": "negative", "label": "LIQUIDITY", "value": "WEAK_SPIKE", "impact": -8})
-                    
-                pass # End of len(df_15m) >= 3 block
+                # Check if p2 broke above vwap but p3 fell below, and v3 < v2
+                if p2 > vwap2 and p3 < vwap3 and v3 < v2:
+                    block_trade, block_reason = True, "VWAP Reclaim Trap"
 
-            # Institutional Bonus (Intraday Bias)
-            inst_bonus = 0
-            if rs_rating > 80: inst_bonus += 5 # Trade with Leaders
-            if "Accumulation" in spon_action: inst_bonus += 2 # Buy Dips
-            if "Distribution" in spon_action: inst_bonus -= 5 # Avoid Longs
+            # Module 5.1: Trend Direction Guard (Hard Block)
+            if trend_direction_state == "BEARISH_TREND": block_trade, block_reason = True, "Bearish Trend Guard"
             
-            # --- DAY CHANGE CALCULATION (Crucial for Guardrails) ---
-            day_change_pct = 0
+            # Module 5.3: Market Structure Guard (Hard Block)
+            if market_structure_state == "BEARISH_STRUCTURE": block_trade, block_reason = True, "Bearish Structure"
+
+            # Module 3: Sweep Fake Breakout (Hard Block)
+            if sweep.get("fake_breakout_flag"): block_trade, block_reason = True, "Failed Breakout Collapse"
+
+            # --- PHASE 1: Modular Scoring Logic ---
+            
+            # Module 1: Sector Participation
+            sector = market_service.get_sector_for_symbol(sym)
+            sector_densities = index_ctx.get("sector_densities", {})
+            sector_density = sector_densities.get(sector, 0.0)
+            
+            # Enhancement: Time-Weighted Sector Density
+            t = now_timing.hour * 100 + now_timing.minute
+            time_factor = 1.0 # Default fallback
+            if 915 <= t <= 930: time_factor = 0.6
+            elif 930 < t <= 1030: time_factor = 1.0
+            elif t > 1030: time_factor = 1.2
+            
+            sector_density_weighted = sector_density * time_factor
+            
+            if sector_density_weighted >= 0.40:
+                sector_bonus = 6
+                reasons.append({"text": "High Sector Participation", "type": "positive", "label": "SECTOR", "value": f"{round(sector_density_weighted*100,0)}%", "impact": 6})
+            elif sector_density_weighted < 0.15:
+                sector_penalty_v6_3 = -10
+                reasons.append({"text": "Low Sector Density", "type": "negative", "label": "SECTOR", "value": f"{round(sector_density_weighted*100,0)}%", "impact": -10})
+
+            # Module 11: Sector Alpha (Outperformance)
+            sector_perfs = index_ctx.get("sector_perfs", {})
+            if sector in sector_perfs and sector != "General":
+                sector_change = sector_perfs.get(sector, 0.0)
+                nifty_change = index_ctx.get("day_change_pct", 0.0)
+                sector_alpha = sector_change - nifty_change
+                
+                # Smoothing protection for flat index
+                if abs(nifty_change) < 0.2:
+                    sector_alpha = sector_alpha * 0.5
+                
+                if sector_alpha > 0.5:
+                    sector_bonus += 10
+                    reasons.append({"text": "Sector Outperforming", "type": "positive", "label": "SECTOR", "value": f"{sector} (+{round(sector_alpha, 2)}%)", "impact": 10})
+                elif sector_alpha < 0:
+                    sector_bonus -= 8
+                    reasons.append({"text": "Sector Underperforming", "type": "negative", "label": "SECTOR", "value": f"{sector} ({round(sector_alpha, 2)}%)", "impact": -8})
+
+            # Module 12: Daily Momentum Guardrails
             today_date = df_5m.index[-1].date()
             prev_days_df = df_5m[df_5m.index.date < today_date]
             if not prev_days_df.empty:
@@ -503,462 +466,188 @@ class IntradayEngine:
             else:
                 today_open = df_5m[df_5m.index.date == today_date]['open'].iloc[0]
                 day_change_pct = ((real_price - today_open) / today_open) * 100
-            
-            # NEW: Volume Acceleration (Momentum Ignition)
-            vol_acc_bonus = 0
-            vol_acc_tag = ""
-            try:
-                v_last = df_5m['volume'].iloc[-1]
-                v_prev = df_5m['volume'].iloc[-2]
-                vol_acc = v_last / v_prev if v_prev > 0 else 0
                 
-                if vol_acc > 1.8:
-                    vwap_val = ta_15m.get("vwap_val", 0)
-                    if real_price > vwap_val:
-                        if vol_acc > 2.5:
-                            vol_acc_bonus = 18
-                        else:
-                            vol_acc_bonus = 12
-                        
-                        vol_acc_tag = " [🚀 MOMENTUM IGNITION]"
-                        reasons.append({
-                            "text": "Volume Acceleration",
-                            "type": "positive",
-                            "label": "IGNITION",
-                            "value": f"{round(vol_acc, 2)}x Spike",
-                            "impact": vol_acc_bonus
-                        })
-                        print(f"🚀 {sym} Momentum Ignition! Vol Acc: {vol_acc:.2f}x (+{vol_acc_bonus})")
-            except:
-                pass
-
-            # Daily Momentum Guardrail (Refined V3.1)
-            daily_momentum_bonus = 0
-            if 1.0 <= day_change_pct < 2.0:
-                daily_momentum_bonus = 5
-            elif 2.0 <= day_change_pct < 4.0:
-                daily_momentum_bonus = 10
-            elif 4.0 <= day_change_pct < 6.0:
-                daily_momentum_bonus = 5
-            elif day_change_pct >= 6.0:
-                daily_momentum_bonus = 0
-                
-            if day_change_pct > 8.0:
+            if 1.0 <= day_change_pct < 2.0: daily_momentum_bonus = 5
+            elif 2.0 <= day_change_pct < 4.0: daily_momentum_bonus = 10
+            elif 4.0 <= day_change_pct < 6.0: daily_momentum_bonus = 5
+            elif day_change_pct >= 8.0:
                 daily_momentum_bonus = -20
-                reasons.append({
-                    "text": "Parabolic Exhaustion",
-                    "type": "negative",
-                    "label": "GUARD",
-                    "value": f"{round(day_change_pct, 2)}% Up",
-                    "impact": -20
-                })
-            
-            # Note: dev_penalty (duplicate VWAP) removed as Fix 1
-            sector = market_service.get_sector_for_symbol(sym)
-            # Note: dev_penalty (duplicate VWAP) removed as Fix 1
-            sector = market_service.get_sector_for_symbol(sym)
-            sector_bonus = 0
-            
-            sector_perfs = index_ctx.get("sector_perfs", {})
-            if sector in sector_perfs and sector != "General":
-                sector_change = sector_perfs.get(sector, 0.0)
-                nifty_change = index_ctx.get("day_change_pct", 0.0)
-                sector_alpha = sector_change - nifty_change
-                
-                if sector_alpha > 0.5:
-                    sector_bonus = 10
-                    reasons.append({
-                        "text": "Sector Outperforming",
-                        "type": "positive",
-                        "label": "SECTOR",
-                        "value": f"{sector} (+{round(sector_alpha, 2)}%)",
-                        "impact": 10
-                    })
-                elif sector_alpha < 0:
-                    sector_bonus = -8
-                    reasons.append({
-                        "text": "Sector Underperforming",
-                        "type": "negative",
-                        "label": "SECTOR",
-                        "value": f"{sector} ({round(sector_alpha, 2)}%)",
-                        "impact": -8
-                    })
-            
-            
-            # Attach index_change to the stock's context state
-            has_rs_leader_tag = (rs_alpha > 2.0 and index_change < -0.3)
-            
-            # --- Phase 1.5: Liquidity Pipeline Rejection ---
-            # Calculate Average Daily Volume (ADV) from the 5-day OHLC data
-            # df_15m has 15m bars. We extract dates to sum daily volumes, then average.
-            liquidity_bonus = 0
-            try:
-                # 1. ADV Check (> 500k)
-                # Resample back to daily to get true ADV
-                daily_vols = df_15m['volume'].resample('1D').sum()
-                daily_vols = daily_vols[daily_vols > 0] # Filter out weekends/holidays
-                adv = daily_vols.mean() if not daily_vols.empty else 0
-                
-                # 2. Traded Value Check (> 10Cr by 10:30 AM)
-                market_tz = pytz.timezone(settings.MARKET_TIMEZONE)
-                now = datetime.now(market_tz)
-                is_morning = (now.hour == 9) or (now.hour == 10 and now.minute <= 30)
-                
-                today = now.date()
-                today_df = df_15m[df_15m.index.date == today]
-                today_vol = today_df['volume'].sum() if not today_df.empty else 0
-                traded_value_cr = (today_vol * real_price) / 10000000 # Convert to Crores
-                
-                liquidity_rejected = False
-                rej_reason = ""
-                
-                if adv < 500000:
-                    liquidity_rejected = True
-                    rej_reason = f"Low ADV ({adv/100000:.1f}L < 5L)"
-                elif is_morning and traded_value_cr < 10.0:
-                    liquidity_rejected = True
-                    rej_reason = f"Low Traded Value by 10:30 ({traded_value_cr:.1f}Cr < 10Cr)"
-                    
-                if liquidity_rejected:
-                    liquidity_bonus = -50
-                    reasons.append({
-                        "text": "Liquidity Rejection",
-                        "type": "negative",
-                        "label": "LIQUIDITY",
-                        "value": rej_reason,
-                        "impact": -50
-                    })
-                    print(f"🚫 {sym} Rejected by Liquidity Filter: {rej_reason}")
-            except Exception as e:
-                print(f"Error in Liquidity Check for {sym}: {e}")
-            
-            # PHASE 5: V4 Market Regime Filter (Global Traffic Light)
-            regime = index_ctx.get("market_regime", "Mixed")
-            regime_adj = 0
-            
-            if regime == "Mixed":
-                regime_adj = -5
-                reasons.append({
-                    "text": "Market Regime: Mixed",
-                    "type": "negative",
-                    "label": "REGIME",
-                    "impact": -5
-                })
-            elif regime == "Sideways / Choppy":
-                regime_adj = -10 # Module 6 V4: Increased to -10 direct score penalty
-                reasons.append({
-                    "text": "Market Regime: Sideways",
-                    "type": "negative",
-                    "label": "REGIME",
-                    "impact": -10
-                })
-            elif regime == "Strong Bullish":
-                reasons.append({
-                    "text": "Market Regime: Strong Bullish",
-                    "type": "positive",
-                    "label": "REGIME",
-                    "impact": 0
-                })
-            elif regime == "Strong Bearish":
-                reasons.append({
-                    "text": "Market Regime: Strong Bearish",
-                    "type": "negative",
-                    "label": "REGIME",
-                    "impact": 0
-                })
-                    
-            # Market Breadth (A/D Ratio Momentum Bonus)
-            ad_ratio = index_ctx.get("ad_ratio", 1.0)
-            ad_bonus = 0
-            if ad_ratio > 1.5:
-                ad_bonus = 5
-            elif ad_ratio < 0.8:
-                ad_bonus = -5
-            
-            # Advanced VWAP Scenarios
-            vwap_ctx = ta_15m.get("vwap_ctx", {})
-            vwap_bonus = 0
-            
-            if vwap_ctx.get("price_above") and vwap_ctx.get("slope_up"):
-                vwap_bonus += 10
-                reasons.append({
-                    "text": "Bullish VWAP Trajectory",
-                    "type": "positive",
-                    "label": "VWAP",
-                    "value": "Price > VWAP & Rising Slope",
-                    "impact": 10
-                })
-            
-            if vwap_ctx.get("reclaim"):
-                vwap_bonus += 15
-                reasons.append({
-                    "text": "Institutional VWAP Reclaim",
-                    "type": "positive",
-                    "label": "RECLAIM",
-                    "value": "High Volume VWAP Cross",
-                    "impact": 15
-                })
-                
-            if vwap_ctx.get("oscillating"):
-                vwap_bonus += 2
-                reasons.append({
-                    "text": "VWAP Magnet Zone",
-                    "type": "neutral",
-                    "label": "VWAP",
-                    "value": "Oscillating Around Anchor",
-                    "impact": 2
-                })
+                reasons.append({"text": "Parabolic Exhaustion", "type": "negative", "label": "GUARD", "value": f"{round(day_change_pct, 2)}% Up", "impact": -20})
 
-            # --- PHASE 4: INSTITUTIONAL SMART MONEY ACCUMULATION (V3.4) ---
-            accumulation_bonus = 0
-            if acc["accumulation_detected"]:
-                # Upgrade 2 V4.2: Strengthened Breakout Confirmation
-                v_last = df_5m['volume'].iloc[-1]
-                v_avg_cons = acc.get("avg_vol_consolidation", 0)
-                
-                is_strong_breakout = (
-                    acc["is_breakout"] and 
-                    rvol_val >= 1.8 and 
-                    v_last > v_avg_cons
-                )
-                
-                if is_strong_breakout:
-                    accumulation_bonus = 28 # +18 for accumulation + 10 for strong breakout
-                    reasons.append({
-                        "text": "Institutional Accumulation Breakout",
-                        "type": "positive",
-                        "label": "SMART",
-                        "value": "Breakout confirmed (Vol/RVOL)",
-                        "impact": 28
-                    })
-                    setup_tag += " [🏦 Smart Money Accumulation]"
-                else:
-                    accumulation_bonus = 18
-                    reasons.append({
-                        "text": "Smart Money Accumulation",
-                        "type": "positive",
-                        "label": "SMART",
-                        "value": "Consolidation + Vol Accumulation",
-                        "impact": 18
-                    })
-                    setup_tag += " [🏦 Smart Money Accumulation]"
-            
-            # Risk control / Invalidation
-            if acc["is_breakdown"]:
-                accumulation_bonus = -15
-                reasons.append({
-                    "text": "Accumulation Invalidation (Breakdown)",
-                    "type": "negative",
-                    "label": "GUARD",
-                    "value": "Break Below Consolidation Low",
-                    "impact": -15
-                })
-
-            # Initialize all new bonus/penalty variables to 0
-            pullback_bonus = 0
-            sweep_bonus = 0
-            reclaim_bonus = 0
-            squeeze_bonus = 0
-            gap_bonus = 0
-            poc_bonus = 0
-            fan_bonus = 0
-            rvol_bonus = 0 # This might be `rvol_val` related, need to check usage
-            inst_bonus = 0 # This is already used for `inst_bonus`
-            mtf_bonus = 0
-            acc_bonus = 0 # This is already `accumulation_bonus`
-            institutional_volume_bonus = 0
-            trend_bonus = 0
-            vwap_reclaim_bonus = 0
-            trend_dir_bonus = 0
-            sector_bonus = 0 # This is already `sector_bonus`
-            liq_accel_bonus = 0
-            vol_acc_bonus = 0 # This is already `vol_acc_bonus`
-
-            exhaustion_penalty = 0
-            context_penalty = 0
-            overheat_penalty = 0
-            chop_penalty = 0
-            volume_penalty = 0
-            structure_penalty = 0
-            fake_breakout_penalty = 0
-            vwap_ext_penalty = 0
-            trend_penalty = 0
-            trap_penalty = 0
-            trend_dir_penalty = 0
-            sector_penalty_v6_3 = 0
-            liq_accel_penalty = 0
-            mtf_penalty = 0
-
-            # --- PHASE 4: Pattern Analysis Blocks (Modules 3, 4, 14) ---
-            
-            # Module 4: Smart Money Accumulation
-            if acc["accumulation_detected"]:
-                if acc["is_breakout"] and rvol_val >= 1.8:
-                    accumulation_bonus = 28
-                    reasons.append({"text": "Institutional Accumulation Breakout", "type": "positive", "label": "SMART", "value": "Breakout confirmed", "impact": 28})
-                else:
-                    accumulation_bonus = 18
-                    reasons.append({"text": "Smart Money Accumulation", "type": "positive", "label": "SMART", "value": "Consolidation", "impact": 18})
-            if acc["is_breakdown"]:
-                accumulation_bonus = -15
-                reasons.append({"text": "Accumulation Invalidation", "type": "negative", "label": "GUARD", "value": "Breakdown", "impact": -15})
-            
-            # Module 3: Liquidity Sweep & Stop Hunt
-            candle_hold_count = sweep.get("candle_hold_count", 0)
-            if candle_hold_count >= 3:
-                reclaim_bonus = 6
-                reasons.append({"text": "Breakout Continuation Hold", "type": "positive", "label": "SMART", "value": f"{candle_hold_count} Bars", "impact": 6})
-            
-            # Module 14 Extension: Institutional Trap Reclaim
-            trap_data = ta_15m.get("trap", {})
-            if trap_data.get("is_trap"):
-                sweep_bonus += 15
-                reasons.append({"text": "Institutional Trap Reclaim", "type": "positive", "label": "TRAP", "value": "RECLAIM", "impact": 15})
-            
-            # Module 2 Extension: Volume Ignition
-            try:
-                v_last = df_5m['volume'].iloc[-1]
-                v_prev = df_5m['volume'].iloc[-2]
-                vol_acc_ratio = v_last / v_prev if v_prev > 0 else 0
-                if vol_acc_ratio > 1.8 and real_price > vwap_val:
-                    vol_acc_bonus = 18 if vol_acc_ratio > 2.5 else 12
-                    reasons.append({"text": "Volume Acceleration Ignition", "type": "positive", "label": "IGNITION", "value": f"{round(vol_acc_ratio,1)}x", "impact": vol_acc_bonus})
-            except: pass
-
-            # --- PHASE 5: Additional Patterns (Pullbacks, Fans, ADX Extreme) ---
-            pullback = ta_15m.get("pullback", {"is_pullback": False})
-            if pullback["is_pullback"]:
-                pullback_bonus = 25
-                reasons.append({"text": "Bullish Pullback Entry", "type": "positive", "label": "SETUP", "value": pullback.get("type", "VWAP"), "impact": 25})
-            
-            fan_bonus = ta_15m.get("fan_bonus", 0)
-            if adx_val > 25: # Standardized to V6.3 Master Spec
-                trend_bonus += 10
-                reasons.append({"text": "Confirmed Trend Momentum", "type": "positive", "label": "ADX", "value": f"{round(adx_val,1)}", "impact": 10})
-            
-
-            # Time of Day Bias
-            now_time = now_timing.time()
-
-            # Market Alpha & Regime (Module 6)
-            index_change = index_ctx.get("day_change_pct", 0.0)
-            
-            regime = index_ctx.get("market_regime", "Mixed")
+            # Module 6: Market Regime Adjustment
             if regime == "Mixed": regime_adj = -5
             elif regime == "Sideways / Choppy": regime_adj = -10
             
-            # --- PHASE 6: V6.3 STANDARDIZED EXECUTION FLOW ---
-            
-            # FIX 3 (Patch 4): Institutional Momentum Cap Rule
-            # Triggers: Liquidity Accel, Institutional Ignition, VWAP Reclaim, ADX Trend
-            is_institutional_ignition = rvol_val >= 2.5
-            if (liquidity_acceleration_state == "ACCELERATION_CONFIRMED" and 
-                is_institutional_ignition and 
-                vwap_reclaim_bonus > 0 and 
-                trend_bonus > 0):
+            # Optional Breadth Filter
+            adv = index_ctx.get("advancing_stocks")
+            dec = index_ctx.get("declining_stocks")
+            if adv is not None and dec is not None:
+                breadth_ratio = adv / max(dec, 1)
+                if breadth_ratio > 1.2: breadth_bonus = 4
+                elif breadth_ratio < 0.8: breadth_penalty = -5
+                if breadth_bonus != 0 or breadth_penalty != 0:
+                    reasons.append({"text": "Market Breadth Signal", "type": "positive" if breadth_ratio > 1.2 else "negative", "label": "BREADTH", "value": f"{round(breadth_ratio,2)}x", "impact": breadth_bonus + breadth_penalty})
+
+            # Module 2: Liquidity Acceleration
+            liquidity_acceleration_state = "NEUTRAL"
+            if len(df_15m) >= 3:
+                v1, v2, v3 = float(df_15m['volume'].iloc[-3]), float(df_15m['volume'].iloc[-2]), float(df_15m['volume'].iloc[-1])
+                if rvol_val >= 2.0 and v3 < v2:
+                    liquidity_acceleration_state = "EXHAUSTION_WARNING"
+                    liq_accel_penalty = -12
+                elif v3 > v2 and v2 > v1 and v3 >= 1.2 * v2:
+                    liquidity_acceleration_state = "ACCELERATION_CONFIRMED"
+                    liq_accel_bonus = 6
+                    if rvol_val >= 2.5: liq_accel_bonus += 10
+                elif rvol_val > 1.5:
+                    liq_accel_penalty = -8
                 
-                inst_mom_total = liq_accel_bonus + rvol_bonus + vwap_reclaim_bonus + trend_bonus
+                # Enhancement: Spike Collapse Warning
+                if v3 < v2 and v2 > v1 * 1.5:
+                    liq_accel_penalty += -6
+                    reasons.append({"text": "Volume Spike Collapse", "type": "negative", "label": "VOL", "impact": -6})
+            
+            # Module 4: Smart Money Accumulation
+            if acc["accumulation_detected"]:
+                accumulation_bonus = 28 if (acc["is_breakout"] and rvol_val >= 1.8) else 18
+                reasons.append({"text": "Institutional Accumulation", "type": "positive", "label": "SMART", "impact": accumulation_bonus})
+            if acc["is_breakdown"]: accumulation_bonus = -15
+            
+            # Enhancement: Narrow Range Accumulation Detection
+            if volume_zscore > 2 and avg_range_10 > 0 and candle_range < (avg_range_10 * 0.6):
+                accumulation_bonus += 6
+                reasons.append({"text": "Narrow Range Accumulation", "type": "positive", "label": "SMART", "value": f"Z:{round(volume_zscore,1)}", "impact": 6})
+
+            # Module 5.2 & 10: VWAP Reclaim Logic
+            if len(df_15m) >= 3:
+                vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df_15m)
+                if df_15m['close'].iloc[-1] > vwap_series.iloc[-1] and df_15m['close'].iloc[-2] > vwap_series.iloc[-2] and df_15m['close'].iloc[-3] < vwap_series.iloc[-3]:
+                    if rvol_val > 1.5: vwap_reclaim_bonus = 15
+
+            vwap_ctx = ta_15m.get("vwap_ctx", {})
+            if vwap_ctx.get("price_above") and vwap_ctx.get("slope_up"): vwap_bonus += 10
+            if vwap_ctx.get("reclaim"): vwap_bonus += 15
+
+            # Module 7: RVOL Institutional Ignition
+            if rvol_val > 2.5: rvol_bonus = 18
+            elif rvol_val > 1.5: rvol_bonus = 10
+            
+            # Enhancement: Delivery Confirmation
+            if rvol_val > 2.0 and delivery_ratio and delivery_ratio > 55:
+                rvol_bonus += 6
+                reasons.append({"text": "Institutional Delivery Confirmed", "type": "positive", "label": "VOL", "value": f"{delivery_ratio}%", "impact": 6})
+            
+            # Enhancement: Float Rotation Signal
+            float_rotation = df_15m['volume'].iloc[-1] / max(free_float, 1)
+            if float_rotation > 0.08:
+                float_rotation_bonus = 12
+                reasons.append({"text": "Institutional Float Rotation", "type": "positive", "label": "FLOAT", "value": f"{round(float_rotation*100,1)}%", "impact": 12})
+
+            # --- SCORE SAFETY CAP (STAGE 2) ---
+            # Modules 2, 4, 7, and Float Rotation Bonuses Capped at 35
+            stage2_bonuses = liq_accel_bonus + accumulation_bonus + rvol_bonus + float_rotation_bonus
+            if stage2_bonuses > 35:
+                clamped_val = 35
+                reasons.append({"text": "Stage 2 Bonus Safety Cap Applied", "type": "neutral", "label": "SAFETY", "value": f"{stage2_bonuses} -> 35"})
+                # Pro-rata reduction or simple clamp for total score consistency
+                # We'll just adjust the accumulation_bonus for internal consistency in the report
+                # but the final score will use the clamped Stage 2 sum.
+                # For simplicity in this engine, we'll track a 'stage2_adj'
+            
+            # Phase 2: Technical Setup & Execution
+            # Module 8: Base Weighted Scoring
+            # Normalization Helper
+            def normalize(val, min_v, max_v):
+                if max_v == min_v: return 0.5
+                return max(0, min(1, (val - min_v) / (max_v - min_v)))
+            
+            # Enhancement: Volatility Expansion Check
+            if atr_ratio > 1.3:
+                volatility_bonus = 8
+                reasons.append({"text": "Volatility Expansion Breakout", "type": "positive", "label": "VOL", "value": f"{round(atr_ratio,2)}x", "impact": 8})
+            
+
+            # Module 10: ADX Standard Bonus
+            if adx_val > 25 and adx_slope > 0: trend_bonus = 10
+            if trend_direction_state == "BULLISH_TREND": trend_dir_bonus = 8
+
+            # --- PHASE 2: Global Momentum Cap & Final Scoring ---
+            
+            # V6.3 Global Momentum Cap Rule
+            if (liquidity_acceleration_state == "ACCELERATION_CONFIRMED" and rvol_val >= 2.5 and vwap_reclaim_bonus > 0 and adx_val > 25 and adx_is_rising):
+                inst_mom_total = (liq_accel_bonus + rvol_bonus + vwap_reclaim_bonus + vwap_bonus + accumulation_bonus + sector_bonus)
                 if inst_mom_total > 45:
                     scale = 45.0 / inst_mom_total
                     liq_accel_bonus *= scale
                     rvol_bonus *= scale
                     vwap_reclaim_bonus *= scale
-                    trend_bonus *= scale
-                    reasons.append({
-                        "text": "Institutional Momentum Cap Applied",
-                        "type": "neutral",
-                        "label": "GUARD",
-                        "value": f"{round(inst_mom_total,1)} -> 45.0",
-                        "impact": 0
-                    })
+                    vwap_bonus *= scale
+                    accumulation_bonus *= scale
+                    sector_bonus *= scale
+                    reasons.append({"text": "Institutional Momentum Cap Applied", "type": "neutral", "label": "GUARD", "value": f"{round(inst_mom_total,1)} -> 45.0", "impact": 0})
+
+            # Bonus & Penalty Consolidation (Modules 1-14)
+            # Stage 2 Safe Bonuses (Modules 2, 4, 7, and Float Rotation)
+            stage2_bonuses_raw = liq_accel_bonus + accumulation_bonus + rvol_bonus + float_rotation_bonus
+            stage2_clamped = min(stage2_bonuses_raw, 35)
             
-            # 1. MODULES 1–8: CONSOLIDATED SCORING SUMMARY
-            m1_8_bonus_total = (
-                pullback_bonus + reclaim_bonus + sweep_bonus + 
-                squeeze_bonus + gap_bonus + poc_bonus + fan_bonus + 
-                rvol_bonus + inst_bonus + mtf_bonus + acc_bonus + 
-                institutional_volume_bonus + trend_bonus + vwap_reclaim_bonus + 
-                trend_dir_bonus + sector_bonus + liq_accel_bonus + 
-                vol_acc_bonus + accumulation_bonus + daily_momentum_bonus +
-                ad_bonus + vwap_bonus
-            )
+            # Update reasons if clamped (Optional: already did it above but let's ensure score sync)
+            stage2_diff = stage2_clamped - stage2_bonuses_raw
             
-            m1_8_penalty_total = (
-                exhaustion_penalty + context_penalty + 
-                overheat_penalty + chop_penalty + volume_penalty + 
-                structure_penalty + fake_breakout_penalty + 
-                vwap_ext_penalty + trend_penalty + trap_penalty + 
-                trend_dir_penalty + sector_penalty_v6_3 + abs(liq_accel_penalty) + 
-                regime_adj + mtf_penalty + liquidity_bonus
-            )
+            m1_8_bonus_total = (pullback_bonus + reclaim_bonus + sweep_bonus + squeeze_bonus + gap_bonus + poc_bonus + fan_bonus + inst_bonus + mtf_bonus + acc_bonus + institutional_volume_bonus + trend_bonus + vwap_reclaim_bonus + trend_dir_bonus + sector_bonus + vol_acc_bonus + daily_momentum_bonus + ad_bonus + vwap_bonus + breadth_bonus + volatility_bonus + stage2_clamped)
+            m1_8_penalty_total = (exhaustion_penalty + context_penalty + overheat_penalty + chop_penalty + volume_penalty + structure_penalty + fake_breakout_penalty + vwap_ext_penalty + trend_penalty + trap_penalty + trend_dir_penalty + sector_penalty_v6_3 + abs(liq_accel_penalty) + regime_adj + mtf_penalty + liquidity_bonus + breadth_penalty)
             
-            # Base Scoring Weights (Module 8)
+            # Module 8: Base Weighted Scoring
+            vol_ma_5m = df_5m['volume'].rolling(20).mean().iloc[-1]
+            volume_expansion_ratio = df_5m['volume'].iloc[-1] / vol_ma_5m if vol_ma_5m > 0 else 1.0
             base_score_weighted = (vwap_score*0.30) + (adx_score*0.25) + (pa_score*0.25) + (volume_expansion_ratio*10*0.20)
             
-            # Final Score Pre-Timing
             final_score_pre_timing = base_score_weighted + m1_8_bonus_total + m1_8_penalty_total
-            final_score_pre_timing = max(0, min(160, final_score_pre_timing))
             
-            # 2. VOLUME GUARD CHECK & TIMING BONUS
-            if volume_validation_state == "LOW_VOLUME_BLOCK" and final_score_pre_timing >= 78:
-                is_volume_block = True
-            
-            scan_window = self._is_optimal_window(now_timing)
-            timing_bonus = 3 if (scan_window == "OPTIMAL" and final_score_pre_timing >= 70) else 0
-            
-            final_score = final_score_pre_timing + timing_bonus
-            final_score = round(max(0, min(160, final_score)), 1)
-            
-            # 4. SIGNAL CLASSIFICATION (Module 9)
-            if final_score >= 105: signal_type = "PIONEER PRIME 🏆"
-            elif final_score >= 92: signal_type = "HIGH CONVICTION BUY 👑"
-            elif final_score >= 78: signal_type = "BUY SETUP ✅"
-            elif final_score >= 67: signal_type = "WATCHLIST ⚖"
-            else: signal_type = "IGNORE 🚫"
+            # Final Volume Validation
+            if rvol_val < 1.0 and final_score_pre_timing >= 78:
+                block_trade, block_reason = True, "Volume Validation Block"
 
-            # 5-6. KILL-SWITCHES & FINAL ELIGIBILITY
-            block_trade = False
-            block_reason = None
-            
-            if vwap_deviation_pct > 4.0: block_trade, block_reason = True, "Critical VWAP Extension"
-            elif sweep.get("fake_breakout_flag"): block_trade, block_reason = True, "Failed Breakout Collapse"
-            elif adx_val < 18: block_trade, block_reason = True, "Weak ADX Momentum"
-            elif trend_direction_state == "BEARISH_TREND": block_trade, block_reason = True, "Bearish Trend Guard"
-            elif market_structure_state == "BEARISH_STRUCTURE": block_trade, block_reason = True, "Bearish Structure"
-            elif is_volume_block: block_trade, block_reason = True, "Volume Validation Block"
-            elif trap_move_detected: block_trade, block_reason = True, "Institutional Trap"
-            elif regime == "Strong Bearish": block_trade, block_reason = True, "Market Regime: Strong Bearish"
-            
-            if block_trade:
-                signal_type = "IGNORE 🚫"
-                confidence_label = block_reason
-            else:
+            if not block_trade:
+                # Module 13: Time-of-Day Beta / Optimal Window
+                scan_window = self._is_optimal_window(now_timing)
+                timing_bonus = 3 if (scan_window == "OPTIMAL" and final_score_pre_timing >= 70) else 0
+                final_score = round(max(0, min(160, final_score_pre_timing + timing_bonus)), 1)
+                
+                # Module 9: Signal Hierarchy
+                if final_score >= 105: signal_type = "PIONEER PRIME 🏆"
+                elif final_score >= 92: signal_type = "HIGH CONVICTION BUY 👑"
+                elif final_score >= 78: signal_type = "BUY SETUP ✅"
+                elif final_score >= 67: signal_type = "WATCHLIST ⚖"
+                else: signal_type = "IGNORE 🚫"
+
                 confidence_label = f"{round(final_score/1.6,1)}% Probability"
-
-            # Meta Calculation for Return
+                logic_signal = "BUY" if final_score >= 78 else "NEUTRAL"
+                msg = f"DEBUG: {sym} | Score: {final_score} | SIGNAL: {signal_type} | ADX: {round(adx_val,1)}\n"
+                
+            # --- Blocking & Result Mapping ---
+            if block_trade:
+                signal_type, final_score = "IGNORE 🚫", 0
+                confidence_label, logic_signal = block_reason, "NEUTRAL"
+                msg = f"DEBUG: {sym} | Score: 0 | BLOCKED by {block_reason} | ADX: {round(adx_val,1)}\n"
+            
+            with open("intraday_debug.log", "a", encoding='utf-8') as f: f.write(msg)
+            
             target_val = ta_15m.get("resistance", real_price * 1.02)
             stop_val = ta_15m.get("support", real_price * 0.99)
-            
-            # Setup Tags
             setup_tag = ""
             if "PRIME" in signal_type: setup_tag += " [💎 PRIME]"
             if mtf_ctx.get("is_bullish"): setup_tag += " [🌀 1H ALIGN]"
 
             return {
-                "symbol": sym,
-                "price": real_price,
-                "score": final_score,
-                "signal_type": signal_type,
+                "symbol": sym, "price": real_price, "score": final_score,
+                "signal": logic_signal, "signal_type": signal_type,
                 "verdict": f"{signal_type} ({confidence_label})",
-                "setup_tag": setup_tag,
-                "reasons": reasons[:8],
-                "target": round(target_val, 2),
-                "stop_loss": round(stop_val, 2),
-                "rvol": round(rvol_val, 2),
-                "adv20": round(adv20, 0),
+                "setup_tag": setup_tag, "reasons": reasons[:8],
+                "target": round(target_val, 2), "stop_loss": round(stop_val, 2),
+                "rvol": round(rvol_val, 2), "adv20": round(adv20, 0),
                 "vwap_deviation": round(vwap_deviation_pct, 2),
-                "market_regime": regime,
-                "trend_state": trend_direction_state,
+                "market_regime": regime, "trend_state": trend_direction_state,
                 "alpha_intel": {
                     "growth_probability": confidence_label,
                     "risk_level": "Low" if final_score > 90 else "High" if final_score < 60 else "Medium",
@@ -966,9 +655,8 @@ class IntradayEngine:
                 },
                 "pioneer_prime_flag": "PRIME" in signal_type,
                 "volume_expansion_ratio": round(volume_expansion_ratio, 2),
-                "institutional_volume_flag": institutional_volume_flag,
-                "scan_window": scan_window,
-                # FIX 3 (Patch 2): Structured Metadata
+                "institutional_volume_flag": rvol_val >= 2.0,
+                "scan_window": scan_window if not block_trade else "NORMAL",
                 "liquidity_acceleration_state": liquidity_acceleration_state,
                 "market_structure": market_structure_state,
                 "trap_range_expansion": ta_15m.get("trap_range_expansion", False),

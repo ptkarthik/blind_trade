@@ -53,9 +53,12 @@ def test_liquidity_trap():
 
 def test_adx_slope():
     print("\n--- Testing ADX Slope / Trend Momentum (V6) ---")
-    # Low ADX
+    # Low ADX - need at least 20 for logic, but let's use 30 for safety
     data_low = {
-        'high': [100, 100.1, 100], 'low': [99, 99.1, 99], 'close': [99.5, 99.6, 99.5], 'volume': [100]*30
+        'high': [100.0]*30,
+        'low': [99.0]*30,
+        'close': [99.5]*30,
+        'volume': [1000]*30
     }
     df_low = pd.DataFrame(data_low)
     res_low = IntradayTechnicalAnalysis.calculate_adx(df_low)
@@ -70,8 +73,8 @@ if __name__ == "__main__":
         test_vwap_deviation()
         test_liquidity_trap()
         test_adx_slope()
-        print("\n✅ SPECIALIST V6 PROTECTION LAYERS VERIFIED.")
+        print("\nSUCCESS: SPECIALIST V6 PROTECTION LAYERS VERIFIED.")
     except Exception as e:
-        print(f"\n❌ VERIFICATION FAILED: {e}")
+        print(f"\nFAILURE: VERIFICATION FAILED: {e}")
         import traceback
         traceback.print_exc()
