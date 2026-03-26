@@ -35,6 +35,11 @@
         "raw_symbol": "5PAISA"
     },
     {
+        "symbol": "5PAISA-RE.NS",
+        "name": "5Paisa Capital Limited-RE",
+        "raw_symbol": "5PAISA-RE"
+    },
+    {
         "symbol": "63MOONS.NS",
         "name": "63 moons technologies limited",
         "raw_symbol": "63MOONS"
@@ -1363,6 +1368,11 @@
         "symbol": "BCONCEPTS.NS",
         "name": "Brand Concepts Limited",
         "raw_symbol": "BCONCEPTS"
+    },
+    {
+        "symbol": "BCPL.NS",
+        "name": "BCPL Railway Infrastructure Limited",
+        "raw_symbol": "BCPL"
     },
     {
         "symbol": "BDL.NS",
@@ -3775,6 +3785,11 @@
         "raw_symbol": "GSLSU"
     },
     {
+        "symbol": "GSPCROP.NS",
+        "name": "GSP Crop Science Limited",
+        "raw_symbol": "GSPCROP"
+    },
+    {
         "symbol": "GSPL.NS",
         "name": "Gujarat State Petronet Limited",
         "raw_symbol": "GSPL"
@@ -3953,11 +3968,6 @@
         "symbol": "HCG.NS",
         "name": "Healthcare Global Enterprises Limited",
         "raw_symbol": "HCG"
-    },
-    {
-        "symbol": "HCG-RE.NS",
-        "name": "Healthcare Global Enterprises Limited-RE",
-        "raw_symbol": "HCG-RE"
     },
     {
         "symbol": "HCL-INSYS.NS",
@@ -4590,6 +4600,11 @@
         "raw_symbol": "INNOVANA"
     },
     {
+        "symbol": "INNOVISION.NS",
+        "name": "Innovision Limited",
+        "raw_symbol": "INNOVISION"
+    },
+    {
         "symbol": "INOXGREEN.NS",
         "name": "Inox Green Energy Services Limited",
         "raw_symbol": "INOXGREEN"
@@ -4973,11 +4988,6 @@
         "symbol": "JOCIL.NS",
         "name": "Jocil Limited",
         "raw_symbol": "JOCIL"
-    },
-    {
-        "symbol": "JPASSOCIAT.NS",
-        "name": "Jaiprakash Associates Limited",
-        "raw_symbol": "JPASSOCIAT"
     },
     {
         "symbol": "JPOLYINVST.NS",
@@ -7595,6 +7605,11 @@
         "raw_symbol": "PRABHA"
     },
     {
+        "symbol": "PRABHA-RE.NS",
+        "name": "Prabha Energy Limited-RE",
+        "raw_symbol": "PRABHA-RE"
+    },
+    {
         "symbol": "PRAENG.NS",
         "name": "Prajay Engineers Syndicate Limited",
         "raw_symbol": "PRAENG"
@@ -8258,6 +8273,11 @@
         "symbol": "RRKABEL.NS",
         "name": "R R Kabel Limited",
         "raw_symbol": "RRKABEL"
+    },
+    {
+        "symbol": "RSL.NS",
+        "name": "Rajputana Stainless Limited",
+        "raw_symbol": "RSL"
     },
     {
         "symbol": "RSSOFTWARE.NS",
@@ -9038,6 +9058,11 @@
         "symbol": "SINDHUTRAD.NS",
         "name": "Sindhu Trade Links Limited",
         "raw_symbol": "SINDHUTRAD"
+    },
+    {
+        "symbol": "SINGERIND.NS",
+        "name": "Singer India Limited",
+        "raw_symbol": "SINGERIND"
     },
     {
         "symbol": "SINTERCOM.NS",

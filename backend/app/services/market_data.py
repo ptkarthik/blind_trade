@@ -1,4 +1,11 @@
 import yfinance as yf
+try:
+    from yfinance.exceptions import YFRateLimitError, YFDataException
+except ImportError:
+    # Handle older yfinance versions
+    class YFRateLimitError(Exception): pass
+    class YFDataException(Exception): pass
+
 from app.services.proxy_manager import proxy_manager
 import pandas as pd
 from typing import Dict, Any
@@ -18,43 +25,57 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from app.services.market_discovery import market_discovery
 
 class MarketDataService:
+    async def _async_retry(self, func, *args, max_retries=3, initial_backoff=1, **kwargs):
+        """Helper for exponential backoff retries with specific rate limit handling."""
+        for attempt in range(max_retries):
+            try:
+                return await func(*args, **kwargs)
+            except YFRateLimitError:
+                # Specific handling for yfinance rate limits
+                backoff = initial_backoff * (4 ** attempt) + random.uniform(1, 3)
+                print(f"⚠️ YF Rate Limit hit. Backing off for {round(backoff, 2)}s (Attempt {attempt+1}/{max_retries})")
+                await asyncio.sleep(backoff)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise e
+                backoff = initial_backoff * (2 ** attempt) + random.uniform(0, 1)
+                await asyncio.sleep(backoff)
+        return None
     def __init__(self):
         # Cache Config
         self.price_cache = {}
         self.index_cache = {}
+        self.ohlc_cache = {} # Phase 65: OHLC Caching
         self.financials_cache = {}
         self.extended_data_cache = {}
-        self.CACHE_DURATION = 10 # seconds generic price (Reduced from 60 for real-time accuracy)
-        self.INDEX_CACHE_DURATION = 3600 * 6 # 6 hours for sector indices
-        self.EXTENDED_CACHE_DURATION = 3600 * 24 # 24 hours for holders/news
+        self.CACHE_DURATION = 10 # seconds generic price
+        self.INDEX_CACHE_DURATION = 3600 * 6 
+        self.OHLC_CACHE_DURATION = 300 # 5 minutes for OHLC
+        self.EXTENDED_CACHE_DURATION = 3600 * 24 
 
-        # Robust Persistence: Session with Retries
-        import requests
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-
-        self.session = requests.Session()
-        self.session.trust_env = True # Allow system proxies
-        retries = Retry(
-            total=5, 
-            backoff_factor=2, 
-            status_forcelist=[429, 500, 502, 503, 504],
-            raise_on_status=False
-        )
-        self.session.mount('https://', HTTPAdapter(max_retries=retries))
-        self.session.headers.update({
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Origin': 'https://finance.yahoo.com',
-            'Referer': 'https://finance.yahoo.com/'
-        })
-        
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/10.15.7',
+            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0'
         ]
+        
+        # Standard Session
+
+        self._init_session()
+
+    def _init_session(self):
+        """Standard requests session for secondary APIs (non-yfinance)."""
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        self.session = requests.Session()
+        self.session.trust_env = True
+        retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
+        
 
         # Static Sector Mapping (Expanded Universe: Large, Mid, Small)
         self.SECTOR_MAP = {
@@ -180,6 +201,7 @@ class MarketDataService:
 
         # Circuit Breaker for TwelveData (Permanent Disable if limit hit)
         self.td_disabled = False
+        self.td_disabled_until = 0 # Timestamp for cooldown
 
     def _load_metadata_cache(self):
         """Loads metadata (sector/cap) from local JSON to avoid re-fetching."""
@@ -384,9 +406,10 @@ class MarketDataService:
                     print(f"⚠️ TwelveData Credits Exhausted. Disabling.")
                     self.td_disabled = True
                 elif "429" in msg or "RATE_LIMIT" in msg:
-                    # Speed Optimization: Don't disable permanently for 429, just skip this symbol
-                    # to allow others to try TD later.
-                    print(f"🕒 TwelveData Rate Limited for {symbol}. Skipping to fallback.")
+                    # TwelveData Credits Exhausted -> Cooldown 15 mins
+                    print(f"⚠️ TwelveData Credits Exhausted for {symbol}. Cooling down for 15m.")
+                    self.td_disabled = True
+                    self.td_disabled_until = time.time() + 900 # 15 mins
                 else:
                     print(f"TwelveData failed for {symbol}: {e}. Falling back to Yahoo.")
 
@@ -400,22 +423,29 @@ class MarketDataService:
         last_error = "Unknown"
         for ticker_symbol in candidates:
             try:
+                # Use session for Ticker
                 def _fetch_yf():
                     ticker = yf.Ticker(ticker_symbol)
                     
-                    # 1. Try History first for accuracy (Reliable session close)
-                    hist = ticker.history(period="1d")
-                    if not hist.empty:
-                        p = hist["Close"].iloc[-1]
-                        pc = hist["Open"].iloc[0] # Approx prev or day open
-                        v = hist["Volume"].iloc[-1]
-                        # Try to get market cap from fast_info if possible
-                        try: mc = ticker.fast_info.market_cap
-                        except: mc = 0
-                        return {"price": p, "prev_close": pc, "volume": v, "market_cap": mc}
-                    
-                    # 2. Fallback to fast_info (Only if history is empty)
                     try:
+                        # 1. Try History first
+                        hist = ticker.history(period="1d")
+                        if not hist.empty:
+                            p = hist["Close"].iloc[-1]
+                            pc = hist["Open"].iloc[0]
+                            v = hist["Volume"].iloc[-1]
+                            try: mc = ticker.fast_info.market_cap
+                            except: mc = 0
+                            return {"price": p, "prev_close": pc, "volume": v, "market_cap": mc}
+                    except (TypeError, ValueError) as e:
+                        # Catch yfinance internal 'NoneType' or logic errors
+                        if "subscriptable" in str(e) or "NoneType" in str(e):
+                             pass # Fallback to fast_info
+                        else: raise e
+                    
+                    # 2. Fallback to fast_info
+                    try:
+                        # fast_info can also trigger TypeError in some yfinance versions
                         p = ticker.fast_info.last_price
                         pc = ticker.fast_info.previous_close
                         v = ticker.fast_info.last_volume
@@ -424,9 +454,15 @@ class MarketDataService:
                     except Exception:
                          raise ValueError("No Data")
                 
-                import numpy as np
-                yf_data_timeout = 8.0 # Faster for UI
-                data = await asyncio.wait_for(asyncio.to_thread(_fetch_yf), timeout=yf_data_timeout)
+                yf_data_timeout = 8.0 
+                # Wrap with retry
+                data = await self._async_retry(
+                    lambda: asyncio.wait_for(asyncio.to_thread(_fetch_yf), timeout=yf_data_timeout)
+                )
+                
+                if not data or data.get("price") is None:
+                    continue
+
                 price = data.get("price")
                 prev_close = data.get("prev_close")
                 
@@ -449,10 +485,22 @@ class MarketDataService:
                 return result
 
             except Exception as e:
+                err_msg = str(e).upper()
+                if "401" in err_msg or "UNAUTHORIZED" in err_msg or "CRUMB" in err_msg:
+                    print(f"🔑 YF Crumb/Session invalid (Live Price 401) for {ticker_symbol}. Retrying...")
+                    last_error = str(e) # Update last_error before continuing
+                    continue # Try next candidate
+
                 last_error = str(e)
-                print(f"DEBUG: Yahoo Direct failed for {ticker_symbol}: {last_error}")
-                if "subscriptable" in last_error:
-                    traceback.print_exc()
+                # Filter out verbose traceback for known yfinance library bug (NoneType subscriptable)
+                if "subscriptable" in last_error or "'NoneType' object" in last_error:
+                    print(f"⚠️ Yahoo Finance library bug (NoneType) for {ticker_symbol}. Traceback suppressed.")
+                else:
+                    print(f"DEBUG: Yahoo Direct failed for {ticker_symbol}: {last_error}")
+                
+                # If Invalid Crumb or Unauthorized, it's a specific block
+                if "401" in last_error or "Crumb" in last_error or "Unauthorized" in last_error:
+                    print(f"⚠️ Yahoo Blocked (Crumb/401) for {ticker_symbol}. Triggering Proxy.")
 
                 # Proxy Fallback
                 try:
@@ -467,6 +515,12 @@ class MarketDataService:
 
         # Final Failover
         print(f"Yahoo Live failed for all candidates of {symbol}: {last_error}")
+        
+        # Distinguish Rate Limit in Result
+        source_msg = f"Error: {last_error}"
+        if "rate limit" in last_error.lower() or "too many requests" in last_error.lower():
+            source_msg = "Rate Limit (Skipped)"
+
         return {
             "symbol": symbol.upper(),
             "price": 0.0,
@@ -474,7 +528,7 @@ class MarketDataService:
             "change_percent": 0.0,
             "volume": 0,
             "prev_close": 0.0,
-            "source": f"Error: {last_error}"
+            "source": source_msg
         }
 
     def _generate_mock_ohlc(self, symbol: str, interval: str = "15m") -> pd.DataFrame:
@@ -489,15 +543,16 @@ class MarketDataService:
         try:
             def _fetch_info():
                 ticker = yf.Ticker(ticker_symbol)
-                # Defensive check for ticker.info which can raise TypeError internally
                 try:
                     res = ticker.info
                     return res if isinstance(res, dict) else {}
                 except Exception:
                     return {}
             
-            info = await asyncio.wait_for(asyncio.to_thread(_fetch_info), timeout=15.0)
-            return info
+            info = await self._async_retry(
+                lambda: asyncio.wait_for(asyncio.to_thread(_fetch_info), timeout=15.0)
+            )
+            return info if info else {}
         except Exception as e:
             print(f"Fundamental fetch failed for {symbol}: {e}")
             return {}
@@ -537,7 +592,9 @@ class MarketDataService:
 
                 return {"holders": holders, "news": news, "insider_transactions": insider_transactions}
 
-            return await asyncio.wait_for(asyncio.to_thread(_fetch_ext), timeout=20.0)
+            return await self._async_retry(
+                lambda: asyncio.wait_for(asyncio.to_thread(_fetch_ext), timeout=20.0)
+            )
         except Exception as e:
             print(f"Extended data fetch failed for {symbol}: {e}")
             return {"holders": {}, "news": []}
@@ -558,7 +615,9 @@ class MarketDataService:
                 t = yf.Ticker(ticker_symbol)
                 return t.financials
             
-            df = await asyncio.wait_for(asyncio.to_thread(_fetch_hist), timeout=30.0) # Financials can be slow
+            df = await self._async_retry(
+                lambda: asyncio.wait_for(asyncio.to_thread(_fetch_hist), timeout=30.0)
+            ) # Financials can be slow
             self.financials_cache[symbol] = {"timestamp": current_time, "data": df}
             return df
         except Exception as e:
@@ -640,8 +699,24 @@ class MarketDataService:
     async def get_ohlc(self, symbol: str, period: str = "1mo", interval: str = "1d", fast_fail: bool = False) -> pd.DataFrame:
         """
         Fetch OHLCV data with TwelveData -> Yahoo -> Empty Fallback.
-        If fast_fail is True, skips lengthy proxy fallbacks (useful for synchronous UI requests).
+        Implements Caching (TTL=300s) to prevent duplicate API calls.
         """
+        # 0. Check Cache
+        current_time = time.time()
+        cache_key = f"{symbol}_{period}_{interval}"
+        if cache_key in self.ohlc_cache:
+            entry = self.ohlc_cache[cache_key]
+            if current_time - entry["timestamp"] < self.OHLC_CACHE_DURATION:
+                return entry["data"]
+
+        # Throttling: Small sleep to prevent rate limits (0.3s - 0.5s)
+        await asyncio.sleep(random.uniform(0.3, 0.5))
+
+        # 0. Check TD Cooldown
+        if self.td_disabled and time.time() > self.td_disabled_until:
+            self.td_disabled = False
+            print("🕒 TwelveData Cooldown expired. Re-enabling.")
+
         # 1. Try TwelveData
         if self.td and not self.td_disabled and not symbol.startswith("^"):
             try:
@@ -671,12 +746,17 @@ class MarketDataService:
             except Exception as e:
                 msg = str(e).upper()
                 if "CREDITS" in msg:
-                    print(f"⚠️ TwelveData Credits Exhausted (OHLC). Disabling.")
+                    print(f"⚠️ TwelveData Credits Exhausted (OHLC). Cooling down for 15m.")
                     self.td_disabled = True
+                    self.td_disabled_until = current_time + 900
                 elif "429" in msg:
                     print(f"🕒 TwelveData Rate Limited (OHLC) for {symbol}. Skipping.")
                 else:
-                    print(f"TwelveData OHLC failed for {symbol}: {e}")
+                    err_msg = str(e).upper()
+                    if "NAMERESOLUTIONERROR" in err_msg or "GETADDRINFO FAILED" in err_msg:
+                         print(f"🌐 DNS Resolution failed for TwelveData ({symbol}). Likely network issue.")
+                    else:
+                         print(f"TwelveData OHLC failed for {symbol}: {e}")
 
         # 2. Fallback to Yahoo Finance (Multiple Candidates only if symbolic)
         base_sym = symbol.replace(".NS", "").replace(".BO", "")
@@ -686,42 +766,67 @@ class MarketDataService:
             candidates = [symbol]
 
         for ticker_symbol in candidates:
-            # 1. Prioritize yf.Ticker history (Safer for concurrency than yf.download)
+            # 1. Prioritize yf.Ticker history 
             try:
                 yf_timeout = 8.0 if fast_fail else 15.0
                 def _fetch_yf_hist():
-                    # Each task gets a fresh Ticker instance
                     ticker = yf.Ticker(ticker_symbol)
-                    # For Intraday, 7d period is safer to ensure we have prev day for pivots
                     effective_period = "7d" if interval in ["5m", "15m"] else period
-                    hist = ticker.history(period=effective_period, interval=interval)
+                    hist = ticker.history(period=effective_period, interval=interval, timeout=yf_timeout)
                     if not hist.empty:
                         hist.columns = [c.lower() for c in hist.columns]
                     return hist
 
-                df = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_hist), timeout=yf_timeout)
+                df = await self._async_retry(
+                    lambda: asyncio.wait_for(asyncio.to_thread(_fetch_yf_hist), timeout=yf_timeout)
+                )
                 
-                if not df.empty and len(df) >= (5 if "1d" in interval else 2):
-                    # Handle MultiIndex if present
-                    if isinstance(df.columns, pd.MultiIndex): 
-                        df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
-                    return df
+                if df is not None and not df.empty and len(df) >= (5 if "1d" in interval else 2):
+                    # Defensive Validation
+                    required = ['open', 'high', 'low', 'close', 'volume']
+                    if all(col in df.columns for col in required):
+                         # Handle MultiIndex if present
+                         if isinstance(df.columns, pd.MultiIndex): 
+                             df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
+                         
+                         # Update Cache
+                         self.ohlc_cache[cache_key] = {"timestamp": current_time, "data": df}
+                         return df
+            except YFRateLimitError:
+                print(f"🛑 YF Rate Limit (OHLC) for {ticker_symbol}. Skipping candidate.")
+                continue
             except Exception as e:
-                # print(f"yf.Ticker failed for {ticker_symbol}: {e}")
+                err_msg = str(e).upper()
+                if "401" in err_msg or "UNAUTHORIZED" in err_msg or "CRUMB" in err_msg:
+                    print(f"🔑 YF Crumb/Session invalid (401) for {ticker_symbol}. Retrying...")
                 pass
 
-            # 2. Fallback to yf.download only if Ticker fails
+            # 2. Fallback to yf.download
             try:
                 dl_timeout = 12.0 if fast_fail else 20.0
                 def _fetch_yf_dl():
-                    return yf.download(ticker_symbol, period=period, interval=interval, progress=False)
-                df_dl = await asyncio.wait_for(asyncio.to_thread(_fetch_yf_dl), timeout=dl_timeout)
-                if not df_dl.empty and len(df_dl) > 2:
+                    return yf.download(ticker_symbol, period=period, interval=interval, progress=False, timeout=dl_timeout)
+                
+                df_dl = await self._async_retry(
+                    lambda: asyncio.wait_for(asyncio.to_thread(_fetch_yf_dl), timeout=dl_timeout)
+                )
+                
+                if df_dl is not None and not df_dl.empty and len(df_dl) > 2:
                     if isinstance(df_dl.columns, pd.MultiIndex):
                         df_dl.columns = df_dl.columns.get_level_values(0)
                     df_dl.columns = [c.lower() for c in df_dl.columns]
-                    return df_dl
-            except Exception:
+                    
+                    required = ['open', 'high', 'low', 'close', 'volume']
+                    if all(col in df_dl.columns for col in required):
+                        self.ohlc_cache[cache_key] = {"timestamp": current_time, "data": df_dl}
+                        return df_dl
+            except YFRateLimitError:
+                print(f"🛑 YF Rate Limit (Download) for {ticker_symbol}. Skipping candidate.")
+                continue
+            except Exception as e:
+                err_msg = str(e).upper()
+                if "401" in err_msg or "UNAUTHORIZED" in err_msg or "CRUMB" in err_msg:
+                    print(f"🔑 YF Crumb/Session invalid (401 Download) for {ticker_symbol}. Retrying...")
                 pass
 
             if fast_fail:

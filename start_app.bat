@@ -7,20 +7,13 @@ echo        Starting Blind Trade Engine (Job Queue)
 echo ===================================================
 
 echo [0/4] Cleaning up old processes...
-:: Use fast native taskkill. Some "Not Found" errors are normal and hidden.
-
-:: 1. Murder by Window Title (Fastest)
+:: Murder by name (python and uvicorn)
+echo   - Terminating background scanners...
+taskkill /F /IM python.exe /T >nul 2>&1
+echo   - Terminating web servers...
+taskkill /F /IM uvicorn.exe /T >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Blind Trade*" /IM cmd.exe >nul 2>&1
-
-:: 2. Murder by Port (Reliable)
-:: Port 8012 (API)
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":8012" ^| find "LISTENING"') do taskkill /f /pid %%a >nul 2>&1
-:: Port 8000 (Docs)
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":8000" ^| find "LISTENING"') do taskkill /f /pid %%a >nul 2>&1
-:: Port 5173 (Frontend)
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":5173" ^| find "LISTENING"') do taskkill /f /pid %%a >nul 2>&1
-
-echo Done.
+echo   - Success.
 
 :: 3. Start Backend API
 echo.

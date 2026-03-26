@@ -95,6 +95,7 @@ class LongTermScannerEngine:
             "stop_requested": False,
             "pause_requested": False,
             "last_data_sync": 0, # Track progress of last data sync
+            "last_sync_time": time.time(), # Track time of last data sync
             "main_task": asyncio.current_task(),
             "sector_counts": {}
         }
@@ -243,6 +244,7 @@ class LongTermScannerEngine:
             meta_data = primary_results[3] if not isinstance(primary_results[3], Exception) else {}
             
             sector_name = meta_data.get("sector", "Unknown")
+            market_cap = fund_data.get("marketCap") or fund_data.get("market_cap", 0)
             
             # 2. Secondary Contextual Parallel Fetch
             index_task = market_service.get_index_performance(sector_name)
@@ -255,8 +257,8 @@ class LongTermScannerEngine:
             ext = secondary_results[1] if not isinstance(secondary_results[1], Exception) else {"holders": {}, "news": []}
             hist_financials = secondary_results[2] if not isinstance(secondary_results[2], Exception) else pd.DataFrame()
             
-            real_price = price_data.get("price", 0.0)
-            market_cap = price_data.get("market_cap", 0.0)
+            _l_close = df['close'].iloc[-1]
+            real_price = float(_l_close.iloc[0]) if hasattr(_l_close, 'iloc') else float(_l_close)
             
             # Robust Check for NaN/None
             import numpy as np
@@ -705,6 +707,22 @@ class LongTermScannerEngine:
                     res = await session.execute(stmt)
                     job_obj = res.scalars().first()
                     if job_obj:
+                        # --- DATABASE SIGNAL CHECK (Phase 67: Immediate Stop/Pause) ---
+                        if job_obj.status == "stopped":
+                            print(f"🛑 [SYNC] Stop signal detected for {job_id} in DB.")
+                            state["stop_requested"] = True
+                            state["is_running"] = False
+                            # Cancel the main task if it's still running
+                            main_task = state.get("main_task")
+                            if main_task and not main_task.done():
+                                main_task.cancel()
+                            break
+
+                        if job_obj.status == "paused":
+                            state["pause_requested"] = True
+                        elif job_obj.status == "processing":
+                            state["pause_requested"] = False
+                        
                         # Double check for stop logic
                         if state.get("stop_requested"):
                              job_obj.status = "stopped"
@@ -727,12 +745,16 @@ class LongTermScannerEngine:
                         # Partial Data Sync: Sync results every 5 stocks to keep UI updated
                         current_count = len(state.get("results", []))
                         last_sync = state.get("last_data_sync", 0)
-                        if current_count - last_sync >= 5 or current_count == total:
+                        last_sync_time = state.get("last_sync_time", 0)
+                        current_time = time.time()
+                        
+                        if (current_count - last_sync >= 5) or (current_count > last_sync and current_time - last_sync_time >= 10) or (current_count == total):
                             current_result["data"] = list(state["results"])
                             current_result["failed_symbols"] = list(state.get("failed_symbols", []))
                             # Pre-calculate sectors for O(1) API fetches (Fast Toggles)
                             current_result["sectors"] = self._group_by_sector(current_result["data"])
                             state["last_data_sync"] = current_count
+                            state["last_sync_time"] = current_time
                             # print(f"📊 [SYNC] Partial Data Sync for {job_id}: {current_count} results")
 
                         job_obj.result = self.sanitize(current_result)

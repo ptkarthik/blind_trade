@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
-import { marketApi, signalApi, jobsApi } from './services/api';
+import { marketApi, signalApi, jobsApi, papertradeApi, settingsApi } from './services/api';
 import { AnalysisModal } from './components/AnalysisModal';
-
 import { SectorDeals } from './components/SectorDeals';
 import { PortfolioOptimizer } from './components/PortfolioOptimizer';
-import { PieChart, List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles } from 'lucide-react';
+import { PaperTradingView } from './components/PaperTradingView';
+import { PaperOrderModal } from './components/PaperOrderModal';
+import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard } from 'lucide-react';
 import { SearchBox } from './components/SearchBox';
 import { StockCardLongTerm } from './components/StockCardLongTerm';
 import { StockCardIntraday } from './components/StockCardIntraday';
@@ -19,6 +20,7 @@ function App() {
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [mode, setMode] = useState<'intraday' | 'longterm' | 'swing'>('longterm');
   const [loading, setLoading] = useState(false);
+  const [autoRestart, setAutoRestart] = useState(true);
 
   // Progress State - Global Tracking
   const [jobStates, setJobStates] = useState<Record<string, any>>({});
@@ -36,6 +38,11 @@ function App() {
   const [isFailedModalOpen, setIsFailedModalOpen] = useState(false);
   const [failedSymbolsList, setFailedSymbolsList] = useState<{ symbol: string, reason: string }[]>([]);
 
+  // Paper Trading State
+  const [isBuyModalOpen, setIsBuyModalOpen] = useState(false);
+  const [buySignal, setBuySignal] = useState<Signal | null>(null);
+  const [virtualBalance, setVirtualBalance] = useState<number>(1000000);
+
   // Search State
   const [searchResult, setSearchResult] = useState<Signal | null>(null);
   const [searching, setSearching] = useState(false);
@@ -48,7 +55,7 @@ function App() {
     sells: Signal[];
   }
   const [sectorSignals, setSectorSignals] = useState<Record<string, SectorData>>({});
-  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio'>('deals');
+  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade'>('deals');
 
   const openAnalysis = (signal: Signal) => {
     setSelectedSignal(signal);
@@ -102,13 +109,19 @@ function App() {
     };
     window.addEventListener('error', handleError);
 
-    // 1. Initial Market Status Fetch
+    // 1. Initial Market Status, Account Fetch & Settings
     const fetchData = async () => {
       try {
-        const statusRes = await marketApi.getStatus();
+        const [statusRes, accRes, settingsRes] = await Promise.all([
+          marketApi.getStatus(),
+          papertradeApi.getAccount(),
+          settingsApi.get('auto_restart').catch(() => ({ data: { value: 'true' } }))
+        ]);
         setMarketStatus(statusRes.data);
+        setVirtualBalance(accRes.data.balance);
+        setAutoRestart(settingsRes.data.value.toLowerCase() === 'true');
       } catch (error) {
-        console.error("Failed to fetch market status:", error);
+        console.error("Failed to fetch initial data:", error);
       }
     };
     fetchData();
@@ -191,10 +204,10 @@ function App() {
   // 3. Auto-Fetch Signals on Pulse (Replaces the Interval)
   useEffect(() => {
     if (scanJob?.status === 'processing') {
-      // fetchSignals(true); // DISABLED: Don't poll full results every 2s, only progress
+      fetchSignals(true); // RE-ENABLED: Keeps the lists (Buys/Sells/Holds) synced during scan
       fetchSectorSignals();
     }
-  }, [scanJob?.progress, scanJob?.updated_at]); // Trigger on job updates
+  }, [scanJob?.result?.progress, scanJob?.updated_at, mode]); // Trigger on job progress, status changes, or mode switch
 
 
   // 3. Logic: Mode Switch & Dashboard Sync
@@ -268,6 +281,30 @@ function App() {
     setSearching(false);
   };
 
+  const handleBuyRequest = (signal: Signal) => {
+    setBuySignal(signal);
+    setIsBuyModalOpen(true);
+  };
+
+  const executePaperTrade = async (qty: number) => {
+    if (!buySignal) return;
+    try {
+      const res = await papertradeApi.placeOrder({
+        symbol: buySignal.symbol,
+        qty: qty,
+        price: buySignal.price,
+        target: buySignal.target,
+        stop_loss: buySignal.stop_loss,
+        score: buySignal.score
+      });
+      setVirtualBalance(res.data.remaining_balance);
+      setIsBuyModalOpen(false);
+      alert(`Success! Bought ${qty} shares of ${buySignal.symbol}`);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Trade execution failed");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground font-sans">
       {/* Analysis Modal */}
@@ -285,6 +322,16 @@ function App() {
         symbols={failedSymbolsList}
       />
 
+      {buySignal && (
+        <PaperOrderModal
+          isOpen={isBuyModalOpen}
+          onClose={() => setIsBuyModalOpen(false)}
+          signal={buySignal}
+          balance={virtualBalance}
+          onConfirm={executePaperTrade}
+        />
+      )}
+
       {/* Header */}
       <header className="border-b border-border bg-card p-4 sticky top-0 z-10 shadow-sm">
         <div className="container mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
@@ -297,15 +344,59 @@ function App() {
           <SearchBox key={mode} onSelect={analyzeSymbol} />
 
           <div className="flex gap-4 text-sm items-center flex-wrap">
-            {/* Context-aware Start Button */}
-            {(!jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan'] ||
-              !['pending', 'processing', 'paused'].includes(jobStates[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan']?.status)) && (
+            {/* Phase 89: Background Job Toggle */}
+            <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-full border border-border">
+              <span className="text-[10px] font-black tracking-widest uppercase text-muted-foreground">
+                Auto-Restart
+              </span>
+              <button
+                onClick={async () => {
+                  const newVal = !autoRestart;
+                  setAutoRestart(newVal);
+                  try {
+                    await settingsApi.update('auto_restart', newVal.toString());
+                  } catch (e) {
+                    setAutoRestart(!newVal);
+                    alert("Failed to update setting");
+                  }
+                }}
+                className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${autoRestart ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${autoRestart ? 'translate-x-5.5' : 'translate-x-1'}`}
+                />
+              </button>
+              <span className={`text-[10px] font-bold ${autoRestart ? 'text-primary' : 'text-muted-foreground'}`}>
+                {autoRestart ? 'ON' : 'OFF'}
+              </span>
+            </div>
+
+            {/* Context-aware Start Button (Phase 90: Manual Override) */}
+            {(() => {
+              const jobType = mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan';
+              const activeJob = jobStates[jobType];
+              
+              // Only hide button if a MANUAL job is already pending/processing
+              const isManualActive = activeJob && 
+                activeJob.trigger_source === 'manual' && 
+                ['pending', 'processing', 'paused'].includes(activeJob.status);
+
+              return (
                 <button
                   onClick={async () => {
                     const scanLabel = mode === 'intraday' ? "Intraday Analysis" : mode === 'swing' ? "Swing Scan" : "Full Market Scan";
                     const scanType = mode === 'intraday' ? "intraday" : mode === 'swing' ? "swing_scan" : "full_scan";
 
-                    if (confirm(`Start ${scanLabel}? This runs in background.`)) {
+                    if (isManualActive) {
+                      alert(`A manual ${scanLabel} is already in progress. Please wait for it to complete.`);
+                      return;
+                    }
+
+                    const confirmMsg = activeJob?.trigger_source === 'auto' && ['pending', 'processing'].includes(activeJob.status)
+                      ? `A background ${scanLabel} is currently running. Start a manual run to override it?`
+                      : `Start ${scanLabel}? This runs in background.`;
+
+                    if (confirm(confirmMsg)) {
                       try {
                         setSignals([]);
                         setSectorSignals({});
@@ -320,7 +411,8 @@ function App() {
                   <Search className="w-4 h-4" />
                   {mode === 'intraday' ? 'RUN INTRA SCAN' : mode === 'swing' ? 'RUN SWING SCAN' : 'RUN FULL SCAN'}
                 </button>
-              )}
+              );
+            })()}
 
             <div className="flex flex-col items-end">
               <span className="text-muted-foreground">NIFTY 50</span>
@@ -483,6 +575,7 @@ function App() {
                 <StockCardIntraday
                   signal={searchResult}
                   onClick={() => openAnalysis(searchResult)}
+                  onBuy={(e) => { e.stopPropagation(); handleBuyRequest(searchResult); }}
                 />
               ) : mode === 'swing' ? (
                 <StockCardSwing
@@ -544,10 +637,10 @@ function App() {
                 <List className="h-3 w-3" /> ACTIVE DEALS
               </button>
               <button
-                onClick={() => setActiveTab('portfolio')}
-                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setActiveTab('papertrade')}
+                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'papertrade' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
               >
-                <PieChart className="h-3 w-3" /> PORTFOLIO HEALTH
+                <LayoutDashboard className="h-3 w-3" /> PAPER TRADING
               </button>
             </div>
           </div>
@@ -566,11 +659,14 @@ function App() {
                 data={sectorSignals}
                 mode={mode}
                 onSignalClick={openAnalysis}
+                onBuy={handleBuyRequest}
               />
             </ErrorBoundary>
           </>
-        ) : (
+        ) : activeTab === 'portfolio' ? (
           <PortfolioOptimizer />
+        ) : (
+          <PaperTradingView />
         )}
       </main >
     </div >

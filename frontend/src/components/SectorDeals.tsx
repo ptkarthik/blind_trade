@@ -17,9 +17,10 @@ interface SectorDealsProps {
     data: Record<string, SectorData>;
     mode: 'intraday' | 'longterm' | 'swing';
     onSignalClick: (signal: Signal) => void;
+    onBuy?: (signal: Signal) => void;
 }
 
-export function SectorDeals({ data, mode, onSignalClick }: SectorDealsProps) {
+export function SectorDeals({ data, mode, onSignalClick, onBuy }: SectorDealsProps) {
     const [selectedSector, setSelectedSector] = useState<string>("All Sectors");
     const [capFilter, setCapFilter] = useState<"All" | "Large" | "Mid" | "Small">("All");
 
@@ -92,7 +93,15 @@ export function SectorDeals({ data, mode, onSignalClick }: SectorDealsProps) {
     // Helper to render correct card
     const renderCard = (signal: Signal, idx: number) => {
         if (mode === 'intraday') {
-            return <StockCardIntraday key={signal.symbol} signal={signal} rank={idx + 1} onClick={() => onSignalClick(signal)} />;
+            return (
+                <StockCardIntraday 
+                    key={signal.symbol} 
+                    signal={signal} 
+                    rank={idx + 1} 
+                    onClick={() => onSignalClick(signal)} 
+                    onBuy={onBuy ? (e) => { e.stopPropagation(); onBuy(signal); } : undefined}
+                />
+            );
         }
         if (mode === 'swing') {
             return <StockCardSwing key={signal.symbol} signal={signal} onClick={() => onSignalClick(signal)} />;

@@ -20,14 +20,20 @@ class SwingTechnicalAnalysis:
 
         latest = df.iloc[-1]
         prev = df.iloc[-2]
-        close = latest['close']
+        _close = latest['close']
+        close = float(_close.iloc[0]) if hasattr(_close, 'iloc') else float(_close)
 
         reasons = []
 
         # 1. Macro Trend Filter (SMA 50 and SMA 200)
         # Professional standard: Price must be above both 50 and 200 SMAs for high-probability setups.
-        sma_50 = SMAIndicator(close=df['close'], window=50).sma_indicator().iloc[-1]
-        sma_200 = SMAIndicator(close=df['close'], window=200).sma_indicator().iloc[-1]
+        _close = df['close']
+        close_series = _close.iloc[:, 0] if isinstance(_close, pd.DataFrame) else _close
+        _sma_50 = SMAIndicator(close=close_series, window=50).sma_indicator().iloc[-1]
+        _sma_200 = SMAIndicator(close=close_series, window=200).sma_indicator().iloc[-1]
+        
+        sma_50 = float(_sma_50.iloc[0]) if hasattr(_sma_50, 'iloc') else float(_sma_50)
+        sma_200 = float(_sma_200.iloc[0]) if hasattr(_sma_200, 'iloc') else float(_sma_200)
         
         is_macro_bullish = (close > sma_50) and (close > sma_200)
         
@@ -43,7 +49,8 @@ class SwingTechnicalAnalysis:
         })
 
         # 2. Support Zones (EMA 20 or SMA 50) - 2.5% Tolerance Bounce (Relaxed from 1.5%)
-        ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+        _ema_20 = EMAIndicator(close=close_series, window=20).ema_indicator().iloc[-1]
+        ema_20 = float(_ema_20.iloc[0]) if hasattr(_ema_20, 'iloc') else float(_ema_20)
         
         # Check if price is within +/- 2.5% of either support line
         ema_20_bounce = (ema_20 * 0.975) <= close <= (ema_20 * 1.025)
@@ -66,17 +73,33 @@ class SwingTechnicalAnalysis:
         # 2b. Candlestick Confirmation (Hammer, Pin Bar, or Bullish Engulfing)
         # Check LATEST and PREVIOUS for confirmation (Double window)
         def detect_bullish_pattern(candle, previous):
-            body = abs(candle['close'] - candle['open'])
-            l_wick = candle['open'] - candle['low'] if candle['close'] > candle['open'] else candle['close'] - candle['low']
-            u_wick = candle['high'] - candle['close'] if candle['close'] > candle['open'] else candle['high'] - candle['open']
+            # Extract scalars safely
+            c_c = candle['close']
+            c_o = candle['open']
+            c_h = candle['high']
+            c_l = candle['low']
+            p_c = previous['close']
+            p_o = previous['open']
+            
+            c_close = float(c_c.iloc[0]) if hasattr(c_c, 'iloc') else float(c_c)
+            c_open = float(c_o.iloc[0]) if hasattr(c_o, 'iloc') else float(c_o)
+            c_high = float(c_h.iloc[0]) if hasattr(c_h, 'iloc') else float(c_h)
+            c_low = float(c_l.iloc[0]) if hasattr(c_l, 'iloc') else float(c_l)
+            
+            p_close = float(p_c.iloc[0]) if hasattr(p_c, 'iloc') else float(p_c)
+            p_open = float(p_o.iloc[0]) if hasattr(p_o, 'iloc') else float(p_o)
+            
+            body = abs(c_close - c_open)
+            l_wick = c_open - c_low if c_close > c_open else c_close - c_low
+            u_wick = c_high - c_close if c_close > c_open else c_high - c_open
             
             # Hammer / Pin Bar: Long lower wick (>= 1.5x body), small upper wick
             is_pin = (l_wick >= (1.5 * body)) and (u_wick <= body) and (body >= 0)
             
             # Bullish Engulfing
-            is_green = candle['close'] > candle['open']
-            prev_red = previous['close'] < previous['open']
-            is_engulfing = is_green and prev_red and (candle['open'] <= previous['close']) and (candle['close'] >= previous['open'])
+            is_green = c_close > c_open
+            prev_red = p_close < p_open
+            is_engulfing = is_green and prev_red and (c_open <= p_close) and (c_close >= p_open)
             
             return "Hammer/Pin Bar" if is_pin else "Bullish Engulfing" if is_engulfing else None
 
@@ -97,7 +120,8 @@ class SwingTechnicalAnalysis:
         })
 
         # 3. Momentum Base (RSI 35-65) - Widened from 38-62 based on feedback
-        rsi_14 = RSIIndicator(close=df['close'], window=14).rsi().iloc[-1]
+        _rsi_14 = RSIIndicator(close=close_series, window=14).rsi().iloc[-1]
+        rsi_14 = float(_rsi_14.iloc[0]) if hasattr(_rsi_14, 'iloc') else float(_rsi_14)
         is_rsi_valid = 35 <= rsi_14 <= 65
         
         if not is_rsi_valid:
@@ -111,13 +135,17 @@ class SwingTechnicalAnalysis:
         })
 
         # 4. Volume Confirmation (Current Vol > 1.2x 20 Vol MA) - Strict Surge based on feedback
-        vol_ma_20 = df['volume'].rolling(20).mean().iloc[-1]
-        is_vol_confirmed = latest['volume'] > (vol_ma_20 * 1.2)
+        _vol = df['volume']
+        vol_series = _vol.iloc[:, 0] if isinstance(_vol, pd.DataFrame) else _vol
+        vol_ma_20 = vol_series.rolling(20).mean().iloc[-1]
+        _l_vol = latest['volume']
+        l_vol_val = float(_l_vol.iloc[0]) if hasattr(_l_vol, 'iloc') else float(_l_vol)
+        is_vol_confirmed = l_vol_val > (vol_ma_20 * 1.2)
         
         if not is_vol_confirmed:
             return {"match": False, "reason": "No Institutional Volume Surge (> 1.2x)"}
             
-        vol_ratio = latest['volume'] / vol_ma_20 if vol_ma_20 > 0 else 1
+        vol_ratio = l_vol_val / vol_ma_20 if vol_ma_20 > 0 else 1
         reasons.append({
             "text": "Volume Surge",
             "type": "positive",
@@ -129,7 +157,12 @@ class SwingTechnicalAnalysis:
         from ta.volatility import AverageTrueRange
         
         # 1. Calculate 14-day ATR for dynamic Stop Loss
-        atr_14 = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1]
+        _high = df['high']
+        _low = df['low']
+        high_series = _high.iloc[:, 0] if isinstance(_high, pd.DataFrame) else _high
+        low_series = _low.iloc[:, 0] if isinstance(_low, pd.DataFrame) else _low
+        _atr_14 = AverageTrueRange(high=high_series, low=low_series, close=close_series, window=14).average_true_range().iloc[-1]
+        atr_14 = float(_atr_14.iloc[0]) if hasattr(_atr_14, 'iloc') else float(_atr_14)
         
         # Stop Loss = Entry Price - (Daily ATR value * 1.5)
         stop_loss = close - (atr_14 * 1.5)
@@ -139,7 +172,8 @@ class SwingTechnicalAnalysis:
         target = close + (risk * 2)
         
         # Secondary Target: Recent Swing High (Max high of the last 15 days, shifted back by 1 day to exclude current bounce)
-        recent_high = df['high'].shift(1).rolling(15).max().iloc[-1]
+        _recent_high = df['high'].shift(1).rolling(15).max().iloc[-1]
+        recent_high = float(_recent_high.iloc[0]) if hasattr(_recent_high, 'iloc') else float(_recent_high)
         
         # Add a reason for clear UI tracking
         reasons.append({

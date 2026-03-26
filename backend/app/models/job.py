@@ -1,7 +1,7 @@
 
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, JSON
+from sqlalchemy import Column, String, DateTime, JSON, Boolean
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -14,5 +14,7 @@ class Job(Base):
     status = Column(String, default="pending", index=True)  # "pending", "processing", "completed", "failed"
     result = Column(JSON, default={})
     error_details = Column(String, nullable=True)
+    trigger_source = Column(String, default="manual")  # "manual" or "auto"
+    is_hidden = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

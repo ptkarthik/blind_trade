@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
@@ -42,6 +42,7 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing", "stopped"])
         ).order_by(
+            desc(Job.status == "processing"),
             Job.result.isnot(None).desc(), 
             Job.updated_at.desc()
         ).limit(1)
@@ -81,6 +82,7 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing", "stopped"])
         ).order_by(
+            desc(Job.status == "processing"),
             (func.json_extract(Job.result, '$.data').isnot(None)).desc(),
             Job.updated_at.desc()
         ).limit(1)

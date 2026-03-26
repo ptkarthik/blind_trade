@@ -1,6 +1,7 @@
 import asyncio
 import pandas as pd
 import numpy as np
+import time
 from app.services.market_data import market_service
 from app.services.index_context import index_ctx
 from app.services.liquidity_service import liquidity_service
@@ -12,15 +13,23 @@ from sqlalchemy import select
 import pytz
 from datetime import datetime, timedelta
 from app.core.config import settings
+def safe_scalar(x):
+    return float(x.iloc[0]) if hasattr(x, "iloc") else float(x)
 
 class IntradayEngine:
     """
     Specialized engine for Intraday Analysis.
     Focuses on 15-minute intervals, VWAP, and Momentum.
     """
+
     def __init__(self):
-        self.semaphore = asyncio.Semaphore(10) # Reduced from 15 to prevent yfinance engine collisions
-        self.job_states = {} # Stores state per job_id to prevent collisions
+        self.semaphore = asyncio.Semaphore(5) # Phase 94: Reduced for Windows network stability
+        self.job_states = {}
+
+        # --- PERFORMANCE CACHES ---
+        self.fund_cache = {}
+        self.sector_cache = {}
+
 
     def _group_by_sector(self, results):
         """Pre-groups results by sector for fast UI retrieval."""
@@ -54,15 +63,27 @@ class IntradayEngine:
             # yf.download is efficient for batches
             import yfinance as yf
             import asyncio
-            
             def _fetch_batch():
-                # We only need the last candle (15m)
-                data = yf.download(sample_symbols, period="1d", interval="15m", progress=False, group_by='ticker')
-                return data
+                return yf.download(
+                    sample_symbols,
+                    period="1d",
+                    interval="15m",
+                    progress=False,
+                    group_by='ticker'
+                )
 
-            df_batch = await asyncio.to_thread(_fetch_batch)
-            if df_batch.empty: return {}
+            df_batch = None
+            for attempt in range(3):
+                try:
+                    # Phase 94: Hard timeout for batch download to prevent engine death
+                    df_batch = await asyncio.wait_for(asyncio.to_thread(_fetch_batch), timeout=45.0)
+                    if df_batch is not None and not df_batch.empty:
+                        break
+                except Exception:
+                    await asyncio.sleep(1.5 * (attempt + 1))
 
+            if df_batch is None or df_batch.empty:
+                return {}
             sector_counts = {} # sector -> {"total": X, "high_vol": Y}
             
             for sym in sample_symbols:
@@ -78,13 +99,15 @@ class IntradayEngine:
                     
                     # Estimate RVOL using last known benchmark
                     if isinstance(df_batch.columns, pd.MultiIndex):
+                        if sym not in df_batch.columns.get_level_values(0):
+                            continue
                         ticker_data = df_batch[sym]
                     else:
                         ticker_data = df_batch
-                        
-                    if ticker_data.empty: continue
-                    
-                    last_vol = ticker_data['Volume'].iloc[-1]
+                        if ticker_data.empty:
+                            continue
+
+                    last_vol = float(ticker_data['Volume'].iloc[-1])
                     time_bucket = ticker_data.index[-1].strftime("%H:%M")
                     benchmark = liquidity_service.get_benchmark_vol(sym, time_bucket)
                     
@@ -203,7 +226,7 @@ class IntradayEngine:
             return "OPTIMAL"
         return "NORMAL"
 
-    async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None, fast_fail: bool = False):
+    async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None, fast_fail: bool = False, logger=None):
         """
         Professional Intraday Analysis with Multi-Timeframe & Market Context.
         """
@@ -233,6 +256,8 @@ class IntradayEngine:
         # V6.3 Sequential Refactor
         trend_penalty = trap_penalty = trend_dir_penalty = 0
         sector_penalty_v6_3 = 0
+        target_val = 0.0
+        stop_val = 0.0
         block_trade = False
         block_reason = ""
         
@@ -250,6 +275,8 @@ class IntradayEngine:
         free_float = 0
 
         try:
+            # V6.3 Safety Reset
+            target_val = stop_val = 0.0
             # CHECK STOP 1
             if job_id and self.job_states.get(job_id, {}).get("stop_requested"): return None
 
@@ -268,7 +295,7 @@ class IntradayEngine:
 
             # Extract 5m data for the last 3 days for timing and micro-patterns
             task_5m = market_service.get_ohlc(sym, period="3d", interval="5m", fast_fail=fast_fail)
-            task_1h = market_service.get_ohlc(sym, period="7d", interval="1h", fast_fail=fast_fail)
+            task_1h = market_service.get_ohlc(sym, period="60d", interval="1h", fast_fail=fast_fail)
             df_5m, df_1h = await asyncio.gather(task_5m, task_1h)
             
             if df_5m is None or df_5m.empty: return None
@@ -278,7 +305,9 @@ class IntradayEngine:
                 return None
             
             # Use Live price if valid, else fallback to latest candle close
-            real_price = live_price if live_price > 0 else df_5m['close'].iloc[-1]
+            _l_close_5m = df_5m['close'].iloc[-1]
+            l_close_5m_val = float(_l_close_5m.iloc[0]) if hasattr(_l_close_5m, 'iloc') else float(_l_close_5m)
+            real_price = safe_scalar(live_price) if live_price else l_close_5m_val
             if real_price <= 0: return None
 
             # 2. Use df_hist (15m) for core technicals
@@ -340,7 +369,6 @@ class IntradayEngine:
             adv20 = ta_15m.get("adv20", 0)
             vwap_val = ta_15m.get("vwap_val", real_price)
             vwap_deviation_pct = abs(real_price - vwap_val) / vwap_val * 100 if vwap_val > 0 else 0
-            
             # --- STABILITY PATCH: SAFE METRIC EXTRACTION ---
             # Extract metrics from technical objects defensively
             adx_val = ta_15m.get("adx_details", {}).get("adx", 0)
@@ -356,16 +384,26 @@ class IntradayEngine:
             if len(df_15m) >= 10:
                 v_series = df_15m['volume'].iloc[-20:] # 20 period window for Z-Score
                 if v_series.std() > 0:
-                    volume_zscore = (df_15m['volume'].iloc[-1] - v_series.mean()) / v_series.std()
+                    _l_vol = df_15m['volume'].iloc[-1]
+                    l_vol_val = float(_l_vol.iloc[0]) if hasattr(_l_vol, 'iloc') else float(_l_vol)
+                    volume_zscore = (l_vol_val - v_series.mean()) / v_series.std()
                 
                 ranges = (df_15m['high'] - df_15m['low']).iloc[-10:]
                 avg_range_10 = ranges.mean()
-                candle_range = df_15m['high'].iloc[-1] - df_15m['low'].iloc[-1]
+                
+                _l_high = df_15m['high'].iloc[-1]
+                _l_low = df_15m['low'].iloc[-1]
+                l_high_val = float(_l_high.iloc[0]) if hasattr(_l_high, 'iloc') else float(_l_high)
+                l_low_val = float(_l_low.iloc[0]) if hasattr(_l_low, 'iloc') else float(_l_low)
+                candle_range = l_high_val - l_low_val
             
             delivery_ratio = index_ctx.get("delivery_ratio") # Expected optional input
             
             # --- VOLATILITY & FLOAT METRICS ---
-            fund_data = await market_service.get_fundamentals(sym)
+            if sym not in self.fund_cache:
+                self.fund_cache[sym] = await market_service.get_fundamentals(sym)
+
+            fund_data = self.fund_cache[sym]
             free_float = fund_data.get("floatShares", fund_data.get("marketCap", 0) * 0.4 / real_price) # Fallback to 40% MCAP if unknown
             
             if len(df_15m) >= 20:
@@ -387,10 +425,15 @@ class IntradayEngine:
                     block_trade, block_reason = True, "Excessive VWAP Extension"
             
             # Module 13: ADX Filter (Hard Block)
-            if adx_val < 18: block_trade, block_reason = True, "Weak ADX Momentum"
-            
-            # Module 6: Market Regime (Hard Block)
-            if regime == "Strong Bearish": block_trade, block_reason = True, "Market Regime: Strong Bearish"
+            # Module 13: ADX Filter (Hard Block)
+            if adx_val < 18:
+                chop_penalty = -12
+                reasons.append({"text": "Weak ADX (Choppy)", "type": "negative", "impact": -12})
+
+                        # Module 6: Market Regime (Hard Block)
+            if regime == "Strong Bearish":
+                regime_adj -= 25
+                reasons.append({"text": "Critical Bearish Regime", "type": "negative", "label": "REGIME", "impact": -25})
 
             # Module 14: Liquidity Trap Detector (Hard Block)
             if trap_move_detected: block_trade, block_reason = True, "Institutional Trap"
@@ -399,19 +442,29 @@ class IntradayEngine:
             if len(df_15m) >= 3:
                 vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df_15m)
                 # Price broke above but fell back below within 2 candles with decreasing volume
-                p1, p2, p3 = df_15m['close'].iloc[-3], df_15m['close'].iloc[-2], df_15m['close'].iloc[-1]
-                v1, v2, v3 = df_15m['volume'].iloc[-3], df_15m['volume'].iloc[-2], df_15m['volume'].iloc[-1]
+                _p1, _p2, _p3 = df_15m['close'].iloc[-3], df_15m['close'].iloc[-2], df_15m['close'].iloc[-1]
+                _v1, _v2, _v3 = df_15m['volume'].iloc[-3], df_15m['volume'].iloc[-2], df_15m['volume'].iloc[-1]
+                
+                p1, p2, p3 = (float(x.iloc[0]) if hasattr(x, 'iloc') else float(x) for x in [_p1, _p2, _p3])
+                v1, v2, v3 = (float(x.iloc[0]) if hasattr(x, 'iloc') else float(x) for x in [_v1, _v2, _v3])
+                
+                vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df_15m)
                 vwap1, vwap2, vwap3 = vwap_series.iloc[-3], vwap_series.iloc[-2], vwap_series.iloc[-1]
                 
                 # Check if p2 broke above vwap but p3 fell below, and v3 < v2
                 if p2 > vwap2 and p3 < vwap3 and v3 < v2:
                     block_trade, block_reason = True, "VWAP Reclaim Trap"
 
-            # Module 5.1: Trend Direction Guard (Hard Block)
-            if trend_direction_state == "BEARISH_TREND": block_trade, block_reason = True, "Bearish Trend Guard"
+            # Module 5.1: Trend Direction (Penalty Refinement)
+            # Softened from Hard Block to major penalty to allow high-conviction intraday setups
+            if trend_direction_state == "BEARISH_TREND":
+                trend_dir_penalty = -15
+                reasons.append({"text": "Bearish 15m Trend", "type": "negative", "label": "TREND", "impact": -15})
             
-            # Module 5.3: Market Structure Guard (Hard Block)
-            if market_structure_state == "BEARISH_STRUCTURE": block_trade, block_reason = True, "Bearish Structure"
+            # Module 5.3: Market Structure (Penalty Refinement)
+            if market_structure_state == "BEARISH_STRUCTURE":
+                structure_penalty = -12
+                reasons.append({"text": "Bearish 15m Structure", "type": "negative", "label": "STRUCT", "impact": -12})
 
             # Module 3: Sweep Fake Breakout (Hard Block)
             if sweep.get("fake_breakout_flag"): block_trade, block_reason = True, "Failed Breakout Collapse"
@@ -419,7 +472,11 @@ class IntradayEngine:
             # --- PHASE 1: Modular Scoring Logic ---
             
             # Module 1: Sector Participation
-            sector = market_service.get_sector_for_symbol(sym)
+            # Higher sector-wide volume increases setup probability
+            if sym not in self.sector_cache:
+                self.sector_cache[sym] = market_service.get_sector_for_symbol(sym)
+            
+            sector = self.sector_cache[sym]
             sector_densities = index_ctx.get("sector_densities", {})
             sector_density = sector_densities.get(sector, 0.0)
             
@@ -491,7 +548,8 @@ class IntradayEngine:
             # Module 2: Liquidity Acceleration
             liquidity_acceleration_state = "NEUTRAL"
             if len(df_15m) >= 3:
-                v1, v2, v3 = float(df_15m['volume'].iloc[-3]), float(df_15m['volume'].iloc[-2]), float(df_15m['volume'].iloc[-1])
+                _v1, _v2, _v3 = df_15m['volume'].iloc[-3], df_15m['volume'].iloc[-2], df_15m['volume'].iloc[-1]
+                v1, v2, v3 = (float(x.iloc[0]) if hasattr(x, 'iloc') else float(x) for x in [_v1, _v2, _v3])
                 if rvol_val >= 2.0 and v3 < v2:
                     liquidity_acceleration_state = "EXHAUSTION_WARNING"
                     liq_accel_penalty = -12
@@ -521,7 +579,10 @@ class IntradayEngine:
             # Module 5.2 & 10: VWAP Reclaim Logic
             if len(df_15m) >= 3:
                 vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df_15m)
-                if df_15m['close'].iloc[-1] > vwap_series.iloc[-1] and df_15m['close'].iloc[-2] > vwap_series.iloc[-2] and df_15m['close'].iloc[-3] < vwap_series.iloc[-3]:
+                _p1, _p2, _p3 = df_15m['close'].iloc[-3], df_15m['close'].iloc[-2], df_15m['close'].iloc[-1]
+                p1, p2, p3 = (float(x.iloc[0]) if hasattr(x, 'iloc') else float(x) for x in [_p1, _p2, _p3])
+                
+                if p3 > vwap_series.iloc[-1] and p2 > vwap_series.iloc[-2] and p1 < vwap_series.iloc[-3]:
                     if rvol_val > 1.5: vwap_reclaim_bonus = 15
 
             vwap_ctx = ta_15m.get("vwap_ctx", {})
@@ -538,7 +599,9 @@ class IntradayEngine:
                 reasons.append({"text": "Institutional Delivery Confirmed", "type": "positive", "label": "VOL", "value": f"{delivery_ratio}%", "impact": 6})
             
             # Enhancement: Float Rotation Signal
-            float_rotation = df_15m['volume'].iloc[-1] / max(free_float, 1)
+            _l_vol = df_15m['volume'].iloc[-1]
+            l_vol_val = float(_l_vol.iloc[0]) if hasattr(_l_vol, 'iloc') else float(_l_vol)
+            float_rotation = l_vol_val / max(free_float, 1)
             if float_rotation > 0.08:
                 float_rotation_bonus = 12
                 reasons.append({"text": "Institutional Float Rotation", "type": "positive", "label": "FLOAT", "value": f"{round(float_rotation*100,1)}%", "impact": 12})
@@ -571,65 +634,133 @@ class IntradayEngine:
             if adx_val > 25 and adx_slope > 0: trend_bonus = 10
             if trend_direction_state == "BULLISH_TREND": trend_dir_bonus = 8
 
-            # --- PHASE 2: Global Momentum Cap & Final Scoring ---
+            # =========================================================================
+            # PHASE 2: Global Momentum Cap & Final Consolidation
+            # =========================================================================
             
             # V6.3 Global Momentum Cap Rule
+            # Prevents over-leveraging on extreme momentum spikes that may reverse
             if (liquidity_acceleration_state == "ACCELERATION_CONFIRMED" and rvol_val >= 2.5 and vwap_reclaim_bonus > 0 and adx_val > 25 and adx_is_rising):
                 inst_mom_total = (liq_accel_bonus + rvol_bonus + vwap_reclaim_bonus + vwap_bonus + accumulation_bonus + sector_bonus)
                 if inst_mom_total > 45:
                     scale = 45.0 / inst_mom_total
-                    liq_accel_bonus *= scale
-                    rvol_bonus *= scale
-                    vwap_reclaim_bonus *= scale
-                    vwap_bonus *= scale
-                    accumulation_bonus *= scale
-                    sector_bonus *= scale
-                    reasons.append({"text": "Institutional Momentum Cap Applied", "type": "neutral", "label": "GUARD", "value": f"{round(inst_mom_total,1)} -> 45.0", "impact": 0})
+                    liq_accel_bonus     *= scale
+                    rvol_bonus          *= scale
+                    vwap_reclaim_bonus  *= scale
+                    vwap_bonus          *= scale
+                    accumulation_bonus  *= scale
+                    sector_bonus        *= scale
+                    
+                    reasons.append({
+                        "text": "Institutional Momentum Cap Applied", "type": "neutral", 
+                        "label": "GUARD", "value": f"{round(inst_mom_total,1)} -> 45.0", "impact": 0
+                    })
 
             # Bonus & Penalty Consolidation (Modules 1-14)
             # Stage 2 Safe Bonuses (Modules 2, 4, 7, and Float Rotation)
             stage2_bonuses_raw = liq_accel_bonus + accumulation_bonus + rvol_bonus + float_rotation_bonus
-            stage2_clamped = min(stage2_bonuses_raw, 35)
+            stage2_clamped     = min(stage2_bonuses_raw, 35)
             
-            # Update reasons if clamped (Optional: already did it above but let's ensure score sync)
+            # Sync differences if clamped
             stage2_diff = stage2_clamped - stage2_bonuses_raw
             
-            m1_8_bonus_total = (pullback_bonus + reclaim_bonus + sweep_bonus + squeeze_bonus + gap_bonus + poc_bonus + fan_bonus + inst_bonus + mtf_bonus + acc_bonus + institutional_volume_bonus + trend_bonus + vwap_reclaim_bonus + trend_dir_bonus + sector_bonus + vol_acc_bonus + daily_momentum_bonus + ad_bonus + vwap_bonus + breadth_bonus + volatility_bonus + stage2_clamped)
-            m1_8_penalty_total = (exhaustion_penalty + context_penalty + overheat_penalty + chop_penalty + volume_penalty + structure_penalty + fake_breakout_penalty + vwap_ext_penalty + trend_penalty + trap_penalty + trend_dir_penalty + sector_penalty_v6_3 + abs(liq_accel_penalty) + regime_adj + mtf_penalty + liquidity_bonus + breadth_penalty)
+            m1_8_bonus_total = (
+                pullback_bonus + reclaim_bonus + sweep_bonus + squeeze_bonus + gap_bonus + 
+                poc_bonus + fan_bonus + inst_bonus + mtf_bonus + acc_bonus + 
+                institutional_volume_bonus + trend_bonus + vwap_reclaim_bonus + 
+                trend_dir_bonus + sector_bonus + vol_acc_bonus + daily_momentum_bonus + 
+                ad_bonus + vwap_bonus + breadth_bonus + volatility_bonus + stage2_clamped
+            )
+            
+            m1_8_penalty_total = (
+                exhaustion_penalty + context_penalty + overheat_penalty + chop_penalty + 
+                volume_penalty + structure_penalty + fake_breakout_penalty + vwap_ext_penalty + 
+                trend_penalty + trap_penalty + trend_dir_penalty + sector_penalty_v6_3 + 
+                abs(liq_accel_penalty) + regime_adj + mtf_penalty + liquidity_bonus + breadth_penalty
+            )
             
             # Module 8: Base Weighted Scoring
+            # Combines primary technical scores into a weighted baseline
             vol_ma_5m = df_5m['volume'].rolling(20).mean().iloc[-1]
-            volume_expansion_ratio = df_5m['volume'].iloc[-1] / vol_ma_5m if vol_ma_5m > 0 else 1.0
-            base_score_weighted = (vwap_score*0.30) + (adx_score*0.25) + (pa_score*0.25) + (volume_expansion_ratio*10*0.20)
+            _l_vol_5m = df_5m['volume'].iloc[-1]
+            l_vol_5m_val = float(_l_vol_5m.iloc[0]) if hasattr(_l_vol_5m, 'iloc') else float(_l_vol_5m)
+            
+            volume_expansion_ratio = l_vol_5m_val / vol_ma_5m if vol_ma_5m > 0 else 1.0
+            base_score_weighted    = (vwap_score*0.30) + (adx_score*0.25) + (pa_score*0.25) + (volume_expansion_ratio*10*0.20)
             
             final_score_pre_timing = base_score_weighted + m1_8_bonus_total + m1_8_penalty_total
             
+            # 🔥 REGIME PENALTY (User Logic)
+            # Ensure hard block for critical bearish regimes
+            if regime == "Strong Bearish":
+                block_trade  = True
+                block_reason = "Market Regime: Strong Bearish"
+
+            # 🔥 STRONG SIGNAL VALIDATION (User Logic)
+            # Require minimum relative volume for high conviction scores
+            if final_score_pre_timing > 90 and rvol_val < 1.5:
+                final_score_pre_timing -= 10
+                reasons.append({
+                    "text": "Weak Volume for High Score", "type": "negative", 
+                    "label": "VOL", "impact": -10
+                })
+            
             # Final Volume Validation
+            # Prevents high scores on low relative volume
             if rvol_val < 1.0 and final_score_pre_timing >= 78:
                 block_trade, block_reason = True, "Volume Validation Block"
 
+            # 🔥 RISK REWARD FILTER (User Logic)
+            # Validates that the potential upside justifies the stop loss risk
+            target_val = ta_15m.get("resistance", real_price * 1.02)
+            stop_val = ta_15m.get("support", real_price * 0.98)
+            
+            # Ensure price vs stop/target calculation is safe
+            price_minus_stop = (real_price - stop_val)
+            reward_risk = (target_val - real_price) / price_minus_stop if price_minus_stop > 0 else 0
+            if reward_risk < 1.5:
+                final_score_pre_timing -= 15
+                reasons.append({
+                    "text": "Poor Risk/Reward Ratio", "type": "negative", 
+                    "label": "RISK", "value": f"{round(reward_risk,2)}", "impact": -15
+                })
+
             if not block_trade:
                 # Module 13: Time-of-Day Beta / Optimal Window
-                scan_window = self._is_optimal_window(now_timing)
+                scan_window  = self._is_optimal_window(now_timing)
+                
+                # 🔥 ENTRY TIMING FILTER (User Logic)
+                # Avoid chasing massive moves outside of optimal windows
+                if scan_window == "NORMAL" and day_change_pct > 5:
+                    block_trade  = True
+                    block_reason = "Chasing Extended Move"
+
                 timing_bonus = 3 if (scan_window == "OPTIMAL" and final_score_pre_timing >= 70) else 0
-                final_score = round(max(0, min(160, final_score_pre_timing + timing_bonus)), 1)
+                final_score  = round(max(0, min(160, final_score_pre_timing + timing_bonus)), 1)
                 
                 # Module 9: Signal Hierarchy
-                if final_score >= 105: signal_type = "PIONEER PRIME 🏆"
-                elif final_score >= 92: signal_type = "HIGH CONVICTION BUY 👑"
-                elif final_score >= 78: signal_type = "BUY SETUP ✅"
-                elif final_score >= 67: signal_type = "WATCHLIST ⚖"
-                else: signal_type = "IGNORE 🚫"
+                # Maps final scores to senior specialist signal types
+                if   final_score >= 105: signal_type = "PIONEER PRIME 🏆"
+                elif final_score >= 92:  signal_type = "HIGH CONVICTION BUY 👑"
+                elif final_score >= 78:  signal_type = "BUY SETUP ✅"
+                elif final_score >= 67:  signal_type = "WATCHLIST ⚖"
+                else:                    signal_type = "IGNORE 🚫"
 
                 confidence_label = f"{round(final_score/1.6,1)}% Probability"
-                logic_signal = "BUY" if final_score >= 78 else "NEUTRAL"
+                logic_signal     = "BUY" if final_score >= 78 else "NEUTRAL"
                 msg = f"DEBUG: {sym} | Score: {final_score} | SIGNAL: {signal_type} | ADX: {round(adx_val,1)}\n"
+                
+                # Full Log Integration for Worker UI
+                if logger:
+                    logger.info(f"📊 {sym.ljust(12)} | Score: {str(final_score).ljust(5)} | Signal: {signal_type}")
                 
             # --- Blocking & Result Mapping ---
             if block_trade:
                 signal_type, final_score = "IGNORE 🚫", 0
                 confidence_label, logic_signal = block_reason, "NEUTRAL"
                 msg = f"DEBUG: {sym} | Score: 0 | BLOCKED by {block_reason} | ADX: {round(adx_val,1)}\n"
+                if logger:
+                    logger.info(f"🛑 {sym.ljust(12)} | BLOCKED: {block_reason}")
             
             with open("intraday_debug.log", "a", encoding='utf-8') as f: f.write(msg)
             
@@ -669,7 +800,7 @@ class IntradayEngine:
             print(f"Intraday Engine failed for {sym}: {e}")
             return None
 
-    async def run_scan(self, job_id: str):
+    async def run_scan(self, job_id: str, logger=None):
         """
         Main entry point for an Intraday Job.
         Processes a selection of symbols for real-time advice with robust sync.
@@ -698,7 +829,8 @@ class IntradayEngine:
             "is_running": True,
             "stop_requested": False,
             "pause_requested": False,
-            "last_data_sync": 0 # Track progress of last data sync
+            "last_data_sync": 0, # Track progress of last data sync
+            "last_sync_time": time.time() # Track time of last data sync
         }
 
         # 3. Start Decoupled Progress Sync Loop
@@ -734,8 +866,11 @@ class IntradayEngine:
                         state["active"].append(symbol_str)
                         print(f"[{idx+1}/{total}] [INT] Analyzing: {symbol_str}", flush=True)
                         try:
-                            # PASS GLOBAL INDEX CONTEXT
-                            res = await self.analyze_stock(symbol_str, job_id, global_index_ctx)
+                            # Phase 94: Hard timeout per stock to prevent total loop hang
+                            res = await asyncio.wait_for(
+                                self.analyze_stock(symbol_str, job_id, global_index_ctx, logger=logger), 
+                                timeout=60.0
+                            )
                             if res:
                                 state["results"].append(res)
                             else:
@@ -800,7 +935,7 @@ class IntradayEngine:
         """Background pulse for DB sync."""
         from sqlalchemy.orm.attributes import flag_modified
  
-        print(f"📡 Intraday Progress Sync started for {job_id}")
+        print(f"[SYNC] Intraday Progress Sync started for {job_id}")
         while job_id in self.job_states and self.job_states[job_id].get("is_running"):
             try:
                 state = self.job_states.get(job_id)
@@ -817,6 +952,22 @@ class IntradayEngine:
                     job_obj = res.scalars().first()
                     current_result = {} # Initialize for safety/No NameError
                     if job_obj:
+                        # --- DATABASE SIGNAL CHECK (Phase 67: Immediate Stop/Pause) ---
+                        if job_obj.status == "stopped":
+                            print(f"[STOP] [SYNC] Stop signal detected for {job_id} in DB.")
+                            state["stop_requested"] = True
+                            state["is_running"] = False
+                            # Cancel the main task if it's still running
+                            main_task = state.get("main_task")
+                            if main_task and not main_task.done():
+                                main_task.cancel()
+                            break
+
+                        if job_obj.status == "paused":
+                            state["pause_requested"] = True
+                        elif job_obj.status == "processing":
+                            state["pause_requested"] = False
+                        
                         current_result = job_obj.result or {}
                         if not isinstance(current_result, dict): current_result = {}
                         
@@ -825,17 +976,20 @@ class IntradayEngine:
                         current_result["total_steps"] = total
                         current_result["active_symbols"] = list(state["active"])
                         current_result["status_msg"] = f"Analyzing: {active_str}{status_suffix}"
-                        
-                        # Partial Data Sync: Sync results every 5 stocks for live UI updates
+
+                        # Partial Data Sync: Sync results every 5 stocks OR every 10 seconds for live UI updates
                         current_count = len(state.get("results", []))
                         last_sync = state.get("last_data_sync", 0)
-                        if current_count - last_sync >= 5 or current_count == total:
+                        last_sync_time = state.get("last_sync_time", 0)
+                        current_time = time.time()
+                        
+                        if (current_count - last_sync >= 2) or (current_count > last_sync and current_time - last_sync_time >= 5) or (current_count == total):
                             current_result["data"] = list(state["results"])
                             current_result["failed_symbols"] = list(state.get("failed_symbols", []))
                             # Pre-calculate sectors for O(1) API fetches (Fast Toggles)
                             current_result["sectors"] = self._group_by_sector(current_result["data"])
                             state["last_data_sync"] = current_count
-                            # print(f"📊 [INTRADAY-SYNC] Partial Data Sync: {current_count} results")
+                            state["last_sync_time"] = current_time
 
                         job_obj.result = sanitize_data(current_result)
                         flag_modified(job_obj, "result")
@@ -844,21 +998,21 @@ class IntradayEngine:
             except Exception as e:
                 print(f"Intraday Sync Warning: {e}")
             await asyncio.sleep(2.0)
-        print(f"📡 Intraday Progress Sync stopped for {job_id}")
+        print(f"[SYNC] Intraday Progress Sync stopped for {job_id}")
 
     async def stop_job(self, job_id: str):
         """
         Instant Stop Signal.
         """
         if job_id in self.job_states:
-            print(f"🛑 STOPPING Intraday Job {job_id}...")
+            print(f"[STOP] STOPPING Intraday Job {job_id}...")
             self.job_states[job_id]["stop_requested"] = True
             self.job_states[job_id]["is_running"] = False
             
             # Cancel the Main Task if stored
             main_task = self.job_states[job_id].get("main_task")
             if main_task:
-                print(f"🛑 Cancelling Main Task for Job {job_id}")
+                print(f"[STOP] Cancelling Main Task for Job {job_id}")
                 main_task.cancel()
 
     async def pause_job(self, job_id: str):

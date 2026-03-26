@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # Regional Settings
     MARKET_TIMEZONE: str = "Asia/Kolkata"
 
+    # SFTP Settings (Phase 66: Worker Logging)
+    SFTP_HOST: str | None = None
+    SFTP_PORT: int = 22
+    SFTP_USER: str | None = None
+    SFTP_PASSWORD: str | None = None
+    SFTP_REMOTE_PATH: str = "/logs"
+
     class Config:
         case_sensitive = True
         env_file = ".env"

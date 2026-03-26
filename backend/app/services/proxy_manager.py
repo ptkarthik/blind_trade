@@ -4,6 +4,8 @@ import requests
 import random
 import time
 import urllib3
+import os
+import json
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
@@ -28,24 +30,58 @@ class ProxyManager:
         self.sources = [
             "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
             "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
         ]
+        
+        self.cache_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "proxy_cache.json")
+        self._load_cache()
+
+    def _load_cache(self):
+        """Loads proxies from a local cache file."""
+        if os.path.exists(self.cache_file):
+            try:
+                with open(self.cache_file, "r") as f:
+                    cached = json.load(f)
+                    if isinstance(cached, list) and cached:
+                        self.proxies = cached
+                        print(f"📦 ProxyManager: Loaded {len(self.proxies)} proxies from local cache.")
+            except Exception as e:
+                print(f"⚠️ Failed to load proxy cache: {e}")
+
+    def _save_cache(self):
+        """Saves current valid proxies to a local cache file."""
+        try:
+            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+            with open(self.cache_file, "w") as f:
+                json.dump(self.proxies, f)
+        except Exception as e:
+            print(f"⚠️ Failed to save proxy cache: {e}")
 
     async def get_proxy(self) -> Optional[str]:
         """
         Returns a valid proxy from the pool.
-        Triggers a refresh if the pool is empty or stale.
+        Non-blocking: Trigger refresh in background if empty.
         """
         async with self.lock:
-            # excessive refreshing protection
+            # Phase 94: Non-blocking refresh. If empty or stale, trigger background refresh but return immediately.
             if not self.proxies or (time.time() - self.last_refresh > self.REFRESH_INTERVAL):
-                await self._refresh_proxies()
+                if not getattr(self, "_refreshing", False):
+                    self._refreshing = True
+                    # Start refresh in background task
+                    asyncio.create_task(self._safe_refresh())
             
             if not self.proxies:
                 return None
                 
-            # Random selection for distribution (better than round robin for free proxies)
             return random.choice(self.proxies)
+
+    async def _safe_refresh(self):
+        """Wrapper to ensure _refreshing is reset even on failure."""
+        try:
+            await self._refresh_proxies()
+        finally:
+            self._refreshing = False
 
     def blacklist(self, proxy: str):
         """
@@ -94,10 +130,10 @@ class ProxyManager:
         valid_proxies = []
         
         def validate_sync(proxy):
-            # Using a more reliable target for basic network check
+            # Reduced timeout for fast check
             target_url = "https://www.google.com" 
             try:
-                resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=8, verify=False)
+                resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=4, verify=False)
                 if resp.status_code == 200:
                     return proxy
             except:
@@ -111,9 +147,16 @@ class ProxyManager:
             
         valid_proxies = [p for p in results if p]
         
-        self.proxies = valid_proxies
-        self.last_refresh = time.time()
-        self.blacklist_set.clear() # Reset blacklist on new fetch
-        print(f"✅ ProxyManager: Activated {len(self.proxies)} working proxies.")
+        if valid_proxies:
+            self.proxies = valid_proxies
+            self.last_refresh = time.time()
+            self.blacklist_set.clear() # Reset blacklist on new fetch
+            self._save_cache()
+            print(f"✅ ProxyManager: Activated {len(self.proxies)} working proxies.")
+        else:
+            print(f"⚠️ ProxyManager: Refresh failed (0 valid proxies). Keeping {len(self.proxies)} from cache.")
+            # Trigger smaller REFRESH_INTERVAL to try again sooner if we are empty
+            if not self.proxies:
+                 self.last_refresh = time.time() - (self.REFRESH_INTERVAL - 300) # retry in 5 mins
 
 proxy_manager = ProxyManager()

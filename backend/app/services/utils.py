@@ -17,7 +17,8 @@ def sanitize_data(data):
     elif isinstance(data, (np.floating, float)):
         if math.isnan(data) or math.isinf(data):
             return 0.0
-        return float(data)
+        # Round to 2 decimals for significant space saving in large JSON results
+        return round(float(data), 2)
     return data
 
 # NSE 500 / Full Market List (Placeholder for now - intended to be dynamic)

@@ -2,6 +2,7 @@
 import asyncio
 from app.db.session import engine
 from app.models.job import Job
+from app.models.papertrade import Account, PaperTrade
 
 async def init_models():
     async with engine.begin() as conn:

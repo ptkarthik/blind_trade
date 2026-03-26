@@ -13904,5 +13904,90 @@
         "sector": "General",
         "market_cap_category": "Small",
         "market_cap_value": 0
+    },
+    "INA.NS": {
+        "sector": "Technology",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "OMNI.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "RSL.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Small",
+        "market_cap_value": 9200798720
+    },
+    "SINGERIND.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "INNOVISION.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "GSPCROP.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "KOTYARK.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Small",
+        "market_cap_value": 4017078528
+    },
+    "SEDEMAC.NS": {
+        "sector": "General",
+        "market_cap_category": "Mid",
+        "market_cap_value": 66533715968
+    },
+    "SRTL.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "MARSONS.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "CLEANMAX.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "PNGSREVA.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "AEPL.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "PRABHA-RE.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "VITAL.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Small",
+        "market_cap_value": 934092928
+    },
+    "BCPL.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "5PAISA-RE.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
     }
 }

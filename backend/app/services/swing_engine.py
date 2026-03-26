@@ -1,4 +1,5 @@
 import asyncio
+import time
 import random
 from typing import Dict, Any, List
 import pandas as pd
@@ -25,7 +26,8 @@ class SwingEngine:
             "target_count": 0,
             "stop_requested": False,
             "is_running": True,
-            "last_data_sync": 0
+            "last_data_sync": 0,
+            "last_sync_time": time.time()
         }
 
     def update_job_progress(self, job_id: str, new_progress: int, total_steps: int = None, status_msg: str = None, active_symbols: list = None):
@@ -78,7 +80,8 @@ class SwingEngine:
                 print(f"⚠️ Swing Analysis skipped for {sym}: Need 200 days for SMA.")
                 return None
             
-            real_price = df_1d['close'].iloc[-1]
+            _l_close = df_1d['close'].iloc[-1]
+            real_price = float(_l_close.iloc[0]) if hasattr(_l_close, 'iloc') else float(_l_close)
             if real_price <= 0: return None
             
             # 2. Check Swing Setup Rules
@@ -122,7 +125,9 @@ class SwingEngine:
             # A stock in Stage 2 (Above 50/200) is already good, but we check if MA order is perfect
             sma_50 = next((r for r in swing_result.get("reasons", []) if r["label"] == "MACRO"), {}).get("value", 0)
             # Hard check: Are we near 52w high? (Momentum alignment)
-            is_breakout = df_1d['close'].iloc[-1] > df_1d['high'].tail(60).max() * 0.98
+            _l_close = df_1d['close'].iloc[-1]
+            l_close_val = float(_l_close.iloc[0]) if hasattr(_l_close, 'iloc') else float(_l_close)
+            is_breakout = l_close_val > df_1d['high'].tail(60).max() * 0.98
             if is_breakout:
                  base_score += 7
                  setup_tag += " [🚀 NEAR HIGH]"
@@ -288,6 +293,22 @@ class SwingEngine:
                     job_obj = res.scalars().first()
                     current_result = {}
                     if job_obj:
+                        # --- DATABASE SIGNAL CHECK (Phase 67: Immediate Stop/Pause) ---
+                        if job_obj.status == "stopped":
+                            print(f"🛑 [SYNC] Stop signal detected for {job_id} in DB.")
+                            state["stop_requested"] = True
+                            state["is_running"] = False
+                            # Cancel the main task if it's still running
+                            main_task = state.get("main_task")
+                            if main_task and not main_task.done():
+                                main_task.cancel()
+                            break
+
+                        if job_obj.status == "paused":
+                            state["pause_requested"] = True
+                        elif job_obj.status == "processing":
+                            state["pause_requested"] = False
+                            
                         current_result = job_obj.result or {}
                         if not isinstance(current_result, dict): current_result = {}
                         
@@ -298,12 +319,15 @@ class SwingEngine:
                         
                         current_count = len(state.get("results", []))
                         last_sync = state.get("last_data_sync", 0)
+                        last_sync_time = state.get("last_sync_time", 0)
+                        current_time = time.time()
                         
                         # Force a sync if condition met, OR if job is nearly done to flush everything
-                        if current_count - last_sync >= 5 or current_count == total or state.get("progress") == total:
+                        if (current_count - last_sync >= 5) or (current_count > last_sync and current_time - last_sync_time >= 10) or (current_count == total) or state.get("progress") == total:
                             current_result["data"] = list(state.get("results", []))
                             current_result["failed_symbols"] = list(state.get("failed_symbols", []))
                             state["last_data_sync"] = current_count
+                            state["last_sync_time"] = current_time
 
                         job_obj.result = sanitize_data(current_result)
                         flag_modified(job_obj, "result")

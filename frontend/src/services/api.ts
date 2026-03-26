@@ -41,4 +41,17 @@ export const jobsApi = {
     getResults: (jobId: string) => api.get(`/jobs/${jobId}/results`),
 };
 
+export const papertradeApi = {
+    getAccount: () => api.get('/papertrades/account'),
+    placeOrder: (data: any) => api.post('/papertrades/buy', data),
+    getTrades: () => api.get('/papertrades/trades'),
+    closeTrade: (tradeId: string) => api.patch(`/papertrades/close/${tradeId}`),
+    resetAccount: () => api.post('/papertrades/reset_account'),
+};
+
+export const settingsApi = {
+    get: (key: string) => api.get(`/settings/${key}`),
+    update: (key: string, value: string) => api.post('/settings', { key, value }),
+};
+
 export default api;

@@ -22,6 +22,8 @@ class JobSchema(BaseModel):
     status: str
     result: Optional[Any]
     error_details: Optional[str]
+    trigger_source: Optional[str]
+    is_hidden: Optional[bool]
     created_at: Any # Date
 
     class Config:
@@ -38,9 +40,18 @@ async def trigger_scan(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
     existing = result.scalars().first()
     
     if existing:
-        return existing
+        # If the existing job is AUTO and we are triggering a MANUAL one, stop the auto one
+        if existing.trigger_source == "auto":
+            from datetime import datetime
+            existing.status = "stopped"
+            existing.error_details = "Overridden by manual scan request from UI."
+            existing.updated_at = datetime.utcnow()
+            await db.commit()
+            # The worker will pick up the new job and stop the old task
+        else:
+            return existing
 
-    new_job = Job(type=job_in.type, status="pending")
+    new_job = Job(type=job_in.type, status="pending", trigger_source="manual")
     db.add(new_job)
     await db.commit()
     await db.refresh(new_job)
@@ -65,10 +76,12 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
         Job.error_details, 
         Job.created_at, 
         Job.updated_at,
+        Job.trigger_source,
+        Job.is_hidden,
         func.json_extract(Job.result, '$.progress').label("progress"),
         func.json_extract(Job.result, '$.total_steps').label("total_steps"),
         func.json_extract(Job.result, '$.status_msg').label("status_msg")
-    ).where(Job.created_at >= since)
+    ).where(Job.created_at >= since, Job.is_hidden == False)
     
     if job_type:
         query = query.where(Job.type == job_type)
@@ -92,6 +105,8 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
         "error_details": row.error_details,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+        "trigger_source": row.trigger_source,
+        "is_hidden": row.is_hidden,
         "result": {
             "progress": row.progress or 0,
             "total_steps": row.total_steps or 0,
@@ -117,10 +132,12 @@ async def get_scan_history(skip: int = 0, limit: int = 10, db: AsyncSession = De
         Job.error_details, 
         Job.created_at, 
         Job.updated_at,
+        Job.trigger_source,
+        Job.is_hidden,
         func.json_extract(Job.result, '$.progress').label("progress"),
         func.json_extract(Job.result, '$.total_steps').label("total_steps"),
         func.json_extract(Job.result, '$.status_msg').label("status_msg")
-    ).where(Job.created_at >= since).order_by(Job.created_at.desc()).offset(skip).limit(limit)
+    ).where(Job.created_at >= since, Job.is_hidden == False).order_by(Job.created_at.desc()).offset(skip).limit(limit)
     
     result = await db.execute(query)
     rows = result.all()
@@ -132,8 +149,10 @@ async def get_scan_history(skip: int = 0, limit: int = 10, db: AsyncSession = De
             "type": row.type,
             "status": row.status,
             "error_details": row.error_details,
+            "trigger_source": row.trigger_source,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
+            "is_hidden": row.is_hidden,
             "result": {
                 "progress": row.progress or 0,
                 "total_steps": row.total_steps or 0,

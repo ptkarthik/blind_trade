@@ -18,3 +18,5 @@ alembic
 pytest
 httpx
 twelvedata
+paramiko
+curl_cffi

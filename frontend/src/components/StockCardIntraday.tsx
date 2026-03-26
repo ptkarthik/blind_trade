@@ -6,9 +6,10 @@ interface StockCardIntradayProps {
     signal: Signal;
     rank?: number;
     onClick: () => void;
+    onBuy?: (e: React.MouseEvent) => void;
 }
 
-export function StockCardIntraday({ signal, onClick }: StockCardIntradayProps) {
+export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayProps) {
     const isBuy = signal.intraday_signal?.includes("BUY") || signal.signal === "BUY";
     const isHighConviction = signal.score >= 80;
 
@@ -152,8 +153,16 @@ export function StockCardIntraday({ signal, onClick }: StockCardIntradayProps) {
                     {signal.strategic_summary || signal.verdict || "Strategically aligned for intraday momentum."}
                 </p>
                 <div className="flex items-center justify-between">
-                    <div className="flex gap-1">
+                    <div className="flex gap-2">
                         <span className="text-[8px] font-black uppercase text-primary/50 tracking-widest group-hover:text-primary transition-colors">CLICK TO ANALYZE</span>
+                        {onBuy && (
+                            <button 
+                                onClick={onBuy}
+                                className="text-[8px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 hover:bg-emerald-500 hover:text-white transition-all z-20"
+                            >
+                                BUY (PAPER)
+                            </button>
+                        )}
                     </div>
                     <button className={`p-2 rounded-lg shadow-sm transition-all duration-300 transform group-hover:scale-110 group-hover:rotate-12 ${isBuy ? "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200" : "bg-red-500 hover:bg-red-600 shadow-red-200"}`}>
                         <ArrowRight size={16} className="text-white" />
