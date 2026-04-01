@@ -1282,6 +1282,14 @@ class IntradayTechnicalAnalysis:
         """Institutional-grade Intraday Analysis using specific weighted indicators."""
         if df.empty or len(df) < 20: return {}
         
+        # Phase 97: Robust Column Cleansing (Fix for Ambiguous Series Truth Value)
+        # Ensure we have single Series for each OHLCV column even if duplicates exist
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in df.columns:
+                series = df[col]
+                if isinstance(series, pd.DataFrame):
+                    df[col] = series.iloc[:, 0]
+        
         latest = df.iloc[-1]
         
         # 1. VWAP (30% weight in engine) - Daily anchor is standard
@@ -1309,7 +1317,8 @@ class IntradayTechnicalAnalysis:
         current_time = current_dt.strftime("%H:%M")
         avg_vol_at_time = liquidity_service.get_benchmark_vol(symbol, current_time)
         
-        current_vol = latest['volume']
+        current_vol_raw = latest['volume']
+        current_vol = float(current_vol_raw.iloc[0]) if hasattr(current_vol_raw, "iloc") else float(current_vol_raw)
         rvol_time_reference = current_time
         
         if avg_vol_at_time > 0:
@@ -1317,7 +1326,8 @@ class IntradayTechnicalAnalysis:
         else:
             # Fallback: RVOL = Current Volume / (ADV20 / 25 expected candles per session)
             # Standard time-normalized intraday benchmarking divisor fixed at 25
-            avg_candle_vol = adv20 / 25 if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
+            avg_candle_vol_raw = adv20 / 25 if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
+            avg_candle_vol = float(avg_candle_vol_raw.iloc[0]) if hasattr(avg_candle_vol_raw, "iloc") else float(avg_candle_vol_raw)
             rvol = current_vol / avg_candle_vol if avg_candle_vol > 0 else 1.0
             rvol_time_reference = "ADV25_FALLBACK"
             

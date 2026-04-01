@@ -49,7 +49,7 @@ class MarketDataService:
         self.financials_cache = {}
         self.extended_data_cache = {}
         self.CACHE_DURATION = 10 # seconds generic price
-        self.INDEX_CACHE_DURATION = 3600 * 6 
+        self.INDEX_CACHE_DURATION = 60 # Phase 97: 60s for Index Status (faster polling)
         self.OHLC_CACHE_DURATION = 300 # 5 minutes for OHLC
         self.EXTENDED_CACHE_DURATION = 3600 * 24 
 
@@ -67,14 +67,19 @@ class MarketDataService:
         self._init_session()
 
     def _init_session(self):
-        """Standard requests session for secondary APIs (non-yfinance)."""
+        """Standard requests session for secondary APIs and yfinance."""
         import requests
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
+        
+        # 1. Standard Session for custom API calls
         self.session = requests.Session()
         self.session.trust_env = True
         retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
+        
+        # Phase 97: yfinance handles its own session (now requires curl_cffi in some envs)
+        # We stop passing a custom session to avoid "curl_cffi" requirement errors.
         
 
         # Static Sector Mapping (Expanded Universe: Large, Mid, Small)
@@ -153,11 +158,24 @@ class MarketDataService:
         self.metadata_cache = {}
         self._load_metadata_cache()
 
+        # Circuit Breaker for TwelveData (Permanent Disable if limit hit)
+        self.td_disabled = False
+        self.td_disabled_until = 0 # Timestamp for cooldown
+
         # Initialize TwelveData client if key is available
         self.td = None
         if settings.MARKET_DATA_API_KEY and "your_twelvedata" not in settings.MARKET_DATA_API_KEY:
-            self.td = TDClient(apikey=settings.MARKET_DATA_API_KEY)
-            print("MarketDataService: Professional API (TwelveData) Enabled.")
+            try:
+                self.td = TDClient(apikey=settings.MARKET_DATA_API_KEY)
+                print("MarketDataService: Professional API (TwelveData) Enabled.")
+            except Exception as e:
+                err_msg = str(e)
+                err_preview = (err_msg[:100] + "...") if len(err_msg) > 100 else err_msg
+                print(f"⚠️ TwelveData Client Init Failed (Outage?): {err_preview}")
+                print("Falling back to Community API (Yahoo Finance).")
+                self.td = None
+                self.td_disabled = True
+                self.td_disabled_until = time.time() + 3600 # 1 hour cooldown
         else:
             print("MarketDataService: Using Community API (Yahoo Finance) + Mock Fallback.")
 
@@ -199,9 +217,6 @@ class MarketDataService:
 
         print(f"MarketDataService: Initialized with {len(self.stock_master)} base symbols.")
 
-        # Circuit Breaker for TwelveData (Permanent Disable if limit hit)
-        self.td_disabled = False
-        self.td_disabled_until = 0 # Timestamp for cooldown
 
     def _load_metadata_cache(self):
         """Loads metadata (sector/cap) from local JSON to avoid re-fetching."""
@@ -394,7 +409,7 @@ class MarketDataService:
                     "change_percent": 0.0,
                     "volume": 0,
                     "prev_close": 0.0,
-                    "source": "TwelveData (Real-Time)"
+                    "source": "TwelveData (RT)"
                 }
                 # Update Cache
                 self.price_cache[symbol] = {"timestamp": current_time, "data": result}
@@ -411,7 +426,16 @@ class MarketDataService:
                     self.td_disabled = True
                     self.td_disabled_until = time.time() + 900 # 15 mins
                 else:
-                    print(f"TwelveData failed for {symbol}: {e}. Falling back to Yahoo.")
+                    err_msg = str(e)
+                    # Phase 98: Truncate HTML/Verbose logs
+                    err_preview = (err_msg[:100] + "...") if len(err_msg) > 100 else err_msg
+                    print(f"TwelveData failed for {symbol}: {err_preview}. Falling back to Yahoo.")
+                    
+                    # Phase 98: Circuit Breaker for 520/5xx (Server Level issues)
+                    if "520" in err_msg or "500" in err_msg or "502" in err_msg:
+                        print(f"🛑 TwelveData 5xx Error detected. Cooling down for 30m.")
+                        self.td_disabled = True
+                        self.td_disabled_until = time.time() + 1800 # 30 mins
 
         # 2. Fallback to Yahoo Finance (Multiple Candidates only if symbolic)
         base_sym = symbol.replace(".NS", "").replace(".BO", "")
@@ -423,13 +447,13 @@ class MarketDataService:
         last_error = "Unknown"
         for ticker_symbol in candidates:
             try:
-                # Use session for Ticker
+                # Use session for Ticker (Phase 97: Timeout Resolution)
                 def _fetch_yf():
                     ticker = yf.Ticker(ticker_symbol)
                     
                     try:
-                        # 1. Try History first
-                        hist = ticker.history(period="1d")
+                        # 1. Try History first (3s timeout for very latest)
+                        hist = ticker.history(period="1d", timeout=5.0)
                         if not hist.empty:
                             p = hist["Close"].iloc[-1]
                             pc = hist["Open"].iloc[0]
@@ -756,7 +780,15 @@ class MarketDataService:
                     if "NAMERESOLUTIONERROR" in err_msg or "GETADDRINFO FAILED" in err_msg:
                          print(f"🌐 DNS Resolution failed for TwelveData ({symbol}). Likely network issue.")
                     else:
-                         print(f"TwelveData OHLC failed for {symbol}: {e}")
+                         err_msg = str(e)
+                         err_preview = (err_msg[:100] + "...") if len(err_msg) > 100 else err_msg
+                         print(f"TwelveData OHLC failed for {symbol}: {err_preview}")
+                         
+                         # Phase 98: Circuit Breaker for 520/5xx
+                         if "520" in err_msg or "500" in err_msg or "502" in err_msg:
+                             print(f"🛑 TwelveData 5xx Error detected. Cooling down for 30m.")
+                             self.td_disabled = True
+                             self.td_disabled_until = time.time() + 1800
 
         # 2. Fallback to Yahoo Finance (Multiple Candidates only if symbolic)
         base_sym = symbol.replace(".NS", "").replace(".BO", "")
@@ -893,6 +925,17 @@ class MarketDataService:
         Get market status (indices).
         """
         try:
+            # Phase 97: Direct cache check to avoid async overhead for status polling
+            now = time.time()
+            if "^NSEI" in self.price_cache and now - self.price_cache["^NSEI"]["timestamp"] < self.INDEX_CACHE_DURATION:
+                nifty = self.price_cache["^NSEI"]["data"]["price"]
+                vix = self.price_cache.get("^INDIAVIX", {}).get("data", {}).get("price", 0.0)
+                return {
+                    "nifty_50": round(nifty, 2),
+                    "india_vix": round(vix, 2),
+                    "status": "OPEN" if vix > 0 else "CLOSED"
+                }
+
             nifty_task = self.get_latest_price("^NSEI")
             vix_task = self.get_latest_price("^INDIAVIX")
             
@@ -909,43 +952,37 @@ class MarketDataService:
 
     async def get_advance_decline_ratio(self) -> float:
         """
-        Calculates the Advance/Decline ratio for the overall market.
-        Uses the top ~50-100 highly liquid stocks from the static map to approximate 
-        the market breadth quickly without hitting rate limits.
+        Calculates the Advance/Decline ratio using parallelized live price fetches.
+        This preserves specialized proxy/error logic while keeping speed.
         """
         try:
-            # We use a strategic subset (Large Caps & Top Mid Caps) to gauge institutional breadth quickly
-            sample_symbols = [s for s, sec in self.SECTOR_MAP.items()][:80] # Take first 80 for speed
+            # Take a strategic subset (40 mid/large caps as proxy)
+            symbols = [f"{s}.NS" for s in list(self.SECTOR_MAP.keys())[:40]]
             
-            def _fetch_ad():
-                advances = 0
-                declines = 0
-                for sym in sample_symbols:
-                    ticker_str = f"{sym}.NS"
-                    try:
-                        ticker = yf.Ticker(ticker_str)
-                        last = ticker.fast_info.last_price
-                        prev = ticker.fast_info.previous_close
-                        if last > prev:
-                            advances += 1
-                        elif last < prev:
-                            declines += 1
-                    except Exception:
-                        pass
+            # Fetch all in parallel using the proxy-aware get_live_price
+            tasks = [self.get_live_price(sym) for sym in symbols]
+            results = await asyncio.gather(*tasks)
+            
+            advances = 0
+            declines = 0
+            
+            for res in results:
+                if not res or res.get("price", 0) == 0:
+                    continue
                 
-                # Prevent ZeroDivisionError
-                if declines == 0:
-                    return advances if advances > 0 else 1.0
-                return advances / declines
-
-            # A/D calculation takes a few seconds due to 80 requests, but we only do it once per run_scan
-            ratio = await asyncio.wait_for(asyncio.to_thread(_fetch_ad), timeout=15.0)
-            print(f"📊 Market Breath: A/D Ratio = {ratio:.2f}")
-            return ratio
+                p = res.get("price", 0)
+                pc = res.get("prev_close", 0)
+                
+                if p > pc and pc > 0:
+                    advances += 1
+                elif p < pc and pc > 0:
+                    declines += 1
             
+            ratio = (advances / declines) if declines > 0 else (advances if advances > 0 else 1.0)
+            return round(ratio, 2)
         except Exception as e:
-            print(f"Advance/Decline check failed: {e}")
-            return 1.0 # Neutral fallback
+            print(f"A/D check failed: {e}")
+            return 1.0
 
     async def get_sector_performances(self) -> Dict[str, float]:
         """
@@ -953,20 +990,25 @@ class MarketDataService:
         Returns a map of {Sector Name: change_pct}.
         """
         try:
+            sector_names = list(self.INDEX_MAP.keys())
+            index_symbols = [self.INDEX_MAP[s] for s in sector_names]
+            
+            # Fetch all in parallel
+            tasks = [self.get_live_price(sym) for sym in index_symbols]
+            results = await asyncio.gather(*tasks)
+            
             sector_perfs = {}
-            def _fetch_indices():
-                for sector, symbol in self.INDEX_MAP.items():
-                    try:
-                        ticker = yf.Ticker(symbol)
-                        last = ticker.fast_info.last_price
-                        prev = ticker.fast_info.previous_close
-                        change_pct = ((last - prev) / prev) * 100
-                        sector_perfs[sector] = change_pct
-                    except Exception:
-                        sector_perfs[sector] = 0.0
-                return sector_perfs
-                
-            return await asyncio.wait_for(asyncio.to_thread(_fetch_indices), timeout=10.0)
+            for i, res in enumerate(results):
+                sector = sector_names[i]
+                if res and res.get("price", 0) > 0:
+                    p = res.get("price")
+                    pc = res.get("prev_close")
+                    change_pct = ((p - pc) / pc) * 100 if pc > 0 else 0.0
+                    sector_perfs[sector] = round(change_pct, 2)
+                else:
+                    sector_perfs[sector] = 0.0
+            
+            return sector_perfs
         except Exception as e:
             print(f"Sector performance check failed: {e}")
             return {}

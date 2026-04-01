@@ -2055,6 +2055,11 @@
         "raw_symbol": "CIPLA"
     },
     {
+        "symbol": "CLCIND.NS",
+        "name": "CLC Industries Limited",
+        "raw_symbol": "CLCIND"
+    },
+    {
         "symbol": "CLEAN.NS",
         "name": "Clean Science and Technology Limited",
         "raw_symbol": "CLEAN"
@@ -2073,6 +2078,11 @@
         "symbol": "CLSEL.NS",
         "name": "Chaman Lal Setia Exports Limited",
         "raw_symbol": "CLSEL"
+    },
+    {
+        "symbol": "CMPDI.NS",
+        "name": "Central Mine Planning & Design Institute Limited",
+        "raw_symbol": "CMPDI"
     },
     {
         "symbol": "CMSINFO.NS",
@@ -2763,6 +2773,11 @@
         "symbol": "EASEMYTRIP.NS",
         "name": "Easy Trip Planners Limited",
         "raw_symbol": "EASEMYTRIP"
+    },
+    {
+        "symbol": "EASTSILK.NS",
+        "name": "Eastern Silk Industries Limited",
+        "raw_symbol": "EASTSILK"
     },
     {
         "symbol": "EBGNG.NS",
@@ -5885,6 +5900,11 @@
         "raw_symbol": "MAHABANK"
     },
     {
+        "symbol": "MAHAPE-RE.NS",
+        "name": "Maha Rashtra Apex Corporation Limited-RE",
+        "raw_symbol": "MAHAPE-RE"
+    },
+    {
         "symbol": "MAHAPEXLTD.NS",
         "name": "Maha Rashtra Apex Corporation Limited",
         "raw_symbol": "MAHAPEXLTD"
@@ -7605,11 +7625,6 @@
         "raw_symbol": "PRABHA"
     },
     {
-        "symbol": "PRABHA-RE.NS",
-        "name": "Prabha Energy Limited-RE",
-        "raw_symbol": "PRABHA-RE"
-    },
-    {
         "symbol": "PRAENG.NS",
         "name": "Prajay Engineers Syndicate Limited",
         "raw_symbol": "PRAENG"
@@ -8173,6 +8188,11 @@
         "symbol": "RKSWAMY.NS",
         "name": "R K Swamy Limited",
         "raw_symbol": "RKSWAMY"
+    },
+    {
+        "symbol": "RMC.NS",
+        "name": "RMC Switchgears Limited",
+        "raw_symbol": "RMC"
     },
     {
         "symbol": "RMDRIP.NS",
@@ -10018,6 +10038,11 @@
         "symbol": "TIL.NS",
         "name": "TIL Limited",
         "raw_symbol": "TIL"
+    },
+    {
+        "symbol": "TIL-RE1.NS",
+        "name": "TIL Limited-RE",
+        "raw_symbol": "TIL-RE1"
     },
     {
         "symbol": "TIMETECHNO.NS",

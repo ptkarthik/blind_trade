@@ -10,6 +10,9 @@ import os
 os.environ['NO_PROXY'] = '*'
 os.environ['HTTP_PROXY'] = ''
 os.environ['HTTPS_PROXY'] = ''
+import socket
+# Phase 97: Global socket timeout to prevent hanging threads from network data
+socket.setdefaulttimeout(15.0)
 
 import sys
 print(f"DEBUG: sys.path: {sys.path}")

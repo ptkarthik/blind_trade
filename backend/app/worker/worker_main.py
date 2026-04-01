@@ -82,8 +82,8 @@ async def manage_recurring_scans():
     from datetime import datetime, timedelta
     RECURRENCE_INTERVAL = timedelta(minutes=10)
     
-    # Only check types this worker is responsible for
-    types_to_check = [t for t in ["full_scan", "intraday", "swing_scan"] if t in ALLOWED_JOB_TYPES]
+    # Only check types this worker is responsible for (Phase 96: Intraday Auto-Only)
+    types_to_check = [t for t in ["intraday"] if t in ALLOWED_JOB_TYPES]
     
     if not types_to_check:
         return

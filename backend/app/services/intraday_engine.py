@@ -287,8 +287,9 @@ class IntradayEngine:
             df_hist, live_price = await asyncio.gather(ohlc_task, live_price_task)
             
             if df_hist is None or df_hist.empty or len(df_hist) < 100:
-                print(f"⚠️ Intraday Analysis skipped for {sym}: Insufficient historical data.")
-                return None
+                reason = "Insufficient historical data (15m)"
+                print(f"⚠️ Intraday Analysis skipped for {sym}: {reason}")
+                return {"symbol": sym, "skip_reason": reason}
             
             # Attach symbol for ta_intraday to use in LiquidityService lookups
             df_hist.attrs["symbol"] = sym
@@ -298,17 +299,17 @@ class IntradayEngine:
             task_1h = market_service.get_ohlc(sym, period="60d", interval="1h", fast_fail=fast_fail)
             df_5m, df_1h = await asyncio.gather(task_5m, task_1h)
             
-            if df_5m is None or df_5m.empty: return None
-            
             if df_5m is None or df_5m.empty or len(df_5m) < 40:
-                print(f"⚠️ Intraday Analysis skipped for {sym}: Insufficient data (5m).")
-                return None
+                reason = "Insufficient data (5m)"
+                print(f"⚠️ Intraday Analysis skipped for {sym}: {reason}")
+                return {"symbol": sym, "skip_reason": reason}
             
             # Use Live price if valid, else fallback to latest candle close
             _l_close_5m = df_5m['close'].iloc[-1]
             l_close_5m_val = float(_l_close_5m.iloc[0]) if hasattr(_l_close_5m, 'iloc') else float(_l_close_5m)
             real_price = safe_scalar(live_price) if live_price else l_close_5m_val
-            if real_price <= 0: return None
+            if real_price <= 0: 
+                return {"symbol": sym, "skip_reason": "Zero/Negative Price"}
 
             # 2. Use df_hist (15m) for core technicals
             df_15m = df_hist
@@ -798,7 +799,7 @@ class IntradayEngine:
             import traceback
             traceback.print_exc()
             print(f"Intraday Engine failed for {sym}: {e}")
-            return None
+            return {"symbol": sym, "skip_reason": f"Engine Error: {str(e)}"}
 
     async def run_scan(self, job_id: str, logger=None):
         """
@@ -871,10 +872,12 @@ class IntradayEngine:
                                 self.analyze_stock(symbol_str, job_id, global_index_ctx, logger=logger), 
                                 timeout=60.0
                             )
-                            if res:
+                            if res and "skip_reason" not in res:
                                 state["results"].append(res)
+                            elif res and "skip_reason" in res:
+                                state["failed_symbols"].append({"symbol": symbol_str, "reason": res["skip_reason"]})
                             else:
-                                state["failed_symbols"].append({"symbol": symbol_str, "reason": "No data / Skipped"})
+                                state["failed_symbols"].append({"symbol": symbol_str, "reason": "No data / Unknown Skip"})
                         except Exception as e:
                             # print(f"Intraday Scan Error for {symbol_str}: {e}")
                             state["failed_symbols"].append({"symbol": symbol_str, "reason": str(e)})
