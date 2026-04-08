@@ -26,9 +26,30 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
+    # 1. Initialize Market Service
     await market_service.initialize()
     
-    # Reset any stuck jobs from previous runs
+    # 2. Ensure Database Tables exist
+    from app.db.session import engine
+    from app.models.job import Base
+    # Import all models to ensure they are registered with Base.metadata
+    from app.models.job import Job
+    from app.models.papertrade import PaperTrade, Account
+    from app.models.swing_trade import SwingTrade
+    
+    async with engine.begin() as conn:
+        # This will create tables if they don't exist
+        await conn.run_sync(Base.metadata.create_all)
+    
+    # 3. Synchronize TradeManager from DB
+    from app.services.trade_manager import trade_manager
+    await trade_manager.sync_from_db()
+    
+    # Sync Portfolio Engine state with active trades
+    from app.services.portfolio_engine import portfolio_engine
+    portfolio_engine.sync_active_positions(trade_manager.active_trades)
+    
+    # 4. Reset any stuck jobs from previous runs
     from app.db.session import AsyncSessionLocal
     from app.models.job import Job
     from sqlalchemy import select

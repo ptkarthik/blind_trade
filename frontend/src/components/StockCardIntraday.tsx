@@ -1,6 +1,6 @@
 
 import type { Signal } from './DealCard';
-import { Target, Zap, TrendingUp, BarChart2, Activity, ArrowRight, Sparkles } from 'lucide-react';
+import { Target, Zap, TrendingUp, BarChart2, Activity, ArrowRight, Sparkles, Shield } from 'lucide-react';
 
 interface StockCardIntradayProps {
     signal: Signal;
@@ -125,8 +125,8 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
                 </div>
             </div>
 
-            {/* --- MOMENTUM METRICS --- */}
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            {/* --- MOMENTUM & RISK METRICS --- */}
+            <div className="grid grid-cols-2 gap-3 mb-2">
                 <div className="bg-white/50 p-2 rounded-lg border border-slate-100 group-hover:bg-white/80 transition-colors">
                     <div className="flex justify-between items-center mb-1">
                         <span className="text-[9px] font-bold text-slate-400 uppercase">Trend Strength</span>
@@ -139,11 +139,31 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
                 <div className="bg-white/50 p-2 rounded-lg border border-slate-100 group-hover:bg-white/80 transition-colors">
                     <div className="flex justify-between items-center mb-1">
                         <span className="text-[9px] font-bold text-slate-400 uppercase">Volume Flow</span>
-                        <BarChart2 size={12} className={signal.groups?.Volume?.score > 60 ? "text-blue-500" : "text-slate-400"} />
+                        <BarChart2 size={12} className={(signal.groups?.Volume?.score || 0) > 60 ? "text-blue-500" : "text-slate-400"} />
                     </div>
                     <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden shadow-inner">
-                        <div className={`h-full rounded-full transition-all duration-1000 ${signal.groups?.Volume?.score > 60 ? 'bg-blue-500' : 'bg-slate-300'}`} style={{ width: `${Math.min(100, signal.groups?.Volume?.score || 50)}%` }} />
+                        <div className={`h-full rounded-full transition-all duration-1000 ${(signal.groups?.Volume?.score || 0) > 60 ? 'bg-blue-500' : 'bg-slate-300'}`} style={{ width: `${Math.min(100, signal.groups?.Volume?.score || 50)}%` }} />
                     </div>
+                </div>
+            </div>
+
+            {/* --- LAYER 3: SAFEGUARDS [NEW] --- */}
+            <div className="bg-slate-900/5 p-2 rounded-lg border border-slate-200/50 mb-3 group-hover:bg-slate-900/10 transition-all">
+                <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center gap-1.5">
+                        <Shield size={10} className={(signal.groups?.["Safeguards (L3)"]?.score || 0) >= 0 ? "text-emerald-500" : "text-red-500"} />
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">Safeguards & Risk Health</span>
+                    </div>
+                    <span className={`text-[9px] font-black ${(signal.groups?.["Safeguards (L3)"]?.score || 0) >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                        {signal.groups?.["Safeguards (L3)"]?.score || 0} PTS
+                    </span>
+                </div>
+                <div className="w-full bg-slate-200/50 h-1.5 rounded-full overflow-hidden shadow-inner flex">
+                    {/* Safeguard Health Bar: Positive (0) is full green, penalties show as red missing space */}
+                    <div 
+                        className={`h-full transition-all duration-1000 ${(signal.groups?.["Safeguards (L3)"]?.score || 0) >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} 
+                        style={{ width: `${Math.max(20, 100 + (signal.groups?.["Safeguards (L3)"]?.score || 0))}%` }} 
+                    />
                 </div>
             </div>
 

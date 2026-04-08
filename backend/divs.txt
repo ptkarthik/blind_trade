@@ -1,0 +1,90 @@
+22: tp = (today_df['high'] + today_df['low'] + today_df['close']) / 3
+23: vwap = (tp * today_df['volume']).cumsum() / today_df['volume'].cumsum()
+41: - Oscillation/Chop detection
+46: # Ensure scalars (handle potential duplicate columns/Series)
+105: 1. Low <= VWAP * 1.0025 (Close enough to touch/test)
+138: "volume_ratio": round(latest['volume'] / vol_ma, 2) if vol_ma > 0 else 0
+148: Checks if price has broken the High/Low of the first 30 minutes.
+184: Analyzes Gap Up/Down from previous day close.
+201: gap_pct = ((today_open - prev_close) / prev_close) * 100
+210: vol_ratio = opening_vol / vol_ma if vol_ma > 0 else 1.0
+256: pivot = (high + low + close) / 3
+284: pct_from_open = ((current_price - day_open) / day_open) * 100
+290: atr_multiple = dist_from_ema / atr if atr > 0 else 0
+318: near_ema = abs(current_price - ema_9) / current_price < 0.005
+319: near_vwap = abs(current_price - vwap) / current_price < 0.005
+336: Generates a price ladder of significant levels (Pivots + Recent High/Low).
+349: # Add Recent Intraday High/Low
+376: bb_width = (h_band - l_band) / bb.bollinger_mavg()
+389: "width_percentile": round((bb_width.iloc[-1] / width_ma.iloc[-1]) * 100, 1),
+407: # Last two local peaks/troughs comparison
+484: ADX > 25: Trending, ADX < 20: Choppy/Sideways.
+569: mid = len(last_10) // 2
+594: Pioneer V3.3 Specialized "Stop Hunt / Liquidity Sweep" Detector.
+605: # A. Intraday Swing High (Last 1 hour / 4 candles of 15m)
+627: tp = (high_series + low_series + close_series) / 3
+628: vwap = (tp * vol_series).cumsum() / vol_series.cumsum()
+654: if pdh > 0 and abs(pdh - current_price) / current_price < 0.03:
+659: elif orb_high > 0 and abs(orb_high - current_price) / current_price < 0.03:
+664: elif swing_high > 0 and abs(swing_high - current_price) / current_price < 0.03:
+669: elif vwap_res > 0 and abs(vwap_res - current_price) / current_price < 0.03:
+686: breakout_strength = (l_close_val - breakout_level) / breakout_level
+699: breakout_strength = max(breakout_strength, (c_close_val - breakout_level) / breakout_level)
+734: rvol = l_vol_val / vol_ma if vol_ma > 0 else 1.0
+794: V6.2: Trend Direction Guard using EMA 20/50 alignment.
+837: Detects BULLISH/BEARISH/NEUTRAL structures based on structural HH/HL or LH/LL.
+904: volume_spike_ratio = l_vol_val / vol_ma if not np.isnan(vol_ma) and vol_ma > 0 else 1.0
+919: upper_wick_ratio = upper_wick / candle_range if candle_range > 0 else 0
+923: # close_position = (close - low) / (high - low)
+924: close_position = (l_close_val - l_low_val) / candle_range if candle_range > 0 else 0.5
+935: range_expansion_ratio = candle_range / avg_range if not np.isnan(avg_range) and avg_range > 0 else 1.0
+989: wick_strength = (l_close_val - l_low_val) / candle_range
+1003: sweep_size = (range_low - l_low_val) / (range_low if range_low > 0 else 1.0)
+1020: volume_spike_ratio = l_vol_val / vol_ma if vol_ma > 0 else 1.0
+1057: # --- 0. DATA EXTRACTION (Handle Duplicates/Series) ---
+1082: vol_ratio = l_vol_val / vol_ma if vol_ma > 0 else 1.0
+1091: candle_strength = (l_close_val - l_low_val) / candle_range if candle_range > 0 else 1.0
+1097: # 5. TREND CONFIRMATION (EMA 9/20) (10 pts)
+1125: expansion_ratio = candle_range / atr_val
+1131: dist_vwap_atr = abs(l_close_val - vwap) / atr_val
+1230: dist_ema9 = abs(l_low_val - ema9_val) / l_close_val
+1231: dist_vwap = abs(l_low_val - vwap) / l_close_val
+1232: dist_retest = abs(l_low_val - breakout_level) / l_close_val
+1252: pullback_depth_atr = (local_high - l_low_val) / atr_val
+1257: prev_candle_strength = (p_close_val - p_low_val) / prev_candle_range if prev_candle_range > 0 else 0.5
+1267: c_strength = (l_close_val - l_low_val) / c_range if c_range > 0 else 0.5
+1277: vol_ratio = l_vol_val / vol_ma if vol_ma > 0 else 1.0
+1310: if (micro_cons_range / (atr_val if atr_val > 0 else 1)) < 0.8 and l_close_val > ema9_val:
+1315: candle_strength = (l_close_val - l_low_val) / candle_range if candle_range > 0 else 0.5
+1317: momentum_strength_atr = (l_close_val - l_open_val) / (atr_val if atr_val > 0 else 1)
+1329: sweep_depth = (swing_low - l_low_val) / (swing_low if swing_low > 0 else 1)
+1336: momentum_atr = (l_close_val - l_open_val) / (atr_val if atr_val > 0 else 1)
+1348: # Adaptive proximity bonus/penalty using ATR (volatility parity)
+1349: entry_distance_atr = abs(l_close_val - breakout_level) / (atr_val if atr_val > 0 else 1)
+1360: dist_from_break_atr = (l_close_val - breakout_level) / (atr_val if atr_val > 0 else 1)
+1373: resistance_risk = (not breakout_confirmed and l_close_val <= recent_high and (recent_high - l_close_val) / (recent_high if recent_high > 0 else 1) < 0.003)
+1383: structure_break = (p5_low_val - l_low_val) / (p5_low_val if p5_low_val > 0 else 1)
+1415: sl_pct = sl_distance / (l_close_val if l_close_val > 0 else 1)
+1420: position_size = int(risk_amount / sl_distance) if sl_distance > 0 else 0
+1425: rr_ratio = (target_2 - l_close_val) / (sl_distance if sl_distance > 0 else 1)
+1504: range_pct = (highest_high - lowest_low) / (current_price if current_price > 0 else 1) * 100
+1521: volume_acc_ratio = avg_vol_last_10 / (avg_vol_prev_10 if avg_vol_prev_10 > 0 else 1)
+1532: pb = (highest_high - curr_low_val) / (highest_high if highest_high > 0 else 1) * 100
+1581: s_range = (s_high - s_low) / (lc_val if lc_val > 0 else 1) * 100
+1726: # Assignment to bins based on candle high/low/close average
+1734: prices = (h_s + l_s + c_s) / 3
+1741: poc = (bins[max_bin_idx] + bins[max_bin_idx+1]) / 2
+1786: "volume_ratio": round(latest['volume'] / vol_ma, 2) if vol_ma > 0 else 0
+1796: Approximates Buying/Selling pressure by assigning volume to buyers if close > open,
+1823: cvd_ratio = cvd / total_vol
+1869: # Ensure close and vwap are scalars (handle potential duplicate columns/Series)
+1896: rvol = current_vol / avg_vol_at_time
+1898: # Fallback: RVOL = Current Volume / (ADV20 / 25 expected candles per session)
+1900: avg_candle_vol_raw = adv20 / 25 if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
+1902: rvol = current_vol / avg_candle_vol if avg_candle_vol > 0 else 1.0
+1911: else: rvol_score = 40 # Normal/Low
+1950: # 5. Price Action / Order Flow Proxy (20% weight in engine)
+1953: close_relative = (close - latest['low']) / candle_range if candle_range > 0 else 0.5
+1972: "Trend": {"score": ema_score, "details": [{"text": "9/20 EMA", "type": "positive" if ema_score > 50 else "negative", "label": "EMA", "value": ema_status}]},
+2031: # Dynamic Support/Resistance relative to CURRENT price
+2071: chase_dist = (close - best_entry) / atr_val if atr_val > 0 else 0

@@ -14,12 +14,17 @@ class MarketDiscoveryService:
         
     def _fetch_nse_list(self) -> List[Dict]:
         """Fetches the official CSV from NSE and parses symbols."""
+        session = requests.Session()
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/csv,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         }
         try:
-            response = requests.get("https://archives.nseindia.com/content/equities/EQUITY_L.csv", headers=headers, timeout=15)
+            # [V12.2] NSE requires specific headers to prevent 403/stalls
+            response = session.get(self.NSE_EQUITY_URL, headers=headers, timeout=10)
             response.raise_for_status()
             
             df = pd.read_csv(io.StringIO(response.text))
@@ -27,9 +32,8 @@ class MarketDiscoveryService:
             for _, row in df.iterrows():
                 symbol = str(row['SYMBOL']).strip()
                 name = str(row['NAME OF COMPANY']).strip()
-                series = str(row[' SERIES']).strip() # Note the leading space in some NSE CSVs
+                series = str(row[' SERIES']).strip()
                 
-                # Only include main equity series (EQ or BE)
                 if series in ['EQ', 'BE']:
                     stocks.append({
                         "symbol": f"{symbol}.NS",
@@ -38,8 +42,10 @@ class MarketDiscoveryService:
                     })
             return stocks
         except Exception as e:
-            print(f"MarketDiscovery: Fetch failed: {e}")
+            print(f"⚠️ MarketDiscovery: Fetch failed (Network/NSE): {e}")
             return []
+        finally:
+            session.close()
 
     async def get_full_market_list(self) -> List[Dict]:
         """Returns the full list of NSE stocks, using cache if valid."""

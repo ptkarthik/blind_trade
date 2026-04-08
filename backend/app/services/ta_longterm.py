@@ -1,6 +1,12 @@
 
 import pandas as pd
 import numpy as np
+
+
+def safe_scalar(x):
+    import numpy as np
+    val = float(x.iloc[0]) if hasattr(x, 'iloc') else float(x)
+    return float(np.nan_to_num(val, nan=0.0))
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
@@ -35,10 +41,10 @@ class LongTermTechnicalAnalysis:
         _bb_lower = bb_lower.iloc[-1]
         _kc_lower = kc_lower.iloc[-1]
         
-        bb_u_val = float(_bb_upper.iloc[0]) if hasattr(_bb_upper, 'iloc') else float(_bb_upper)
-        kc_u_val = float(_kc_upper.iloc[0]) if hasattr(_kc_upper, 'iloc') else float(_kc_upper)
-        bb_l_val = float(_bb_lower.iloc[0]) if hasattr(_bb_lower, 'iloc') else float(_bb_lower)
-        kc_l_val = float(_kc_lower.iloc[0]) if hasattr(_kc_lower, 'iloc') else float(_kc_lower)
+        bb_u_val = safe_scalar(_bb_upper)
+        kc_u_val = safe_scalar(_kc_upper)
+        bb_l_val = safe_scalar(_bb_lower)
+        kc_l_val = safe_scalar(_kc_lower)
 
         squeeze_on = (bb_u_val < kc_u_val) and (bb_l_val > kc_l_val)
         label = "Squeeze On (Coiling)" if squeeze_on else "Normal"
@@ -107,13 +113,13 @@ class LongTermTechnicalAnalysis:
             c_50 = sma_10w.iloc[-1]
             c_150 = sma_30w.iloc[-1]
             _c_200 = sma_40w.iloc[-1]
-            c_200 = float(_c_200.iloc[0]) if hasattr(_c_200, 'iloc') else float(_c_200)
+            c_200 = safe_scalar(_c_200)
             _c_50_week = sma_50w.iloc[-1]
-            c_50_week = float(_c_50_week.iloc[0]) if hasattr(_c_50_week, 'iloc') else float(_c_50_week)
+            c_50_week = safe_scalar(_c_50_week)
             
             # Check Trend (compare to 4 weeks ago)
             _c_200_prev = sma_40w.iloc[-4]
-            c_200_prev = float(_c_200_prev.iloc[0]) if hasattr(_c_200_prev, 'iloc') else float(_c_200_prev)
+            c_200_prev = safe_scalar(_c_200_prev)
             trend_200_up = c_200 > c_200_prev
             
             # 52-Week High/Low
@@ -219,8 +225,8 @@ class LongTermTechnicalAnalysis:
             # 1. Moving Averages as Dynamic Levels
             _sma_50 = df['close'].rolling(window=50).mean().iloc[-1]
             _sma_200 = df['close'].rolling(window=200).mean().iloc[-1]
-            sma_50 = float(_sma_50.iloc[0]) if hasattr(_sma_50, 'iloc') else float(_sma_50)
-            sma_200 = float(_sma_200.iloc[0]) if hasattr(_sma_200, 'iloc') else float(_sma_200)
+            sma_50 = safe_scalar(_sma_50)
+            sma_200 = safe_scalar(_sma_200)
             
             # 2. Structural Levels (Swings)
             recent_high = df['high'].tail(60).max()
@@ -255,7 +261,7 @@ class LongTermTechnicalAnalysis:
         low_series = _low_all.iloc[:, 0] if isinstance(_low_all, pd.DataFrame) else _low_all
         
         _close_latest = latest['close']
-        close = float(_close_latest.iloc[0]) if hasattr(_close_latest, 'iloc') else float(_close_latest)
+        close = safe_scalar(_close_latest)
         trend_score, mom_score = 0, 0
         groups = {
             "Trend": {"score": 0, "details": [], "status": "NEUTRAL"},
@@ -296,7 +302,7 @@ class LongTermTechnicalAnalysis:
 
         # 3. Momentum (RSI)
         _rsi_series = RSIIndicator(close=close_series, window=14).rsi().iloc[-1]
-        rsi = float(_rsi_series.iloc[0]) if hasattr(_rsi_series, 'iloc') else float(_rsi_series)
+        rsi = safe_scalar(_rsi_series)
         if 40 <= rsi <= 70:
             mom_score = 100
             groups["Momentum"]["details"].append({"text": "RSI Accumulation Zone (40-70)", "type": "positive", "label": "MOM", "value": round(rsi,1)})

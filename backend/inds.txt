@@ -1,0 +1,35 @@
+from ta.trend import ADXIndicator, EMAIndicator
+from ta.volatility import AverageTrueRange
+def calculate_vwap_series(df: pd.DataFrame) -> pd.Series:
+def calculate_vwap(df: pd.DataFrame) -> float:
+vwap_s = IntradayTechnicalAnalysis.calculate_vwap_series(df)
+vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
+vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
+ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1]
+ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
+vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
+ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+vwap = IntradayTechnicalAnalysis.calculate_vwap(df) # Fixed: Use anchored VWAP
+e9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
+e20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+e50 = EMAIndicator(close=df['close'], window=50).ema_indicator().iloc[-1]
+e200 = EMAIndicator(close=df['close'], window=200).ema_indicator().iloc[-1]
+adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+ema_20_series = EMAIndicator(close=close_series, window=20).ema_indicator()
+ema_50_series = EMAIndicator(close=close_series, window=50).ema_indicator()
+ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
+ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
+ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
+atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
+ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+ema_9 = EMAIndicator(close=close_series, window=9).ema_indicator()
+ema_20 = EMAIndicator(close=close_series, window=20).ema_indicator()
+ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
+ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()

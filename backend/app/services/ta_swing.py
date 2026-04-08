@@ -3,194 +3,305 @@ from ta.trend import SMAIndicator, EMAIndicator, MACD
 from ta.momentum import RSIIndicator
 import numpy as np
 
+
+def safe_scalar(x):
+    import numpy as np
+    try:
+        if isinstance(x, pd.Series):
+             val = float(x.iloc[0]) if len(x) > 0 else 0.0
+        elif isinstance(x, pd.DataFrame):
+             val = float(x.iloc[0, 0]) if not x.empty else 0.0
+        else:
+             val = float(x)
+        return float(np.nan_to_num(val, nan=0.0))
+    except:
+        return 0.0
+
 class SwingTechnicalAnalysis:
     """
     Dedicated technical analysis module exclusively for Swing Trading criteria.
-    Operates on Daily (1D) data frames to identify setup bounces.
+    V2: Market-Adaptive Multi-Strategy (Pullback & Breakout).
     """
+
+    @staticmethod
+    def analyze_pullback(df: pd.DataFrame, nifty_20d_ret: float = 0) -> dict:
+        """
+        Refined Pullback Strategy: Capturing bounces at supports with flexible confirmation.
+        """
+        if df.empty or len(df) < 200:
+            return {"match": False, "reason": "Insufficient Data"}
+
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # --- Gap Risk Filter ---
+        gap_pct = ((safe_scalar(latest['open']) - safe_scalar(prev['close'])) / safe_scalar(prev['close'])) * 100
+        if gap_pct > 3 or gap_pct < -2:
+             return {"match": False, "reason": f"Gap Risk ({round(gap_pct, 1)}%)", "gap_filter_passed": False}
+        
+        _close = latest['close']
+        close = safe_scalar(_close)
+
+        # --- Relative Strength Filter ---
+        stock_20d_price = safe_scalar(df['close'].iloc[-21] if len(df) >= 21 else df['close'].iloc[0])
+        stock_20d_ret = ((close / stock_20d_price) - 1) * 100 if stock_20d_price > 0 else 0
+        
+        if stock_20d_ret <= nifty_20d_ret:
+             return {"match": False, "reason": f"Underperforming Nifty ({round(stock_20d_ret, 1)}% vs {round(nifty_20d_ret, 1)}%)", "relative_strength": "UNDERPERFORM"}
+
+        # --- Pullback Quality Constraint (Drawdown < 12%) ---
+        recent_high_20d = safe_scalar(df['high'].iloc[-21:-1].max())
+        drawdown_pct = ((recent_high_20d - close) / recent_high_20d) * 100 if recent_high_20d > 0 else 0
+        
+        if drawdown_pct > 12:
+             return {"match": False, "reason": f"Deep Correction ({round(drawdown_pct, 1)}% > 12%)", "pullback_quality": "DEEP"}
+
+        reasons = []
+
+        # 1. Macro Trend & Slope Filter
+        close_series = df['close'].iloc[:, 0] if isinstance(df['close'], pd.DataFrame) else df['close']
+        _sma_50_series = SMAIndicator(close=close_series, window=50).sma_indicator()
+        _sma_200_series = SMAIndicator(close=close_series, window=200).sma_indicator()
+        
+        sma_50 = safe_scalar(_sma_50_series.iloc[-1])
+        sma_50_prev = safe_scalar(_sma_50_series.iloc[-2])
+        sma_200 = safe_scalar(_sma_200_series.iloc[-1])
+        
+        # Rule: Price > SMA 50/200 AND SMA 50 must be trending up (slope > 0)
+        is_macro_bullish = (close > sma_50) and (close > sma_200)
+        is_slope_up = sma_50 > sma_50_prev
+        
+        if not (is_macro_bullish and is_slope_up):
+            reason = "Below SMAs" if not is_macro_bullish else "SMA 50 Slope Down"
+            return {"match": False, "reason": f"Fails Trend Filter ({reason})"}
+            
+        reasons.append({"text": "Strong Uptrend (SMA 50 Slope +)", "type": "positive", "label": "TREND", "value": "BULLISH"})
+
+        # 2. Adaptive Support Zones (Wider: EMA20 ±3.5%, SMA50 ±5.0%)
+        _ema_20 = EMAIndicator(close=close_series, window=20).ema_indicator().iloc[-1]
+        ema_20 = safe_scalar(_ema_20)
+        
+        ema_20_bounce = (ema_20 * 0.965) <= close <= (ema_20 * 1.035)
+        sma_50_bounce = (sma_50 * 0.95) <= close <= (sma_50 * 1.05)
+        
+        if not (ema_20_bounce or sma_50_bounce):
+            return {"match": False, "reason": "Outside Support Zones (EMA20 3.5% / SMA50 5%)"}
+            
+        bounce_target = "EMA 20" if ema_20_bounce else "SMA 50"
+        reasons.append({"text": f"Support Bounce ({bounce_target})", "type": "positive", "label": "ZONE", "value": bounce_target})
+
+        # 3. Market-Adaptive Candle Confirmation
+        # Hard Rule: Close must be in top 30% of range
+        c_h = safe_scalar(latest['high'])
+        c_l = safe_scalar(latest['low'])
+        c_o = safe_scalar(latest['open'])
+        c_c = close
+        
+        c_range = c_h - c_l
+        if c_range > 0:
+            close_pos = (c_c - c_l) / c_range
+            if close_pos < 0.7: # Not in top 30%
+                return {"match": False, "reason": f"Weak Close ({round(close_pos*100)}% of range)"}
+        
+        # Pattern Detection
+        body = abs(c_c - c_o)
+        body_pct = (body / c_o) * 100
+        l_wick = min(c_o, c_c) - c_l
+        u_wick = c_h - max(c_o, c_c)
+        
+        is_pin = (l_wick >= (1.5 * body)) and (u_wick <= body)
+        is_engulfing = (c_c > c_o) and (safe_scalar(prev['close']) < safe_scalar(prev['open'])) and (c_c >= safe_scalar(prev['open'])) and (c_o <= safe_scalar(prev['close']))
+        is_strong_bull = (c_c > c_o) and (body_pct > 1.0)
+        
+        # Inside Bar Breakout
+        is_inside_break = False
+        if len(df) >= 3:
+            p2 = df.iloc[-2]
+            p3 = df.iloc[-3]
+            was_inside = (safe_scalar(p2['high']) < safe_scalar(p3['high'])) and (safe_scalar(p2['low']) > safe_scalar(p3['low']))
+            is_inside_break = was_inside and (c_c > safe_scalar(p2['high']))
+            
+        # Higher Low
+        is_higher_low = False
+        if len(df) >= 3:
+            is_higher_low = c_l > safe_scalar(prev['low']) > safe_scalar(df.iloc[-3]['low'])
+
+        patterns = []
+        if is_pin: patterns.append("Pin Bar")
+        if is_engulfing: patterns.append("Engulfing")
+        if is_strong_bull: patterns.append("Strong Bullish (>1%)")
+        if is_inside_break: patterns.append("Inside Bar Breakout")
+        if is_higher_low: patterns.append("Higher Low")
+        
+        if not patterns:
+            return {"match": False, "reason": "No Bullish Candle Signal"}
+            
+        reasons.append({"text": f"Patterns: {', '.join(patterns[:2])}", "type": "positive", "label": "CANDLE", "value": "Confirmed"})
+
+        # 4. RSI Setup Mapping (30-70)
+        _rsi = RSIIndicator(close=close_series, window=14).rsi().iloc[-1]
+        rsi = safe_scalar(_rsi)
+        if not (30 <= rsi <= 70):
+            return {"match": False, "reason": f"RSI ({round(rsi,1)}) out of 30-70 range"}
+            
+        setup_type = "REVERSAL_PULLBACK" if rsi < 40 else "STANDARD_PULLBACK"
+        reasons.append({"text": f"Setup: {setup_type}", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
+
+        # 5. Volume Confirmation (1.2x OR Rising Trend)
+        _vol = df['volume']
+        vol_s = _vol.iloc[:, 0] if isinstance(_vol, pd.DataFrame) else _vol
+        vol_ma = vol_s.rolling(20).mean().iloc[-1]
+        is_vol_surge = c_c > (vol_ma * 1.2)
+        is_vol_rising = (vol_s.iloc[-1] > vol_s.iloc[-2] > vol_s.iloc[-3])
+        
+        if not (is_vol_surge or is_vol_rising):
+            return {"match": False, "reason": "No Volume Surge or Rising Trend"}
+            
+        reasons.append({"text": "Volume Health Confirmed", "type": "positive", "label": "VOLUME", "value": f"{round(safe_scalar(latest['volume'])/vol_ma, 1)}x"})
+
+        # Logistics
+        from ta.volatility import AverageTrueRange
+        _atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1]
+        atr = safe_scalar(_atr)
+        
+        sl = c_c - (atr * 1.5)
+        risk = c_c - sl
+        target = c_c + (risk * 2)
+        
+        return {
+            "match": True,
+            "strategy": "PULLBACK",
+            "setup_type": setup_type,
+            "reasons": reasons,
+            "entry": c_c,
+            "stop_loss": round(sl, 2),
+            "target": round(target, 2),
+            "risk": round(risk, 2),
+            "atr": atr,
+            "rsi": rsi,
+            "vol_ratio": safe_scalar(latest['volume'])/max(vol_ma, 1),
+            "gap_filter_passed": True,
+            "relative_strength": "OUTPERFORM",
+            "stock_20d_return": round(stock_20d_ret, 2),
+            "pullback_quality": "HEALTHY",
+            "drawdown_pct": round(drawdown_pct, 2)
+        }
+
+    @staticmethod
+    def analyze_breakout(df: pd.DataFrame, nifty_20d_ret: float = 0) -> dict:
+        """
+        Momentum Breakout Strategy: Capturing clear breaches of 20-day highs in bullish trends.
+        """
+        if df.empty or len(df) < 50:
+            return {"match": False, "reason": "Insufficient Data"}
+
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # --- Gap Risk Filter ---
+        gap_pct = ((safe_scalar(latest['open']) - safe_scalar(prev['close'])) / safe_scalar(prev['close'])) * 100
+        if gap_pct > 3 or gap_pct < -2:
+             return {"match": False, "reason": f"Gap Risk ({round(gap_pct, 1)}%)", "gap_filter_passed": False}
+             
+        c_c = safe_scalar(latest['close'])
+        
+        # --- Relative Strength Filter ---
+        stock_20d_price = safe_scalar(df['close'].iloc[-21] if len(df) >= 21 else df['close'].iloc[0])
+        stock_20d_ret = ((c_c / stock_20d_price) - 1) * 100 if stock_20d_price > 0 else 0
+        
+        if stock_20d_ret <= nifty_20d_ret:
+             return {"match": False, "reason": f"Underperforming Nifty ({round(stock_20d_ret, 1)}% vs {round(nifty_20d_ret, 1)}%)", "relative_strength": "UNDERPERFORM"}
+
+        # 1. Price Confirmation: Breakout of 20-day high
+        high_20 = safe_scalar(df['high'].iloc[-21:-1].max())
+        is_breakout = c_c > high_20
+        
+        if not is_breakout:
+            return {"match": False, "reason": f"Close ({c_c}) below 20D High ({high_20})"}
+            
+        reasons = [{"text": "Fresh 20-Day Breakout", "type": "positive", "label": "BREAKOUT", "value": "CONFIRMED"}]
+
+        # 2. RSI & Trend
+        close_series = df['close'].iloc[:, 0] if isinstance(df['close'], pd.DataFrame) else df['close']
+        rsi = safe_scalar(RSIIndicator(close=close_series, window=14).rsi().iloc[-1])
+        
+        _sma50_s = SMAIndicator(close=close_series, window=50).sma_indicator()
+        sma50 = safe_scalar(_sma50_s.iloc[-1])
+        sma50_prev = safe_scalar(_sma50_s.iloc[-2])
+        
+        if rsi < 60:
+            return {"match": False, "reason": f"Insufficient RSI Momentum ({round(rsi,1)} < 60)"}
+        if c_c < sma50 or sma50 <= sma50_prev:
+            return {"match": False, "reason": "Trend not supportive (Below SMA50 or Negative Slope)"}
+            
+        # --- Breakout Strength Validation (Range > Avg 5D Range) ---
+        current_range = safe_scalar(latest['high']) - safe_scalar(latest['low'])
+        avg_range_5d = (df['high'] - df['low']).iloc[-6:-1].mean()
+        
+        if current_range <= avg_range_5d:
+             return {"match": False, "reason": f"Low Energy Breakout (Range {round(current_range, 1)} < Avg {round(avg_range_5d, 1)})", "breakout_strength": "WEAK"}
+
+        reasons.append({"text": "Bullish Momentum Supported", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
+
+        # 3. Volume Spike
+        vol_s = df['volume'].iloc[:, 0] if isinstance(df['volume'], pd.DataFrame) else df['volume']
+        vol_ma = vol_s.rolling(20).mean().iloc[-1]
+        vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
+        
+        if vol_ratio < 1.5:
+             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.5x)"}
+
+        reasons.append({"text": "Volume Surge Verified", "type": "positive", "label": "VOLUME", "value": f"{round(vol_ratio, 1)}x"})
+
+        # 4. Candle Strength (Top 30%)
+        c_h = safe_scalar(latest['high'])
+        c_l = safe_scalar(latest['low'])
+        c_range = c_h - c_l
+        close_pos = (c_c - c_l) / c_range if c_range > 0 else 1.0
+        if close_pos < 0.7:
+            return {"match": False, "reason": "Weak Breakout Close (Profit taking in wicks)"}
+
+        # Logistics
+        from ta.volatility import AverageTrueRange
+        atr = safe_scalar(AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1])
+        sl = c_c - (atr * 1.5)
+        risk = c_c - sl
+        target_1 = c_c + (risk * 1.5) # Initial partial exit
+        
+        return {
+            "match": True,
+            "strategy": "BREAKOUT",
+            "setup_type": "MOMENTUM_BREAKOUT",
+            "reasons": reasons,
+            "entry": c_c,
+            "stop_loss": round(sl, 2),
+            "target": round(target_1, 2),
+            "risk": round(risk, 2),
+            "atr": atr,
+            "rsi": rsi,
+            "vol_ratio": vol_ratio,
+            "is_hybrid_exit": True,
+            "gap_filter_passed": True,
+            "relative_strength": "OUTPERFORM",
+            "stock_20d_return": round(stock_20d_ret, 2),
+            "breakout_strength": "STRONG",
+            "volatility_ratio": round(current_range / max(avg_range_5d, 0.1), 2)
+        }
 
     @staticmethod
     def analyze_swing(df: pd.DataFrame) -> dict:
         """
-        Executes strict boolean logic across 5 parameters.
-        Returns detailed scoring and True/False signals.
+        Backward compatible wrapper for swing engine.
+        Returns the best matching strategy based on rules.
         """
-        if df.empty or len(df) < 200:
-            return {"match": False, "reason": "Insufficient Data (Needs 200 Days)"}
-
-        latest = df.iloc[-1]
-        prev = df.iloc[-2]
-        _close = latest['close']
-        close = float(_close.iloc[0]) if hasattr(_close, 'iloc') else float(_close)
-
-        reasons = []
-
-        # 1. Macro Trend Filter (SMA 50 and SMA 200)
-        # Professional standard: Price must be above both 50 and 200 SMAs for high-probability setups.
-        _close = df['close']
-        close_series = _close.iloc[:, 0] if isinstance(_close, pd.DataFrame) else _close
-        _sma_50 = SMAIndicator(close=close_series, window=50).sma_indicator().iloc[-1]
-        _sma_200 = SMAIndicator(close=close_series, window=200).sma_indicator().iloc[-1]
+        # We will handle conflict resolution in the engine, 
+        # but for individual analysis we check both.
+        pb = SwingTechnicalAnalysis.analyze_pullback(df)
+        bo = SwingTechnicalAnalysis.analyze_breakout(df)
         
-        sma_50 = float(_sma_50.iloc[0]) if hasattr(_sma_50, 'iloc') else float(_sma_50)
-        sma_200 = float(_sma_200.iloc[0]) if hasattr(_sma_200, 'iloc') else float(_sma_200)
-        
-        is_macro_bullish = (close > sma_50) and (close > sma_200)
-        
-        if not is_macro_bullish:
-            reason = "Below 50 SMA" if close < sma_50 else "Below 200 SMA (No Stage 2 Uptrend)"
-            return {"match": False, "reason": f"Fails Macro Trend Logic ({reason})"}
-            
-        reasons.append({
-            "text": "Strong Macro Trend (Above 50/200 SMA)",
-            "type": "positive",
-            "label": "MACRO",
-            "value": f"SMA50: {round(sma_50, 2)}"
-        })
-
-        # 2. Support Zones (EMA 20 or SMA 50) - 2.5% Tolerance Bounce (Relaxed from 1.5%)
-        _ema_20 = EMAIndicator(close=close_series, window=20).ema_indicator().iloc[-1]
-        ema_20 = float(_ema_20.iloc[0]) if hasattr(_ema_20, 'iloc') else float(_ema_20)
-        
-        # Check if price is within +/- 2.5% of either support line
-        ema_20_bounce = (ema_20 * 0.975) <= close <= (ema_20 * 1.025)
-        sma_50_bounce = (sma_50 * 0.975) <= close <= (sma_50 * 1.025)
-        
-        is_support_bounce = ema_20_bounce or sma_50_bounce
-        
-        if not is_support_bounce:
-            return {"match": False, "reason": "Not in Support Bounce Zone (2.5% Tolerance)"}
-            
-        bounce_target = "EMA 20" if ema_20_bounce else "SMA 50"
-        bounce_val = ema_20 if ema_20_bounce else sma_50
-        reasons.append({
-            "text": f"Bouncing off {bounce_target}",
-            "type": "positive",
-            "label": "SUPPORT",
-            "value": f"{bounce_target}: {round(bounce_val, 2)}"
-        })
-
-        # 2b. Candlestick Confirmation (Hammer, Pin Bar, or Bullish Engulfing)
-        # Check LATEST and PREVIOUS for confirmation (Double window)
-        def detect_bullish_pattern(candle, previous):
-            # Extract scalars safely
-            c_c = candle['close']
-            c_o = candle['open']
-            c_h = candle['high']
-            c_l = candle['low']
-            p_c = previous['close']
-            p_o = previous['open']
-            
-            c_close = float(c_c.iloc[0]) if hasattr(c_c, 'iloc') else float(c_c)
-            c_open = float(c_o.iloc[0]) if hasattr(c_o, 'iloc') else float(c_o)
-            c_high = float(c_h.iloc[0]) if hasattr(c_h, 'iloc') else float(c_h)
-            c_low = float(c_l.iloc[0]) if hasattr(c_l, 'iloc') else float(c_l)
-            
-            p_close = float(p_c.iloc[0]) if hasattr(p_c, 'iloc') else float(p_c)
-            p_open = float(p_o.iloc[0]) if hasattr(p_o, 'iloc') else float(p_o)
-            
-            body = abs(c_close - c_open)
-            l_wick = c_open - c_low if c_close > c_open else c_close - c_low
-            u_wick = c_high - c_close if c_close > c_open else c_high - c_open
-            
-            # Hammer / Pin Bar: Long lower wick (>= 1.5x body), small upper wick
-            is_pin = (l_wick >= (1.5 * body)) and (u_wick <= body) and (body >= 0)
-            
-            # Bullish Engulfing
-            is_green = c_close > c_open
-            prev_red = p_close < p_open
-            is_engulfing = is_green and prev_red and (c_open <= p_close) and (c_close >= p_open)
-            
-            return "Hammer/Pin Bar" if is_pin else "Bullish Engulfing" if is_engulfing else None
-
-        # Check Latest
-        pattern = detect_bullish_pattern(latest, prev)
-        # Check Previous (Shifted)
-        if not pattern and len(df) >= 3:
-             pattern = detect_bullish_pattern(prev, df.iloc[-3])
-        
-        if not pattern:
-            return {"match": False, "reason": "No Bullish Candle Confirmation (Hammer/Pin/Engulfing)"}
-            
-        reasons.append({
-            "text": pattern,
-            "type": "positive",
-            "label": "CANDLE",
-            "value": "Confirmed"
-        })
-
-        # 3. Momentum Base (RSI 35-65) - Widened from 38-62 based on feedback
-        _rsi_14 = RSIIndicator(close=close_series, window=14).rsi().iloc[-1]
-        rsi_14 = float(_rsi_14.iloc[0]) if hasattr(_rsi_14, 'iloc') else float(_rsi_14)
-        is_rsi_valid = 35 <= rsi_14 <= 65
-        
-        if not is_rsi_valid:
-            return {"match": False, "reason": f"RSI ({round(rsi_14, 1)}) outside 35-65 base"}
-            
-        reasons.append({
-            "text": "RSI building momentum",
-            "type": "positive",
-            "label": "RSI",
-            "value": round(rsi_14, 1)
-        })
-
-        # 4. Volume Confirmation (Current Vol > 1.2x 20 Vol MA) - Strict Surge based on feedback
-        _vol = df['volume']
-        vol_series = _vol.iloc[:, 0] if isinstance(_vol, pd.DataFrame) else _vol
-        vol_ma_20 = vol_series.rolling(20).mean().iloc[-1]
-        _l_vol = latest['volume']
-        l_vol_val = float(_l_vol.iloc[0]) if hasattr(_l_vol, 'iloc') else float(_l_vol)
-        is_vol_confirmed = l_vol_val > (vol_ma_20 * 1.2)
-        
-        if not is_vol_confirmed:
-            return {"match": False, "reason": "No Institutional Volume Surge (> 1.2x)"}
-            
-        vol_ratio = l_vol_val / vol_ma_20 if vol_ma_20 > 0 else 1
-        reasons.append({
-            "text": "Volume Surge",
-            "type": "positive",
-            "label": "VOLUME",
-            "value": f"{round(vol_ratio, 2)}x Avg"
-        })
-
-        # Phase B & C: Calculate Trading Logistics (Stop, Target, Entry)
-        from ta.volatility import AverageTrueRange
-        
-        # 1. Calculate 14-day ATR for dynamic Stop Loss
-        _high = df['high']
-        _low = df['low']
-        high_series = _high.iloc[:, 0] if isinstance(_high, pd.DataFrame) else _high
-        low_series = _low.iloc[:, 0] if isinstance(_low, pd.DataFrame) else _low
-        _atr_14 = AverageTrueRange(high=high_series, low=low_series, close=close_series, window=14).average_true_range().iloc[-1]
-        atr_14 = float(_atr_14.iloc[0]) if hasattr(_atr_14, 'iloc') else float(_atr_14)
-        
-        # Stop Loss = Entry Price - (Daily ATR value * 1.5)
-        stop_loss = close - (atr_14 * 1.5)
-        
-        # Primary Target (1:2 Risk/Reward)
-        risk = close - stop_loss
-        target = close + (risk * 2)
-        
-        # Secondary Target: Recent Swing High (Max high of the last 15 days, shifted back by 1 day to exclude current bounce)
-        _recent_high = df['high'].shift(1).rolling(15).max().iloc[-1]
-        recent_high = float(_recent_high.iloc[0]) if hasattr(_recent_high, 'iloc') else float(_recent_high)
-        
-        # Add a reason for clear UI tracking
-        reasons.append({
-            "text": "Targets & Stops",
-            "type": "neutral",
-            "label": "PLAN",
-            "value": f"Risk: ₹{round(risk, 2)}"
-        })
-
-        return {
-            "match": True,
-            "reasons": reasons,
-            "entry": close,
-            "stop_loss": round(stop_loss, 2),
-            "target": round(target, 2),
-            "secondary_target": round(recent_high, 2) if not np.isnan(recent_high) else None,
-            "hold_duration": "2 to 21 Days (Time Stop: 10-14 days sideways)"
-        }
+        # If both match, we will prefer breakout in strong markets (handled by engine)
+        # Default here: prioritize the successful match
+        if bo["match"]: return bo
+        return pb
 
 ta_swing = SwingTechnicalAnalysis()

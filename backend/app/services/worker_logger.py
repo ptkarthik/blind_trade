@@ -52,6 +52,20 @@ class WorkerLogger:
         except UnicodeEncodeError:
             print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] {msg.encode('ascii', 'ignore').decode('ascii')}", flush=True)
 
+    def warning(self, msg):
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        log_line = f"[{timestamp}] [WARNING] {msg}"
+        self.logs.append(log_line)
+
+        # 1. System Rotation Log
+        system_logger.warning(f"[{self.worker_type.upper()}] [ID-{self.worker_id}] {msg}")
+
+        # 2. Stdout
+        try:
+            print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] ⚠️ {msg}", flush=True)
+        except UnicodeEncodeError:
+            print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] WARN: {msg.encode('ascii', 'ignore').decode('ascii')}", flush=True)
+
     def error(self, msg):
         timestamp = datetime.now().strftime('%H:%M:%S')
         log_line = f"[{timestamp}] [ERROR] {msg}"

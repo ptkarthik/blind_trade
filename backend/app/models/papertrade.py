@@ -29,6 +29,7 @@ class PaperTrade(Base):
     score_at_buy = Column(Float, nullable=True)
     order_type = Column(String, default="MARKET") # MARKET, LIMIT
     product_type = Column(String, default="MIS") # MIS, CNC
+    close_reason = Column(String, nullable=True) # SL, TARGET, EOD, MANUAL
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

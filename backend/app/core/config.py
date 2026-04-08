@@ -72,6 +72,10 @@ class Settings(BaseSettings):
 
     class Config:
         case_sensitive = True
-        env_file = ".env"
+        # Phase 102: Absolute path to ensure .env is found regardless of CWD (Root vs Backend)
+        import os
+        current_file = os.path.abspath(__file__)
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(current_file))), ".env")
+        env_file = env_path
 
 settings = Settings()

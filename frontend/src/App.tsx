@@ -384,26 +384,21 @@ function App() {
               return (
                 <button
                   onClick={async () => {
-                    const scanLabel = mode === 'intraday' ? "Intraday Analysis" : mode === 'swing' ? "Swing Scan" : "Full Market Scan";
                     const scanType = mode === 'intraday' ? "intraday" : mode === 'swing' ? "swing_scan" : "full_scan";
 
                     if (isManualActive) {
-                      alert(`A manual ${scanLabel} is already in progress. Please wait for it to complete.`);
+                      alert(`A manual scan is already in progress. Please wait.`);
                       return;
                     }
 
-                    const confirmMsg = activeJob?.trigger_source === 'auto' && ['pending', 'processing'].includes(activeJob.status)
-                      ? `A background ${scanLabel} is currently running. Start a manual run to override it?`
-                      : `Start ${scanLabel}? This runs in background.`;
-
-                    if (confirm(confirmMsg)) {
-                      try {
-                        setSignals([]);
-                        setSectorSignals({});
-                        localStorage.removeItem(`signals_v2_${mode}`);
-                        localStorage.removeItem(`sector_v2_${mode}`);
-                        await jobsApi.triggerScan(scanType);
-                      } catch (e) { alert("Failed to start scan"); }
+                    try {
+                      setSignals([]);
+                      setSectorSignals({});
+                      localStorage.removeItem(`signals_v2_${mode}`);
+                      localStorage.removeItem(`sector_v2_${mode}`);
+                      await jobsApi.triggerScan(scanType);
+                    } catch (e) { 
+                      alert("Failed to start scan"); 
                     }
                   }}
                   className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"

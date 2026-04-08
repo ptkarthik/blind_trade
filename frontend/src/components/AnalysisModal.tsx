@@ -146,31 +146,90 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                     </div>
                                 </div>
 
-                                {/* --- SCORE IMPACT ANALYSIS (NEW: Specialist Transparency) --- */}
+                                {/* --- SCORE IMPACT ANALYSIS (GROUPED LAYERS) --- */}
                                 {safeReasons.some((r: any) => r.impact) && (
-                                    <div className="w-full max-w-xl bg-slate-50 border border-slate-200 rounded-3xl p-5 shadow-sm">
-                                        <div className="flex items-center justify-between mb-4">
-                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Score Impact Analysis</h4>
+                                    <div className="w-full max-w-xl bg-slate-50 border border-slate-200 rounded-3xl p-6 shadow-sm">
+                                        <div className="flex items-center justify-between mb-6">
+                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Layered Conviction Analysis</h4>
                                             <div className="flex items-center gap-1">
-                                                <div className="h-1 w-8 bg-emerald-400 rounded-full" />
-                                                <div className="h-1 w-8 bg-red-400 rounded-full" />
+                                                <Sparkles className="h-3 w-3 text-amber-500" />
+                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Multi-Engine Audit</span>
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            {safeReasons.filter((r: any) => r.impact).map((reason: any, idx: number) => (
-                                                <div key={idx} className={`flex items-center justify-between p-3 rounded-2xl border ${reason.impact > 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[10px] font-black opacity-40 uppercase">{reason.label}</span>
-                                                        <span className="text-xs font-bold text-slate-700">{reason.text}</span>
+
+                                        <div className="space-y-8">
+                                            {/* Layer 1: Technical Foundation */}
+                                            {safeReasons.some((r: any) => r.layer === 1) && (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <div className="h-3 w-1 bg-blue-500 rounded-full" />
+                                                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">LAYER 1: Technical Foundation (Max 40pts)</span>
                                                     </div>
-                                                    <div className={`text-sm font-black ${reason.impact > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                        {reason.impact > 0 ? `+${reason.impact}` : reason.impact}
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                        {safeReasons.filter((r: any) => r.layer === 1).map((reason: any, idx: number) => (
+                                                            <div key={`l1-${idx}`} className={`flex items-center justify-between p-3 rounded-2xl border bg-white shadow-sm transition-all hover:scale-[1.02] ${reason.impact > 0 ? 'border-blue-100' : 'border-red-100'}`}>
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-[9px] font-black opacity-40 uppercase tracking-tight">{reason.label || 'Indicator'}</span>
+                                                                    <span className="text-[11px] font-bold text-slate-700 leading-tight">{reason.text}</span>
+                                                                </div>
+                                                                <div className={`text-xs font-black px-2 py-1 rounded-lg bg-slate-50 ${reason.impact > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                                                                    {reason.impact > 0 ? `+${reason.impact}` : reason.impact}
+                                                                </div>
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 </div>
-                                            ))}
+                                            )}
+
+                                            {/* Layer 2: Institutional Edge */}
+                                            {safeReasons.some((r: any) => r.layer === 2) && (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <div className="h-3 w-1 bg-purple-500 rounded-full" />
+                                                        <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest">LAYER 2: Institutional Alpha Edge (Max 60pts)</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                        {safeReasons.filter((r: any) => r.layer === 2).map((reason: any, idx: number) => (
+                                                            <div key={`l2-${idx}`} className="flex items-center justify-between p-3 rounded-2xl border border-purple-100 bg-purple-50/30 shadow-sm transition-all hover:scale-[1.02]">
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-[9px] font-black text-purple-400 uppercase tracking-tight">{reason.label || 'Alpha'}</span>
+                                                                    <span className="text-[11px] font-bold text-slate-700 leading-tight">{reason.text}</span>
+                                                                </div>
+                                                                <div className="text-xs font-black px-2 py-1 rounded-lg bg-white text-purple-600 shadow-sm">
+                                                                    +{reason.impact}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Layer 3: Engine Safeguards */}
+                                            {safeReasons.some((r: any) => r.layer === 3) && (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <div className="h-3 w-1 bg-red-500 rounded-full" />
+                                                        <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">ENGINE SAFEGUARDS (Penalties)</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                        {safeReasons.filter((r: any) => r.layer === 3).map((reason: any, idx: number) => (
+                                                            <div key={`l3-${idx}`} className="flex items-center justify-between p-3 rounded-2xl border border-red-100 bg-red-50/50 transition-all hover:bg-red-50">
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-[9px] font-black text-red-400 uppercase tracking-tight">{reason.label || 'Alert'}</span>
+                                                                    <span className="text-[11px] font-bold text-red-900 leading-tight">{reason.text}</span>
+                                                                </div>
+                                                                <div className="text-xs font-black text-red-600">
+                                                                    {reason.impact}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
-                                        <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] italic text-slate-400 text-center">
-                                            *Impact values are relative weighted points based on Specialist Logic
+
+                                        <div className="mt-6 pt-4 border-t border-slate-200 text-[10px] italic text-slate-400 text-center leading-relaxed">
+                                            *Final Conviction Score = Foundation + Alpha Edge - Safeguards (Capped @ 100)
                                         </div>
                                     </div>
                                 )}

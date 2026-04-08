@@ -35,11 +35,6 @@
         "raw_symbol": "5PAISA"
     },
     {
-        "symbol": "5PAISA-RE.NS",
-        "name": "5Paisa Capital Limited-RE",
-        "raw_symbol": "5PAISA-RE"
-    },
-    {
         "symbol": "63MOONS.NS",
         "name": "63 moons technologies limited",
         "raw_symbol": "63MOONS"
@@ -405,6 +400,11 @@
         "raw_symbol": "AHLUCONT"
     },
     {
+        "symbol": "AHLWEST.NS",
+        "name": "Asian Hotels (West) Limited",
+        "raw_symbol": "AHLWEST"
+    },
+    {
         "symbol": "AIAENG.NS",
         "name": "AIA Engineering Limited",
         "raw_symbol": "AIAENG"
@@ -598,6 +598,11 @@
         "symbol": "AMDIND.NS",
         "name": "AMD Industries Limited",
         "raw_symbol": "AMDIND"
+    },
+    {
+        "symbol": "AMIRCHAND.NS",
+        "name": "Amir Chand Jagdish Kumar (Exports) Limited",
+        "raw_symbol": "AMIRCHAND"
     },
     {
         "symbol": "AMJLAND.NS",
@@ -3073,11 +3078,6 @@
         "symbol": "EVERESTIND.NS",
         "name": "Everest Industries Limited",
         "raw_symbol": "EVERESTIND"
-    },
-    {
-        "symbol": "EXCEL.NS",
-        "name": "Excel Realty N Infra Limited",
-        "raw_symbol": "EXCEL"
     },
     {
         "symbol": "EXCELINDUS.NS",
@@ -5605,6 +5605,11 @@
         "raw_symbol": "LANDMARK"
     },
     {
+        "symbol": "LANDSMILL.NS",
+        "name": "Landsmill Green Limited",
+        "raw_symbol": "LANDSMILL"
+    },
+    {
         "symbol": "LAOPALA.NS",
         "name": "La Opala RG Limited",
         "raw_symbol": "LAOPALA"
@@ -6845,6 +6850,11 @@
         "raw_symbol": "NILKAMAL"
     },
     {
+        "symbol": "NIMBSPROJ.NS",
+        "name": "Nimbus Projects Limited",
+        "raw_symbol": "NIMBSPROJ"
+    },
+    {
         "symbol": "NINSYS.NS",
         "name": "NINtec Systems Limited",
         "raw_symbol": "NINSYS"
@@ -7593,6 +7603,11 @@
         "symbol": "POWERGRID.NS",
         "name": "Power Grid Corporation of India Limited",
         "raw_symbol": "POWERGRID"
+    },
+    {
+        "symbol": "POWERICA.NS",
+        "name": "Powerica Limited",
+        "raw_symbol": "POWERICA"
     },
     {
         "symbol": "POWERINDIA.NS",
@@ -8450,6 +8465,11 @@
         "raw_symbol": "SAILIFE"
     },
     {
+        "symbol": "SAIPARENT.NS",
+        "name": "Sai Parenterals Limited",
+        "raw_symbol": "SAIPARENT"
+    },
+    {
         "symbol": "SAKAR.NS",
         "name": "Sakar Healthcare Limited",
         "raw_symbol": "SAKAR"
@@ -8538,11 +8558,6 @@
         "symbol": "SANGAMIND.NS",
         "name": "Sangam (India) Limited",
         "raw_symbol": "SANGAMIND"
-    },
-    {
-        "symbol": "SANGHIIND.NS",
-        "name": "Sanghi Industries Limited",
-        "raw_symbol": "SANGHIIND"
     },
     {
         "symbol": "SANGHVIMOV.NS",
@@ -10038,11 +10053,6 @@
         "symbol": "TIL.NS",
         "name": "TIL Limited",
         "raw_symbol": "TIL"
-    },
-    {
-        "symbol": "TIL-RE1.NS",
-        "name": "TIL Limited-RE",
-        "raw_symbol": "TIL-RE1"
     },
     {
         "symbol": "TIMETECHNO.NS",

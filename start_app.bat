@@ -15,6 +15,11 @@ taskkill /F /IM uvicorn.exe /T >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Blind Trade*" /IM cmd.exe >nul 2>&1
 echo   - Success.
 
+:: New: Clean Database Ghosts
+echo.
+echo [0.5/4] Cleaning Database Ghosts...
+python reset_db.py
+
 :: 3. Start Backend API
 echo.
 echo [1/4] Starting Backend Server (API)...

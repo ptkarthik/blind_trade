@@ -34,6 +34,7 @@ from app.services.intraday_engine import intraday_engine as intra_scanner
 from app.services.swing_engine import swing_engine as swing_scanner
 from app.services.worker_logger import get_worker_logger
 from app.utils.worker_lock import WorkerLock
+from app.services.paper_monitor import paper_monitor
 
 
 # Worker Mode Configuration
@@ -177,14 +178,20 @@ async def worker_loop():
 
         log("👷 Worker Ready. Waiting for Jobs...")
         
-        # Track running tasks
         active_tasks = set()
-        MAX_CONCURRENT_JOBS = 3
+        MAX_CONCURRENT_JOBS = 6 # Increased from 3 to allow concurrent scans
 
         last_heartbeat = 0
+        last_paper_check = 0
         while True:
             try:
                 now = time.time()
+                
+                # Check Paper Trades every 30 seconds (Phase 102: Automated Monitoring)
+                if now - last_paper_check > 30:
+                    await paper_monitor.check_trades()
+                    last_paper_check = now
+
                 if now - last_heartbeat > 30:
                     log(f"💓 Worker Heartbeat (Type: {WORKER_TYPE}, Id: {WORKER_ID})")
                     last_heartbeat = now
@@ -217,6 +224,16 @@ async def worker_loop():
                             await session.commit()
                             
                             # 2. Stop the local engine task
+                            if job.type == "intraday":
+                                 await intra_scanner.stop_job(job.id)
+                            elif job.type == "swing_scan":
+                                 await swing_scanner.stop_job(job.id)
+                            else:
+                                 await longterm_scanner.stop_job(job.id)
+                        
+                        # Phase 105: Manual STOP Check Detection
+                        if job.status == "stopped":
+                            log(f"🛑 [STOP] Job {job.id} marked as STOPPED in DB. Terminating...")
                             if job.type == "intraday":
                                  await intra_scanner.stop_job(job.id)
                             elif job.type == "swing_scan":
@@ -271,16 +288,16 @@ async def process_job_task(job_id, job_type):
     Wrapper to execute the scan and update DB status.
     Runs concurrently with WorkerLogger and SFTP upload.
     """
-    logger = get_worker_logger(job_id, WORKER_ID, WORKER_TYPE)
+    logger = get_worker_logger(job_id, WORKER_ID, job_type)
     logger.info(f"🚀 Starting Task for Job {job_id} [{job_type}]")
     
     try:
         if job_type == "intraday":
                 data = await intra_scanner.run_scan(job_id, logger=logger)
         elif job_type == "swing_scan":
-                data = await swing_scanner.run_scan(job_id)
+                data = await swing_scanner.run_scan(job_id, logger=logger)
         else:
-                data = await longterm_scanner.run_scan(job_id, mode=job_type)
+                data = await longterm_scanner.run_scan(job_id, mode=job_type, logger=logger)
         
         # Mark Complete
         async with AsyncSessionLocal() as session:
@@ -356,6 +373,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Worker Stopped.")
     finally:
-        # Ensure lock is released even on crash/exit
-        if 'lock' in locals():
-            lock.release()
+        pass

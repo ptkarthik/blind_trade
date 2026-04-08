@@ -1,0 +1,9 @@
+--- API DEBUG TEST (Port 8011) ---
+Testing: http://localhost:8011/api/v1/signals/today_debug?mode=swing
+  ERROR: HTTPConnectionPool(host='localhost', port=8011): Max retries exceeded with url: /api/v1/signals/today_debug?mode=swing (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8011): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+Testing: http://localhost:8011/api/v1/signals/today_debug?mode=intraday
+  ERROR: HTTPConnectionPool(host='localhost', port=8011): Max retries exceeded with url: /api/v1/signals/today_debug?mode=intraday (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8011): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+Testing: http://localhost:8011/api/v1/signals/sectors_debug?mode=swing
+  ERROR: HTTPConnectionPool(host='localhost', port=8011): Max retries exceeded with url: /api/v1/signals/sectors_debug?mode=swing (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8011): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+Testing: http://localhost:8011/api/v1/signals/sectors_debug?mode=intraday
+  ERROR: HTTPConnectionPool(host='localhost', port=8011): Max retries exceeded with url: /api/v1/signals/sectors_debug?mode=intraday (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8011): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))

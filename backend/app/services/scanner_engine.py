@@ -258,10 +258,11 @@ class LongTermScannerEngine:
             hist_financials = secondary_results[2] if not isinstance(secondary_results[2], Exception) else pd.DataFrame()
             
             _l_close = df['close'].iloc[-1]
-            real_price = float(_l_close.iloc[0]) if hasattr(_l_close, 'iloc') else float(_l_close)
+            real_price = safe_scalar(_l_close)
             
             # Robust Check for NaN/None
             import numpy as np
+            
             is_valid_price = real_price is not None and not (isinstance(real_price, float) and np.isnan(real_price)) and real_price > 0
             is_valid_df = not df.empty and len(df) > 20
             

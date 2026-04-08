@@ -45,6 +45,7 @@ export const papertradeApi = {
     getAccount: () => api.get('/papertrades/account'),
     placeOrder: (data: any) => api.post('/papertrades/buy', data),
     getTrades: () => api.get('/papertrades/trades'),
+    getDailyHistory: () => api.get('/papertrades/history/daily'),
     closeTrade: (tradeId: string) => api.patch(`/papertrades/close/${tradeId}`),
     resetAccount: () => api.post('/papertrades/reset_account'),
 };
