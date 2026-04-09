@@ -1904,8 +1904,10 @@ class IntradayTechnicalAnalysis:
             rvol_score = min(30, rvol_score)
         
         # 3. EMA 9 & 20 (10% weight in engine)
-        ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
-        ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+        ema_9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
+        ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+        ema_9 = ema_9_series.iloc[-1]
+        ema_20 = ema_20_series.iloc[-1]
         ema_score = 0
         ema_status = "Bearish"
         if ema_9 > ema_20 and close > ema_9:
@@ -2099,7 +2101,9 @@ class IntradayTechnicalAnalysis:
             "sweep": sweep,
             "poc_bounce": poc_bounce,
             "ema9": safe_scalar(ema_9),
+            "ema9_prev": safe_scalar(ema_9_series.iloc[-2] if len(ema_9_series) > 1 else ema_9),
             "ema20": safe_scalar(ema_20),
+            "ema20_prev": safe_scalar(ema_20_series.iloc[-2] if len(ema_20_series) > 1 else ema_20),
             "pa_score": pa_score,
             "adx_score": adx_ctx["score"],
             "vwap_score": vwap_score,

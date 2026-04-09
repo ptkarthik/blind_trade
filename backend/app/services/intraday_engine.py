@@ -42,7 +42,13 @@ class IntradayEngine:
             "enable_time_decay": True,
             "enable_mtf_bonus": True,
             "enable_dna_gate": True,
-            "enable_pa_scaling": True
+            "enable_pa_scaling": True,
+            "enable_momentum_leader": True,
+            "enable_extended_structure": True,
+            "enable_dynamic_dna": True,
+            "debug_dna_mode": True,
+            "enable_dynamic_alpha": True,
+            "debug_alpha_mode": True
         }
 
     async def _get_index_context(self):
@@ -123,17 +129,65 @@ class IntradayEngine:
             micro = ta_intraday.detect_micro_trend(df_15m)
             
             reasons = []
-            
-            # --- LAYER 1: DNA (MAX 40.0 PTS) ---
+            mtf_impact = 0.0
+            timing_impact = 0.0
+            # --- LAYER 1: DNA (MAX 40.0 pts) ---
+            # Data Extraction for Dynamic Logic
+            vwap_val = ta_15m.get("vwap_val", 0)
+            vol_ratio = ta_15m.get("rvol_val", 1.0)
+
+            # NEW LOGIC START: DNA Mode Detection (Auto Switching)
+            dna_mode = "STRICT"
+            l1_scale = 1.0
+            if self.SCORING_FLAGS.get("enable_dynamic_dna"):
+                distance_from_vwap = abs(real_price - vwap_val) / vwap_val if vwap_val > 0 else 0
+                
+                # Fetch 15m EMA20 Slope
+                ema20_series = ta_intraday.EMAIndicator(close=df_15m['close'], window=20).ema_indicator()
+                ema20_15m = ema20_series.iloc[-1]
+                ema20_15m_prev = ema20_series.iloc[-2]
+                ema20_slope_15m = ema20_15m - ema20_15m_prev
+                
+                is_trending_dna = (
+                    real_price > ema20_15m and 
+                    ema20_slope_15m > 0 and 
+                    vol_ratio > 2.0
+                )
+                
+                if is_trending_dna and distance_from_vwap > 0.01:
+                    dna_mode = "RELAXED"
+                    l1_scale = 0.7
+                
+                # Safety Fallback
+                if dna_mode == "RELAXED" and vol_ratio < 1.5:
+                    dna_mode = "STRICT"
+                    l1_scale = 1.0
+            # NEW LOGIC END
+
             # VWAP Alignment (12.0)
             vw_score = ta_15m.get("vwap_score", 0)
-            vw_impact = round((vw_score * 0.35) * 0.40, 1) # [V12.7 BOOST] Max 14.0
-            reasons.append({"text": "VWAP Alignment", "type": "positive" if vw_score > 55 else "negative", "impact": vw_impact, "layer": 1})
+            vw_impact = round((max(vw_score - 40, 0) * 0.233), 1) # [V12.7 CONSISTENCY] Max 14.0
+            
+            # NEW LOGIC START: VWAP Relaxation
+            if self.SCORING_FLAGS.get("enable_dynamic_dna") and dna_mode == "RELAXED":
+                vw_impact *= 0.6
+            # NEW LOGIC END
+            
+            # Apply L1 Scaling
+            vw_impact *= l1_scale
+            
+            reasons.append({
+                "text": "VWAP Alignment" if vw_impact > 0 else "Weak VWAP Alignment", 
+                "type": "positive" if vw_impact > 0 else "negative", 
+                "impact": vw_impact, 
+                "layer": 1
+            })
             
             # ADX Momentum (10.0)
             adx_score = ta_15m.get("adx_score", 0)
             adx_bias = ta_15m.get("bias", "Neutral")
-            adx_impact = round((adx_score * 0.30) * 0.40, 1) # [V12.7 BOOST] Max 12.0
+            adx_impact = round((max(adx_score - 25, 0) * 0.16), 1) # [V12.7 CONSISTENCY] Max 12.0
+            adx_impact *= l1_scale
             
             # [V12.7] ADX Direction Validation
             if self.SCORING_FLAGS["enable_adx_di_validation"]:
@@ -149,11 +203,26 @@ class IntradayEngine:
                     })
                 # FIX END
                 elif adx_bias == "Bullish":
-                    reasons.append({"text": "ADX Momentum Audit (Bullish DI)", "type": "positive", "impact": adx_impact, "layer": 1})
+                    reasons.append({
+                        "text": "ADX Momentum Audit (Bullish DI)" if adx_impact > 0 else "Weak ADX Momentum", 
+                        "type": "positive" if adx_impact > 0 else "negative", 
+                        "impact": adx_impact, 
+                        "layer": 1
+                    })
                 else:
-                    reasons.append({"text": "ADX Momentum Audit", "type": "neutral", "impact": adx_impact, "layer": 1})
+                    reasons.append({
+                        "text": "ADX Momentum Audit" if adx_impact > 0 else "Weak ADX Momentum", 
+                        "type": "positive" if adx_impact > 0 else "negative", 
+                        "impact": adx_impact, 
+                        "layer": 1
+                    })
             else:
-                reasons.append({"text": "ADX Momentum Audit", "type": "positive" if adx_score > 25 else "negative", "impact": adx_impact, "layer": 1})
+                reasons.append({
+                    "text": "ADX Momentum Audit" if adx_impact > 0 else "Weak ADX Momentum", 
+                    "type": "positive" if adx_impact > 0 else "negative", 
+                    "impact": adx_impact, 
+                    "layer": 1
+                })
             
             # Price Action (10.0)
             pa_score = ta_15m.get("pa_score", 0)
@@ -166,6 +235,8 @@ class IntradayEngine:
                 else:
                     pa_impact = 0
             
+            pa_impact *= l1_scale
+            
             if pa_impact > 0:
                 reasons.append({"text": "Price Action Validity", "type": "positive", "impact": pa_impact, "layer": 1})
             else:
@@ -173,15 +244,13 @@ class IntradayEngine:
             # NEW LOGIC END
             
             # Volume DNA (8.0)
-            vol_ratio = ta_15m.get("rvol_val", 1.0)
             vol_impact = round((min(vol_ratio, 4.0) * 10 * 0.20) * 0.40, 1) # Max 8.0
+            vol_impact *= l1_scale
             reasons.append({"text": "Volume DNA Cluster", "type": "positive" if vol_ratio > 1.2 else "negative", "impact": vol_impact, "layer": 1})
 
             # --- V12.7 Smooth Weighting Redux ---
             v6_elite_score = 45.0 if self.SCORING_FLAGS["enable_smooth_alpha"] else 60.0
             v45_pb_score = 25.0 if self.SCORING_FLAGS["enable_smooth_alpha"] else 30.0
-
-            vwap_val = ta_15m.get("vwap_val", 0)
             
             # [V12.7] VWAP Precision Proximity
             vwap_threshold = 0.01 # Standard 1%
@@ -189,28 +258,106 @@ class IntradayEngine:
                 liq = liquidity_service.get_liquidity(sym)
                 liq_level = liq.get("level")
                 if liq_level == "High": vwap_threshold = 0.005 # Large Cap: 0.5%
-                elif liq_level: vwap_threshold = 0.008 # Mid/Small: 0.8%
+                elif liq_level: vwap_threshold = 0.012 # Mid/Small: 1.2% (RECALIBRATED)
 
             # FIX START: VWAP Division Safety (Ensures division by zero protection)
             vwap_hook = abs(real_price - vwap_val) / vwap_val < vwap_threshold if vwap_val > 0 else False
             # FIX END
             ignition = vol_ratio > 1.5 
-            is_hh_hl = micro.get("hh_hl", False)
-            
-            pioneer_bonus = 0
-            if vwap_hook and ignition and is_hh_hl:
-                pioneer_bonus = v6_elite_score
-                reasons.append({"text": "Pioneer V6 ELITE Setup", "type": "positive", "label": "V6-ELITE", "impact": pioneer_bonus, "layer": 2})
-            elif vwap_hook and is_hh_hl and vol_ratio > 1.2:
-                # NEW LOGIC START: Elite-Lite (Lower ignition threshold for high-quality DNA)
-                pioneer_bonus = 20.0
-                reasons.append({"text": "Pioneer Elite-Lite Setup", "type": "positive", "label": "ELITE-L", "impact": pioneer_bonus, "layer": 2})
-            elif pb_v6.get("is_entry"):
-                pioneer_bonus = v45_pb_score
-                reasons.append({"text": "Pioneer V4.5 Pullback", "type": "positive", "label": "V4.5", "impact": pioneer_bonus, "layer": 2})
+            # NEW LOGIC START: Extended HH-HL Detection
+            if self.SCORING_FLAGS.get("enable_extended_structure"):
+                is_hh_hl_extended = False
+                if len(df_15m) >= 6:
+                    recent_highs = df_15m['high'].iloc[-6:].values
+                    recent_lows = df_15m['low'].iloc[-6:].values
+                    if all(recent_highs[i] < recent_highs[i+1] for i in range(len(recent_highs)-1)) and \
+                       all(recent_lows[i] < recent_lows[i+1] for i in range(len(recent_lows)-1)):
+                        is_hh_hl_extended = True
+                
+                # Merge with existing logic (Additive)
+                is_hh_hl = micro.get("hh_hl", False) or is_hh_hl_extended
+            else:
+                is_hh_hl = micro.get("hh_hl", False)
             # NEW LOGIC END
 
-            # [V12.7] Smooth Weighting Redistribution
+            # NEW LOGIC START: Alpha Mode Detection
+            alpha_mode = "NONE"
+            if self.SCORING_FLAGS.get("enable_dynamic_alpha"):
+                distance_from_vwap = abs(real_price - vwap_val) / vwap_val if vwap_val > 0 else 0
+                
+                ema20 = ta_15m.get("ema20", 0)
+                ema20_prev = ta_15m.get("ema20_prev", ema20)
+                ema20_slope = ema20 - ema20_prev
+
+                is_trending = (
+                    real_price > ema20 and
+                    ema20_slope > 0 and
+                    vol_ratio > 1.0 # RECALIBRATED (was 1.2)
+                )
+
+                is_pullback = pb_v6.get("is_entry")
+                is_near_vwap = distance_from_vwap < vwap_threshold
+                
+                # BUG FIX: Don't overwrite is_hh_hl calculated above at line 257
+                # is_hh_hl = micro.get("hh_hl", False) 
+
+                # PRIORITY ORDER (RECALIBRATED)
+                if is_near_vwap and is_trending and is_hh_hl:
+                    alpha_mode = "EARLY"
+                elif is_trending and distance_from_vwap > vwap_threshold and vol_ratio > 1.5: # RECALIBRATED (was 2.0)
+                    alpha_mode = "MOMENTUM"
+                elif is_pullback:
+                    alpha_mode = "PULLBACK"
+                
+                # Internal Trace (Temporary)
+                # print(f"DEBUG: {sym} | vwap:{is_near_vwap} | trend:{is_trending} | hhhl:{is_hh_hl} | vol:{vol_ratio} | mode:{alpha_mode}")
+
+                # Alpha Safety Gate: Enforce DNA Floor
+                # Note: layer1_score is calculated after L1 impacts are assigned
+                l1_temp_score = round(vw_impact + adx_impact + pa_impact + vol_impact, 1)
+                
+                # DIAGNOSTIC START: Explain why L2 is Zero
+                if alpha_mode == "NONE":
+                    if l1_temp_score < 20:
+                        reasons.append({"text": "L2: Blocked by DNA Safety Gate (L1 < 20)", "type": "neutral", "impact": 0, "layer": 2})
+                    elif not is_trending and vol_ratio < 1.2:
+                        reasons.append({"text": "L2: No Alpha Trigger (Volume Refusal)", "type": "neutral", "impact": 0, "layer": 2})
+                    elif not is_hh_hl:
+                        reasons.append({"text": "L2: No Alpha Trigger (Structure Failure)", "type": "neutral", "impact": 0, "layer": 2})
+                    else:
+                        reasons.append({"text": "L2: Searching for Optimal Entry Mode...", "type": "neutral", "impact": 0, "layer": 2})
+
+                if l1_temp_score < 20:
+                    alpha_mode = "NONE"
+                # DIAGNOSTIC END
+            # NEW LOGIC END
+
+            # Controlled Primary Trigger
+            pioneer_bonus = 0
+            if self.SCORING_FLAGS.get("enable_dynamic_alpha"):
+                if alpha_mode == "EARLY":
+                    pioneer_bonus = 45.0
+                    reasons.append({"text": "Pioneer V6 ELITE (Dynamic)", "type": "positive", "label": "V6-DYN", "impact": pioneer_bonus, "layer": 2})
+                elif alpha_mode == "MOMENTUM":
+                    pioneer_bonus = 20.0
+                    reasons.append({"text": "Momentum Leader", "type": "positive", "label": "MOM-L", "impact": pioneer_bonus, "layer": 2})
+                elif alpha_mode == "PULLBACK":
+                    pioneer_bonus = 25.0
+                    reasons.append({"text": "Pioneer V4.5 Pullback", "type": "positive", "label": "V4.5", "impact": pioneer_bonus, "layer": 2})
+            else:
+                # Fallback to existing logic (Backward Compatibility)
+                # DIAGNOSTIC START: L2 Catalyst Audit
+                if vwap_hook and ignition and is_hh_hl:
+                    pioneer_bonus = v6_elite_score
+                    reasons.append({"text": "Pioneer V6 ELITE Setup", "type": "positive", "label": "V6-ELITE", "impact": pioneer_bonus, "layer": 2})
+                elif vwap_hook and is_hh_hl and vol_ratio > 1.2:
+                    pioneer_bonus = 20.0
+                    reasons.append({"text": "Pioneer Elite-Lite Setup", "type": "positive", "label": "ELITE-L", "impact": pioneer_bonus, "layer": 2})
+                elif pb_v6.get("is_entry"):
+                    pioneer_bonus = v45_pb_score
+                    reasons.append({"text": "Pioneer V4.5 Pullback", "type": "positive", "label": "V4.5", "impact": pioneer_bonus, "layer": 2})
+            
+            # --- Secondary Boosters (Independent & Stackable) ---
             sm_weight = 5.0 if self.SCORING_FLAGS["enable_smooth_alpha"] else 3.0
             inst_weight = 5.0 if self.SCORING_FLAGS["enable_smooth_alpha"] else 2.0
             
@@ -227,11 +374,50 @@ class IntradayEngine:
                 reasons.append({"text": "Institutional Vol Spark", "type": "positive", "label": "INST", "impact": inst_vol_impact, "layer": 2})
 
             # NEW LOGIC START: Window Timing Bonus (Relocated to Layer 2 Catalyst)
-            now = datetime.now(pytz.timezone("Asia/Kolkata"))
-            curr_time = now.strftime("%H:%M")
-            is_optimal_window = ("09:25" <= curr_time <= "09:35") or ("14:25" <= curr_time <= "14:45")
-            if is_optimal_window:
-                reasons.append({"text": "TIMING: Optimal Entry Window", "type": "positive", "impact": 3.0, "layer": 2})
+            try:
+                import datetime as _dt
+                import pytz as _pytz
+                _now = _dt.datetime.now(_pytz.timezone("Asia/Kolkata"))
+                curr_time = _now.strftime("%H:%M")
+                is_optimal_window = ("09:25" <= curr_time <= "09:35") or ("14:25" <= curr_time <= "14:45")
+                if is_optimal_window:
+                    reasons.append({"text": "TIMING: Optimal Entry Window", "type": "positive", "impact": 3.0, "layer": 2})
+                    timing_impact = 3.0
+            except Exception as e:
+                # Don't let timing bonus crash the whole engine logic
+                pass
+            # NEW LOGIC END
+            
+            # NEW LOGIC START: Momentum Leader Path (LEGACY - Disabled when dynamic_alpha is ON)
+            if self.SCORING_FLAGS.get("enable_momentum_leader") and not self.SCORING_FLAGS.get("enable_dynamic_alpha"):
+                # Avoid double counting if V6/Lite already hit
+                if pioneer_bonus == 0:
+                    distance_from_vwap = abs(real_price - vwap_val) / vwap_val if vwap_val > 0 else 0
+                    
+                    # Calculate 15m EMA20 Slope
+                    ema20_series = ta_intraday.EMAIndicator(close=df_15m['close'], window=20).ema_indicator()
+                    ema20_15m = ema20_series.iloc[-1]
+                    ema20_15m_prev = ema20_series.iloc[-2]
+                    ema20_slope_15m = ema20_15m - ema20_15m_prev
+                    
+                    is_trending_momentum = (
+                        real_price > ema20_15m and 
+                        ema20_slope_15m > 0 and 
+                        vol_ratio > 2.0
+                    )
+                    
+                    # Ensure structure isn't bearish
+                    is_not_bearish = micro.get("market_structure_state", "NEUTRAL_STRUCTURE") != "BEARISH_STRUCTURE"
+                    
+                    # Rule: Must be beyond standard VWAP threshold to trigger Momentum Leader path
+                    if distance_from_vwap > vwap_threshold and is_trending_momentum and is_not_bearish:
+                        momentum_bonus = 25.0
+                        reasons.append({
+                            "text": "Momentum Leader (VWAP Expansion + Volume)", 
+                            "type": "positive", 
+                            "impact": momentum_bonus, 
+                            "layer": 2
+                        })
             # NEW LOGIC END
 
             # FIX START: MTF Bonus Logical Placement (Ensures grouping within Alpha Edge)
@@ -245,7 +431,8 @@ class IntradayEngine:
                     
                     if close_1h > ema20_1h and ema20_1h_slope > 0:
                         reasons.append({"text": "BONUS: 1H Trend Confirmation", "type": "positive", "impact": 5.0, "layer": 2})
-                except: pass
+                        mtf_impact = 5.0
+                except: mtf_impact = 0
             # FIX END
 
             # --- LAYER 3: SAFEGUARDS (DYNAMIC PENALTIES) ---
@@ -356,10 +543,12 @@ class IntradayEngine:
             # FIX END
             
             # Strict Institutional Thresholds
-            # NEW LOGIC START: DNA Gate (Prevent weak base trades from catching Alpha tails)
-            dna_score = sum(r.get('impact', 0) for r in reasons if r.get('layer') == 1)
+            # NEW LOGIC START: Dynamic DNA Gate (Prevent weak base trades from catching Alpha tails)
+            dna_threshold = 15.0 if (self.SCORING_FLAGS.get("enable_dynamic_dna") and dna_mode == "RELAXED") else 20.0
+            layer1_score = vw_impact + adx_impact + pa_impact + vol_impact
+            
             if self.SCORING_FLAGS.get("enable_dna_gate"):
-                if dna_score < 20:
+                if layer1_score < dna_threshold:
                     final_score = min(final_score, 59.9) # Prevent BUY signal if DNA is unreliable
             # NEW LOGIC END
 
@@ -375,7 +564,7 @@ class IntradayEngine:
                     "details": [r for r in reasons if r["layer"] == 1]
                 },
                 "Alpha Edge (60%)": {
-                    "score": round(pioneer_bonus + sm_impact + inst_vol_impact, 1),
+                    "score": round(pioneer_bonus + sm_impact + inst_vol_impact + mtf_impact + timing_impact, 1),
                     "max": 60,
                     "details": [r for r in reasons if r["layer"] == 2]
                 },
@@ -399,7 +588,9 @@ class IntradayEngine:
                 "entry": round(real_price, 2),
                 "target": round(target_p, 2),
                 "stop_loss": round(sl_p, 2),
-                "expected_hike": round(hike_pct, 2)
+                "expected_hike": round(hike_pct, 2),
+                "dna_mode": dna_mode if self.SCORING_FLAGS.get("debug_dna_mode") else None,
+                "alpha_mode": alpha_mode if self.SCORING_FLAGS.get("debug_alpha_mode") else None
             }
         except Exception as e:
             return {"symbol": sym, "skip_reason": f"Restoration Error: {str(e)}"}
@@ -477,7 +668,7 @@ class IntradayEngine:
                                     catalysts = [r["text"] for r in reasons if r.get("impact", 0) > 0 and r.get("layer") in [1, 2]]
                                     penalties = [r["text"] for r in reasons if r.get("impact", 0) < 0 and r.get("layer") == 3]
                                     
-                                    logger.info(f"✅ {sym}: {res['score']:>5} | [L1:{l1:>4} | L2:{l2:>4} | L3:{l3:>5}] | {res['signal']}")
+                                    logger.info(f"✅ {sym}: {res['score']:>5} | [L1:{l1:>4} | L2:{l2:>4} | L3:{l3:>5}] | {res['signal']} ({res.get('alpha_mode', 'NONE')})")
                                     if catalysts: logger.info(f"   └ 🚀 Catalysts: {', '.join(catalysts[:4])}")
                                     if penalties: logger.info(f"   └ 🛡️ Penalties: {', '.join(penalties[:4])}")
                             else:
