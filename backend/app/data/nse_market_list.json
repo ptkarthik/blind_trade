@@ -3385,6 +3385,11 @@
         "raw_symbol": "GAYAHWS"
     },
     {
+        "symbol": "GAYAPROJ.NS",
+        "name": "Gayatri Projects Limited",
+        "raw_symbol": "GAYAPROJ"
+    },
+    {
         "symbol": "GCSL.NS",
         "name": "Gretex Corporate Services Limited",
         "raw_symbol": "GCSL"
@@ -8448,6 +8453,11 @@
         "symbol": "SAGILITY.NS",
         "name": "SAGILITY LIMITED",
         "raw_symbol": "SAGILITY"
+    },
+    {
+        "symbol": "SAHLIBHFI.NS",
+        "name": "Shalibhadra Finance Limited",
+        "raw_symbol": "SAHLIBHFI"
     },
     {
         "symbol": "SAHYADRI.NS",

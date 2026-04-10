@@ -532,3 +532,4 @@
 [2026-04-09 15:21:13.668242] Signals.py loaded from: C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\app\api\api_v1\endpoints\signals.py (TOTAL_COUNT_IS_HERE)
 [2026-04-09 15:43:14.580727] Signals.py loaded from: C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\app\api\api_v1\endpoints\signals.py (TOTAL_COUNT_IS_HERE)
 [2026-04-09 15:43:27.806612] Signals.py loaded from: C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\app\api\api_v1\endpoints\signals.py (TOTAL_COUNT_IS_HERE)
+[2026-04-09 20:50:25.673597] Signals.py loaded from: C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\app\api\api_v1\endpoints\signals.py (TOTAL_COUNT_IS_HERE)
