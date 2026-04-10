@@ -144,7 +144,7 @@ class IntradayEngine:
             # =========================
             # STEP 3: DNA GATE
             # =========================
-            if l1_score < 20:
+            if l1_score < 13:
                 l2_score = 0
                 l2_data = {"alpha_mode": "NONE", "reason": "DNA Gate Blocked"}
             else:
@@ -153,7 +153,7 @@ class IntradayEngine:
             # =========================
             # STEP 4: LAYER 3
             # =========================
-            l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx)
+            l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data)
 
             # =========================
             # FINAL SCORE
@@ -211,9 +211,8 @@ class IntradayEngine:
         df = df.copy().tail(100)
         price = df['close'].iloc[-1]
         
-        df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
-        df['vwap'] = df.groupby(df.index.date).apply(lambda x: (x['typical_price'] * x['volume']).cumsum() / x['volume'].cumsum()).reset_index(level=0, drop=True)
-        vwap = df['vwap'].iloc[-1]
+        vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df)
+        vwap = vwap_series.iloc[-1] if len(vwap_series) > 0 else df['close'].iloc[-1]
         distance_vwap = ((price - vwap) / vwap) * 100
         
         ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
@@ -221,12 +220,16 @@ class IntradayEngine:
         ema_slope = ema20_series.diff().rolling(3).mean().iloc[-1]
         
         avg_vol = df['volume'].rolling(20).mean()
-        avg = avg_vol.iloc[-1]
-        rvol = df['volume'].iloc[-1] / avg if avg > 0 else 0
+        # Fix partial-candle leakage: Anchor average and compare against recent momentum max
+        avg = avg_vol.iloc[-2] if len(avg_vol) > 1 else avg_vol.iloc[-1]
+        vol_ref = df['volume'].iloc[-2] if len(df) > 1 else df['volume'].iloc[-1]
+        vol_raw = max(df['volume'].iloc[-1], vol_ref)
+        rvol = vol_raw / avg if avg > 0 else 0
         
         high, low = df['high'], df['low']
-        hh = high.iloc[-1] > high.iloc[-2] > high.iloc[-3]
-        hl = low.iloc[-1] > low.iloc[-2] > low.iloc[-3]
+        # Relaxed structure logic (2 candles instead of 3 strict progressives)
+        hh = high.iloc[-1] >= high.iloc[-2]
+        hl = low.iloc[-1] >= low.iloc[-2]
         structure_ok = hh and hl
         
         is_pullback = (price > ema20 and low.iloc[-1] <= ema20 * 1.01 and df['close'].iloc[-1] > df['close'].iloc[-2])
@@ -279,14 +282,15 @@ class IntradayEngine:
         score = min(score, 60)
         return score, {"score": score, "mode": alpha_mode, "reasons": reasons}
 
-    def _run_layer3(self, indicators, df_15m, market_ctx):
+    def _run_layer3(self, indicators, df_15m, market_ctx, l2_data=None):
         price, ema20, rvol, atr = indicators["price"], indicators["ema20"], indicators["rvol"], indicators["atr"]
         penalty, reasons = 0, []
+        alpha_mode = l2_data.get("mode", l2_data.get("alpha_mode", "NONE")) if l2_data else "NONE"
         
         if price < ema20: penalty += 35; reasons.append("Penalty: Below EMA20 (trend broken)")
         
         distance_ema = abs((price - ema20) / ema20) * 100
-        if distance_ema < 0.5: penalty += 10; reasons.append("Penalty: Too close to EMA (chop risk)")
+        if distance_ema < 0.5 and alpha_mode != "PULLBACK": penalty += 10; reasons.append("Penalty: Too close to EMA (chop risk)")
         
         if rvol < 1.2: penalty += 15; reasons.append("Penalty: Low RVOL (no institutional volume)")
         
@@ -295,9 +299,10 @@ class IntradayEngine:
         if candle_range > 0 and (high - close) / candle_range > 0.5:
             penalty += 15; reasons.append("Penalty: Strong upper wick (selling pressure)")
             
-        risk, reward = atr, atr * 1.5
+        risk = abs(price - ema20) if abs(price - ema20) > (atr * 0.1) else (atr * 0.5)
+        reward = atr * 1.5
         rr_ratio = reward / risk if risk > 0 else 0
-        if rr_ratio < 1.2: penalty += 15; reasons.append("Penalty: Poor Risk/Reward")
+        if rr_ratio < 1.2: penalty += 15; reasons.append(f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})")
         
         recent_highs, prev_high = df_15m['high'].iloc[-3:], df_15m['high'].iloc[-4]
         if recent_highs.max() <= prev_high: penalty += 5; reasons.append("Penalty: No momentum (stale move)")

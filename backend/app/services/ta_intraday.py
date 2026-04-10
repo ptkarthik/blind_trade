@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 from ta.volume import MFIIndicator
 from ta.trend import ADXIndicator, EMAIndicator
-from ta.volatility import AverageTrueRange
+from ta.volatility import AverageTrueRange, BollingerBands
+from ta.momentum import RSIIndicator
 from app.services.liquidity_service import liquidity_service
 
 def safe_scalar(x):
@@ -13,24 +14,43 @@ def safe_scalar(x):
 class IntradayTechnicalAnalysis:
     
     @staticmethod
+    def _ensure_series(data):
+        if isinstance(data, pd.DataFrame):
+            return data.iloc[:, 0]
+        return data
+    
+    @staticmethod
     def calculate_vwap_series(df: pd.DataFrame) -> pd.Series:
         if df is None or df.empty: return pd.Series(dtype=float)
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
+        try:
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
+            else:
+                df.index = df.index.tz_convert('Asia/Kolkata')
+        except:
+            pass
+
         try:
             if isinstance(df.index, pd.DatetimeIndex):
                 current_date = df.index[-1].date()
                 today_df = df[df.index.date == current_date].copy()
+                
+                start_time = pd.Timestamp.combine(current_date, pd.to_datetime('09:15:00').time())
+                if today_df.index.tz is not None and start_time.tzinfo is None:
+                    start_time = start_time.tz_localize('Asia/Kolkata')
+                
+                today_df = today_df[today_df.index >= start_time]
             else:
                 today_df = df.tail(75).copy()
             
             if today_df.empty: return pd.Series([(df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)] * len(df), index=df.index)
             
             tp = (today_df['high'] + today_df['low'] + today_df['close']) / 3
-            vwap = (tp * today_df['volume']).cumsum() / today_df['volume'].cumsum()
-            # Align with full df index
-            return vwap.reindex(df.index).ffill()
+            vwap_calc = (tp * today_df['volume']).cumsum() / today_df['volume'].cumsum()
+            return vwap_calc.reindex(df.index).ffill()
         except:
             return pd.Series([(df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)] * len(df), index=df.index)
 
@@ -39,7 +59,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return 0.0
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         vwap_s = IntradayTechnicalAnalysis.calculate_vwap_series(df)
         return float((vwap_s.iloc[-1] if len(vwap_s) > 0 else 0.0))
 
@@ -48,7 +68,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
             # Ensure scalars (handle potential duplicate columns/Series)
@@ -110,7 +130,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 20: return {"is_pullback_setup": False}
             
@@ -151,28 +171,45 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if not isinstance(df.index, pd.DatetimeIndex): return {}
             
+            try:
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
+                else:
+                    df.index = df.index.tz_convert('Asia/Kolkata')
+            except:
+                pass
+                
             current_date = df.index[-1].date()
             today_df = df[df.index.date == current_date]
             
-            if len(today_df) < 2: return {} # Need at least 2 candles
+            if len(today_df) < 2: return {} 
             
-            # Improved ORB: Take first 30 minutes of data regardless of interval
-            start_time = today_df.index[0]
-            orb_df = today_df[today_df.index < start_time + pd.Timedelta(minutes=30)]
+            # ORB strictly 09:15:00 to 09:45:00
+            start_time = pd.Timestamp.combine(current_date, pd.to_datetime('09:15:00').time())
+            end_time = pd.Timestamp.combine(current_date, pd.to_datetime('09:45:00').time())
+            if today_df.index.tz is not None:
+                start_time = start_time.tz_localize('Asia/Kolkata')
+                end_time = end_time.tz_localize('Asia/Kolkata')
+                
+            orb_df = today_df[(today_df.index >= start_time) & (today_df.index <= end_time)]
             
             if orb_df.empty: return {} 
             
             orb_high = orb_df['high'].max()
             orb_low = orb_df['low'].min()
+            
+            latest_candle_time = today_df.index[-1]
             current_close = (today_df.iloc[-1] if len(today_df) > 0 else 0.0)['close']
             
             status = "Inside"
-            if current_close > orb_high: status = "Breakout"
-            elif current_close < orb_low: status = "Breakdown"
+            # Signal only valid if current time is after 09:45
+            if latest_candle_time > end_time:
+                if current_close > orb_high: status = "Breakout"
+                elif current_close < orb_low: status = "Breakdown"
             
             return {
                 "orb_high": orb_high,
@@ -188,7 +225,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if not isinstance(df.index, pd.DatetimeIndex): return {}
             
@@ -235,7 +272,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if not isinstance(df.index, pd.DatetimeIndex): return {}
             
@@ -278,29 +315,37 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             current_date = df.index[-1].date()
             today_df = df[df.index.date == current_date]
             if today_df.empty: return {"is_exhausted": False}
 
             day_open = today_df['open'].iloc[0]
-            pct_from_open = ((current_price - day_open) / day_open) * 100
+            
+            # Calculate Daily ADR
+            daily_highs = df.groupby(df.index.date)['high'].max()
+            daily_lows = df.groupby(df.index.date)['low'].min()
+            daily_ranges = daily_highs - daily_lows
+            adr = daily_ranges.rolling(14, min_periods=1).mean().iloc[-1]
+            if pd.isna(adr) or adr <= 0: adr = current_price * 0.015
+
+            limit_price = day_open + (adr * 0.75)
 
             ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
             atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1]
             dist_from_ema = current_price - ema_20
             atr_multiple = dist_from_ema / max(atr, 1e-6)
 
-            is_exhausted = pct_from_open > 3.5 or atr_multiple > 2.5
+            is_exhausted = current_price > limit_price or atr_multiple > 2.5
             
             reasons = []
-            if pct_from_open > 3.5: reasons.append(f"Way up (+{pct_from_open:.1f}%) from open")
+            if current_price > limit_price: reasons.append(f"Exhausted ADR limit: {current_price:.2f} > {limit_price:.2f}")
             if atr_multiple > 2.5: reasons.append(f"Deeply stretched from 20 EMA ({atr_multiple:.1f} ATRs)")
 
             return {
                 "is_exhausted": is_exhausted,
-                "pct_from_open": round(pct_from_open, 2),
+                "pct_from_open": round(((current_price - day_open) / day_open) * 100, 2),
                 "atr_dist": round(atr_multiple, 2),
                 "reasons": reasons
             }
@@ -312,7 +357,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
             vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
@@ -337,7 +382,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return []
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             pivots = IntradayTechnicalAnalysis.calculate_pivots(df)
             levels = []
@@ -371,7 +416,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             bb = BollingerBands(close=df['close'], window=20, window_dev=2)
             h_band = bb.bollinger_hband()
@@ -401,7 +446,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             rsi = RSIIndicator(close=df['close'], window=14).rsi()
             if len(df) < 10: return {"type": "None"}
@@ -428,7 +473,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 5: return {"is_trap": False}
             
@@ -460,7 +505,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             e9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
             e20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
@@ -482,19 +527,21 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 20: return {"adx": 0, "status": "Unknown", "bias": "Neutral", "score": 50, "is_rising": False, "adx_slope": 0.0}
             
             adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
             adx_series = adx_ind.adx()
             adx = (adx_series.iloc[-1] if len(adx_series) > 0 else 0.0)
-            adx_prev = adx_series.iloc[-2] if len(adx_series) > 1 else adx
             plus_di = adx_ind.adx_pos().iloc[-1]
             minus_di = adx_ind.adx_neg().iloc[-1]
             
-            # Trend Direction
-            adx_slope = adx - adx_prev
+            # Trend Direction - Smoothing noise with 3-candle median
+            adx_diff = adx_series.diff()
+            adx_slope = adx_diff.rolling(window=3).median().iloc[-1] if len(adx_diff) >= 3 else adx_diff.iloc[-1]
+            if np.isnan(adx_slope): adx_slope = 0.0
+            
             is_rising = adx_slope > 0
             
             status = "Strong Trend" if adx > 25 else "Weak Trend" if adx < 20 else "Developing Trend"
@@ -516,7 +563,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 10: return {"is_cluster": False}
             
@@ -558,7 +605,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 10: return {"pattern": "None", "hh_hl": False, "lh": False}
 
@@ -591,7 +638,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 30: return {"liquidity_sweep": False}
 
@@ -605,14 +652,25 @@ class IntradayTechnicalAnalysis:
             high_series = _high.iloc[:, 0] if isinstance(_high, pd.DataFrame) else _high
             swing_high = high_series.iloc[-5:-1].max()
             
-            # B. Opening Range High
+            # B. Opening Range High (Strict 09:15 to 09:45)
             orb_high = 0
             if isinstance(df.index, pd.DatetimeIndex):
-                today_df = df[df.index.date == df.index[-1].date()]
+                try:
+                    if df.index.tz is None: df.index = df.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
+                    else: df.index = df.index.tz_convert('Asia/Kolkata')
+                except:
+                    pass
+                current_date = df.index[-1].date()
+                today_df = df[df.index.date == current_date]
                 if not today_df.empty:
-                    _t_high = today_df['high']
-                    t_high_series = _t_high.iloc[:, 0] if isinstance(_t_high, pd.DataFrame) else _t_high
-                    orb_high = t_high_series.iloc[0:2].max() # 15-30m range
+                    start_time = pd.Timestamp.combine(current_date, pd.to_datetime('09:15:00').time())
+                    end_time = pd.Timestamp.combine(current_date, pd.to_datetime('09:45:00').time())
+                    if today_df.index.tz is not None:
+                        start_time = start_time.tz_localize('Asia/Kolkata')
+                        end_time = end_time.tz_localize('Asia/Kolkata')
+                    orb_df = today_df[(today_df.index >= start_time) & (today_df.index <= end_time)]
+                    if not orb_df.empty:
+                        orb_high = orb_df['high'].max()
             
             # C. VWAP Deviation resistance (Approximation)
             _low = df['low']
@@ -791,7 +849,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 50: return {"trend_direction_state": "NEUTRAL_TREND", "ema_alignment": False}
             
@@ -832,7 +890,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 6: return {"market_structure_state": "NEUTRAL_STRUCTURE"}
             
@@ -879,7 +937,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 20: return {"trap_move_detected": False}
             
@@ -950,7 +1008,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 21:
                 return {"is_sweep": False, "range_low": 0.0, "volume_spike": 0.0}
@@ -1038,7 +1096,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             latest = (df.iloc[-1] if len(df) > 0 else 0.0)
             
@@ -1170,7 +1228,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 25: return {"is_entry": False}
 
@@ -1472,7 +1530,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 30: return {"accumulation_detected": False}
 
@@ -1658,7 +1716,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 20: return {"is_aligned": False, "ema20_slope_up": False}
 
@@ -1697,7 +1755,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return 0.0
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if isinstance(df.index, pd.DatetimeIndex):
                 current_date = df.index[-1].date()
@@ -1738,7 +1796,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if len(df) < 20: return {"is_bounce": False}
             
@@ -1781,7 +1839,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             if not isinstance(df.index, pd.DatetimeIndex): return {"cvd": 0, "status": "Neutral", "score": 50}
             
@@ -1839,7 +1897,7 @@ class IntradayTechnicalAnalysis:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
-                if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+                df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         if df.empty or len(df) < 20: return {}
         
         # Phase 97: Robust Column Cleansing (Fix for Ambiguous Series Truth Value)
