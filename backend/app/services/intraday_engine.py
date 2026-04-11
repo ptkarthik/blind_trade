@@ -129,11 +129,24 @@ class IntradayEngine:
                 return {"symbol": sym, "skip_reason": "Indicator Failure (NaN)"}
 
             if indicators["price"] < indicators["ema20"]:
+                liq = liquidity_service.get_liquidity(sym)
                 return {
                     "symbol": sym,
+                    "price": round(real_price, 2),
                     "score": 0,
                     "signal": "IGNORE",
-                    "reason": "Below EMA20 (Trend Broken)"
+                    "reason": "Below EMA20 (Trend Broken)",
+                    "groups": {
+                        "DNA (40%)": {"score": 0, "max": 40, "details": []},
+                        "Alpha Edge (60%)": {"score": 0, "max": 60, "details": []},
+                        "Safeguards (L3)": {"score": 0, "max": 0, "details": []}
+                    },
+                    "liquidity": {
+                        "level": liq.get("level", "Unknown"),
+                        "adv20": liq.get("adv20", 0),
+                        "max_stealth_buy_qty": 0,
+                        "max_stealth_buy_value": 0
+                    }
                 }
 
             # =========================
@@ -147,13 +160,16 @@ class IntradayEngine:
             if l1_score < 13:
                 l2_score = 0
                 l2_data = {"alpha_mode": "NONE", "reason": "DNA Gate Blocked"}
+                liq = liquidity_service.get_liquidity(sym) # Fast check for ignored
             else:
+                # [V13.1] Lazy-load liquidity for high-conviction candidates
+                liq = await liquidity_service.get_liquidity_async(sym)
                 l2_score, l2_data = self._run_layer2(indicators, df_15m, df_1h)
 
             # =========================
             # STEP 4: LAYER 3
             # =========================
-            l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data)
+            l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data, liq=liq)
 
             # =========================
             # FINAL SCORE
@@ -161,14 +177,21 @@ class IntradayEngine:
             final_score = max(0, min(100, (l1_score + l2_score - l3_penalty)))
             signal = self._get_signal(final_score)
 
+            # [V12.9] Institutional Liquidity Analysis (already fetched above)
+            adv20 = liq.get("adv20", 0)
+            liq_level = liq.get("level", "Unknown")
+            # 1% Stealth Limit
+            max_qty = int(adv20 * 0.01) if adv20 > 0 else 0
+            max_value = round(max_qty * real_price, 0)
+
             # Compatibility: build "reasons" list and "groups" for UI
             reasons = []
-            for r in l1_data.get("reasons", []):
-                reasons.append({"text": r, "type": "positive", "layer": 1, "impact": 5})
-            for r in l2_data.get("reasons", []):
-                reasons.append({"text": r, "type": "positive", "layer": 2, "impact": l2_score})
-            for r in l3_data.get("reasons", []):
-                reasons.append({"text": r, "type": "negative", "layer": 3, "impact": -5})
+            for r_obj in l1_data.get("reasons", []):
+                reasons.append({"text": r_obj["text"], "type": "positive", "layer": 1, "impact": r_obj["impact"]})
+            for r_obj in l2_data.get("reasons", []):
+                reasons.append({"text": r_obj["text"], "type": "positive", "layer": 2, "impact": r_obj["impact"]})
+            for r_obj in l3_data.get("reasons", []):
+                reasons.append({"text": r_obj["text"], "type": "negative", "layer": 3, "impact": r_obj["impact"]})
 
             groups = {
                 "DNA (40%)": {"score": l1_score, "max": 40, "details": [r for r in reasons if r["layer"] == 1]},
@@ -176,19 +199,33 @@ class IntradayEngine:
                 "Safeguards (L3)": {"score": -l3_penalty, "max": 0, "details": [r for r in reasons if r["layer"] == 3]}
             }
 
+            verdict = "PIONEER PRIME" if final_score >= 85 else "Standard Setup"
+            signal_label = f"{signal} {('🏆' if final_score > 85 else '✅')}"
+            
+            if l2_data.get("mode") == "EXHAUSTED":
+                verdict = "AVOID - Overextended"
+                signal = "IGNORE"
+                signal_label = "EXHAUSTED 🛑"
+
             return {
                 "symbol": sym, 
                 "price": round(real_price, 2), 
                 "score": round(final_score, 1),
                 "signal": signal, 
-                "signal_label": f"{signal} {('🏆' if final_score > 85 else '✅')}", 
-                "verdict": "PIONEER PRIME" if final_score >= 85 else "Standard Setup",
+                "signal_label": signal_label, 
+                "verdict": verdict,
                 "reasons": reasons,
                 "groups": groups,
                 "entry": round(real_price, 2),
-                "target": round(real_price + (indicators.get("atr", 0) * 1.5), 2),
-                "stop_loss": round(real_price - indicators.get("atr", 1.0), 2),
-                "alpha_mode": l2_data.get("mode", "NONE")
+                "target": round(real_price + (indicators.get("atr", 0) * 5.0), 2),
+                "stop_loss": round(real_price - indicators.get("atr", 1.0) * 2.0, 2),
+                "alpha_mode": l2_data.get("mode", "NONE"),
+                "liquidity": {
+                    "level": liq_level,
+                    "adv20": adv20,
+                    "max_stealth_buy_qty": max_qty,
+                    "max_stealth_buy_value": max_value
+                }
             }
         except Exception as e:
             return {"symbol": sym, "skip_reason": f"Analysis Error: {str(e)}"}
@@ -227,85 +264,134 @@ class IntradayEngine:
         rvol = vol_raw / avg if avg > 0 else 0
         
         high, low = df['high'], df['low']
-        # Relaxed structure logic (2 candles instead of 3 strict progressives)
-        hh = high.iloc[-1] >= high.iloc[-2]
-        hl = low.iloc[-1] >= low.iloc[-2]
-        structure_ok = hh and hl
+        # Relaxed structure logic: Maximum Profitability Setup (Flags / Inside Bars allowed)
+        # Ensure the stock is holding its ground and has not sliced through recent support
+        structure_ok = price >= low.iloc[-2] if len(low) >= 2 else True
         
         is_pullback = (price > ema20 and low.iloc[-1] <= ema20 * 1.01 and df['close'].iloc[-1] > df['close'].iloc[-2])
         
         atr_indicator = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
         atr = atr_indicator.average_true_range().iloc[-1]
         
+        distance_ema = ((price - ema20) / ema20) * 100
+        # Institutional Exhaustion: >3.5% from VWAP or >5% from EMA
+        is_exhausted = distance_vwap > 3.5 or distance_ema > 5.0
+        
         if pd.isna(price) or pd.isna(ema20) or pd.isna(vwap) or pd.isna(rvol):
             return None
             
-        return {"price": price, "ema20": ema20, "ema_slope": ema_slope, "vwap": vwap, "distance_vwap": distance_vwap, "rvol": rvol, "structure_ok": structure_ok, "is_pullback": is_pullback, "atr": atr}
+        return {
+            "symbol": df.attrs.get("symbol", ""), 
+            "price": price, 
+            "ema20": ema20, 
+            "ema_slope": ema_slope, 
+            "vwap": vwap, 
+            "distance_vwap": distance_vwap, 
+            "distance_ema": distance_ema,
+            "rvol": rvol, 
+            "structure_ok": structure_ok, 
+            "is_pullback": is_pullback, 
+            "is_exhausted": is_exhausted,
+            "atr": atr
+        }
 
     def _run_layer1(self, indicators):
         price, ema20, ema_slope = indicators["price"], indicators["ema20"], indicators["ema_slope"]
         distance_vwap, rvol = indicators["distance_vwap"], indicators["rvol"]
         score, reasons = 0, []
         
-        if price > ema20: score += 5; reasons.append("Price above EMA20")
-        if ema_slope > 0: score += 5; reasons.append("EMA20 trending up")
+        # DNA Recalibration: 10 points per check (Total 40)
+        if price > ema20: 
+            score += 10; reasons.append({"text": "Price above EMA20", "impact": 10})
+        if ema_slope > 0: 
+            score += 10; reasons.append({"text": "EMA20 trending up", "impact": 10})
         
-        if abs(distance_vwap) < 1.5: score += 5; reasons.append("Near VWAP (healthy trend)")
-        elif distance_vwap > 1.5: score += 3; reasons.append("Extended from VWAP")
+        if abs(distance_vwap) < 1.5: 
+            score += 10; reasons.append({"text": "Near VWAP (healthy trend)", "impact": 10})
+        elif distance_vwap > 1.5: 
+            score += 5; reasons.append({"text": "Extended from VWAP", "impact": 5})
         
-        if rvol > 2: score += 5; reasons.append("High RVOL (institutional volume)")
-        elif rvol > 1.2: score += 3; reasons.append("Above avg volume")
+        if rvol > 2: 
+            score += 10; reasons.append({"text": "High RVOL (institutional volume)", "impact": 10})
+        elif rvol > 1.2: 
+            score += 6; reasons.append({"text": "Above avg volume", "impact": 6})
         
-        return score, {"score": score, "reasons": reasons}
+        return min(40, score), {"score": score, "reasons": reasons}
 
     def _run_layer2(self, indicators, df_15m, df_1h):
         price, ema20, distance_vwap = indicators["price"], indicators["ema20"], indicators["distance_vwap"]
         rvol, structure_ok, is_pullback = indicators["rvol"], indicators["structure_ok"], indicators["is_pullback"]
+        is_exhausted = indicators.get("is_exhausted", False)
         ema_1h_trend_up = indicators["ema_1h_trend_up"]
         score, reasons, alpha_mode = 0, [], "NONE"
         
+        # 1. Exhaustion Phase (EXT) Gate
+        if is_exhausted:
+            alpha_mode = "EXHAUSTED"
+            reasons.append({"text": "Price over-extended (EXT Phase) - High Risk of Mean Reversion", "impact": 0})
+            return 0, {"score": 0, "mode": alpha_mode, "reasons": reasons}
+
         distance_vwap_abs = abs(distance_vwap)
         is_near_vwap, is_trending = distance_vwap_abs < 1.2, price > ema20
         
+        # 2. Alpha Mode Rescaling (Total Target: 60)
         if is_near_vwap and is_trending and structure_ok:
-            alpha_mode = "EARLY"; score += 35; reasons.append("EARLY: Near VWAP + Trend + Structure")
+            alpha_mode = "EARLY"; score += 45; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure", "impact": 45})
         elif is_pullback:
-            alpha_mode = "PULLBACK"; score += 25; reasons.append("PULLBACK: EMA retracement + recovery")
+            alpha_mode = "PULLBACK"; score += 35; reasons.append({"text": "PULLBACK: EMA retracement + recovery", "impact": 35})
         elif is_trending and distance_vwap > 1.2 and rvol > 1.5:
-            alpha_mode = "MOMENTUM"; score += 20; reasons.append("MOMENTUM: Strong trend + volume")
-        else:
-            reasons.append("No valid Alpha setup")
+            alpha_mode = "MOMENTUM"; score += 30; reasons.append({"text": "MOMENTUM: Strong trend + volume", "impact": 30})
             
-        if rvol > 2.5: score += 5; reasons.append("Booster: High RVOL")
-        if ema_1h_trend_up: score += 5; reasons.append("Booster: 1H Trend Up")
+        if rvol > 2.5: score += 10; reasons.append({"text": "Booster: High RVOL", "impact": 10})
+        if ema_1h_trend_up: score += 5; reasons.append({"text": "Booster: 1H Trend Up", "impact": 5})
         
-        score = min(score, 60)
-        return score, {"score": score, "mode": alpha_mode, "reasons": reasons}
+        # Adjust individual impacts if capped at 60
+        if score > 60:
+            diff = score - 60
+            if reasons: reasons[0]["impact"] -= diff # Simple adjustment
 
-    def _run_layer3(self, indicators, df_15m, market_ctx, l2_data=None):
+        return min(60, score), {"score": score, "mode": alpha_mode, "reasons": reasons}
+
+    def _run_layer3(self, indicators, df_15m, market_ctx, l2_data=None, liq=None):
         price, ema20, rvol, atr = indicators["price"], indicators["ema20"], indicators["rvol"], indicators["atr"]
         penalty, reasons = 0, []
         alpha_mode = l2_data.get("mode", l2_data.get("alpha_mode", "NONE")) if l2_data else "NONE"
         
-        if price < ema20: penalty += 35; reasons.append("Penalty: Below EMA20 (trend broken)")
+        if price < ema20: 
+            penalty += 35; reasons.append({"text": "Penalty: Below EMA20 (trend broken)", "impact": -35})
         
         distance_ema = abs((price - ema20) / ema20) * 100
-        if distance_ema < 0.5 and alpha_mode != "PULLBACK": penalty += 10; reasons.append("Penalty: Too close to EMA (chop risk)")
         
-        if rvol < 1.2: penalty += 15; reasons.append("Penalty: Low RVOL (no institutional volume)")
+        # Penalize Chop Risk ONLY if volume is dead. High volume at the EMA is a premium entry.
+        if distance_ema < 0.5 and alpha_mode != "PULLBACK" and rvol < 1.2: 
+            penalty += 10; reasons.append({"text": "Penalty: Too close to EMA on low volume (chop risk)", "impact": -10})
+        
+        if rvol < 1.2: 
+            penalty += 15; reasons.append({"text": "Penalty: Low RVOL (no institutional volume)", "impact": -15})
+        
+        # [V12.9] Liquidity Constraint
+        if not liq:
+            liq = liquidity_service.get_liquidity(indicators.get("symbol", ""))
+            
+        if liq.get("adv20", 0) < 100000 and liq.get("adv20", 0) > 0:
+            penalty += 20; reasons.append({"text": "Penalty: Illiquid Scrip (ADV < 100k)", "impact": -20})
         
         last_candle = df_15m.iloc[-1]; high, low, close = last_candle['high'], last_candle['low'], last_candle['close']
         candle_range = high - low
         if candle_range > 0 and (high - close) / candle_range > 0.5:
-            penalty += 15; reasons.append("Penalty: Strong upper wick (selling pressure)")
+            penalty += 15; reasons.append({"text": "Penalty: Strong upper wick (selling pressure)", "impact": -15})
             
         risk = abs(price - ema20) if abs(price - ema20) > (atr * 0.1) else (atr * 0.5)
         reward = atr * 1.5
         rr_ratio = reward / risk if risk > 0 else 0
-        if rr_ratio < 1.2: penalty += 15; reasons.append(f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})")
+        if rr_ratio < 1.2: 
+            penalty += 15; reasons.append({"text": f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})", "impact": -15})
         
-        recent_highs, prev_high = df_15m['high'].iloc[-3:], df_15m['high'].iloc[-4]
-        if recent_highs.max() <= prev_high: penalty += 5; reasons.append("Penalty: No momentum (stale move)")
+        # Safe Momentum Check (Requires at least 4 candles)
+        if len(df_15m) >= 4:
+            recent_highs, prev_high = df_15m['high'].iloc[-3:], df_15m['high'].iloc[-4]
+            if recent_highs.max() <= prev_high: 
+                penalty += 5; reasons.append({"text": "Penalty: No momentum (stale move)", "impact": -5})
         
         return penalty, {"penalty": penalty, "reasons": reasons}
 
@@ -323,6 +409,14 @@ class IntradayEngine:
 
         total = len(symbols)
         print(f"🛰️ [V11 RESTORED] Pulse Scan: {total} symbols")
+        
+        # [V13.1] Initialize services before scan
+        await liquidity_service.initialize()
+        
+        # [V13.5] Bulk Bootstrap liquidity for all symbols in the current scan
+        # This prevents the "500 Shares" loop by pre-loading volume data in batches
+        all_symstr = [s["symbol"] if isinstance(s, dict) else s for s in symbols]
+        asyncio.create_task(liquidity_service.bulk_bootstrap(all_symstr))
         
         self.job_states[job_id] = {"results": [], "failed_symbols": [], "progress": 0, "is_running": True, "pause_requested": False, "main_task": asyncio.current_task()}
         index_ctx = await self._get_index_context()
@@ -388,12 +482,29 @@ class IntradayEngine:
                                     catalysts = [r["text"] for r in reasons if r.get("impact", 0) > 0 and r.get("layer") in [1, 2]]
                                     penalties = [r["text"] for r in reasons if r.get("impact", 0) < 0 and r.get("layer") == 3]
                                     
-                                    logger.info(f"✅ {sym}: {res['score']:>5} | [L1:{l1:>4} | L2:{l2:>4} | L3:{l3:>5}] | {res['signal']} ({res.get('alpha_mode', 'NONE')})")
-                                    if catalysts: logger.info(f"   └ 🚀 Catalysts: {', '.join(catalysts[:4])}")
-                                    if penalties: logger.info(f"   └ 🛡️ Penalties: {', '.join(penalties[:4])}")
+                                    liq_info = res.get("liquidity", {})
+                                    cap_str = f"{liq_info.get('max_stealth_buy_qty', 0):,}"
+                                    
+                                    if res['signal'] == 'IGNORE':
+                                        reason_text = res.get('reason')
+                                        if not reason_text:
+                                            details = res.get('groups', {}).get('Alpha Edge (60%)', {}).get('details', [])
+                                            reason_text = details[0].get('text', 'Gate Blocked') if details else 'Gate Blocked'
+                                            
+                                        if isinstance(reason_text, dict): 
+                                            reason_text = reason_text.get('text', 'Unknown')
+                                            
+                                        logger.info(f"⏭️ {sym}: IGNORE ({reason_text})")
+                                    else:
+                                        logger.info(f"✅ {sym}: {res['score']:>5} | [L1:{l1:>4} | L2:{l2:>4} | L3:{l3:>5}] | {res['signal']} ({res.get('alpha_mode', 'NONE')})")
+                                        logger.info(f"   └ 📊 Capacity: {cap_str} shares | Level: {liq_info.get('level', 'Unknown')}")
+                                        if catalysts: logger.info(f"   └ 🚀 Catalysts: {', '.join(catalysts[:4])}")
+                                        if penalties: logger.info(f"   └ 🛡️ Penalties: {', '.join(penalties[:4])}")
                             else:
                                 if logger: logger.warning(f"⚠️ {sym}: Skipped. Reason: {res.get('skip_reason', 'Unknown')}")
                         except Exception as e:
+                            import traceback
+                            traceback.print_exc()
                             if logger: logger.error(f"❌ {sym}: Analysis ERROR: {str(e)}")
                             pass
                         finally:
@@ -450,7 +561,7 @@ class IntradayEngine:
 
                         job.result = sanitize_data({
                             "progress": state["progress"], "total_steps": total,
-                            "data": sorted(state["results"], key=lambda x: x["score"], reverse=True)[:100],
+                            "data": sorted(state["results"], key=lambda x: x["score"], reverse=True)[:500],
                             "status_msg": f"V11 Pulse Scan: {state['progress']}/{total}"
                         })
                         flag_modified(job, "result")

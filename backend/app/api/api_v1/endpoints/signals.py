@@ -53,9 +53,9 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
              return sanitize_json_data({"buys": [], "sells": [], "holds": [], "total_count": 0})
 
         data = valid_job.result.get("data", [])
-        buys = sorted([s for s in data if s.get("signal") == "BUY"], key=lambda x: x.get("score", 0), reverse=True)[:100]
-        sells = sorted([s for s in data if s.get("signal") == "SELL"], key=lambda x: x.get("score", 0), reverse=True)[:100]
-        holds = sorted([s for s in data if s.get("signal") == "NEUTRAL"], key=lambda x: x.get("score", 0), reverse=True)[:100]
+        buys = sorted([s for s in data if s.get("signal") in ["BUY", "BUY_STRONG"]], key=lambda x: x.get("score", 0), reverse=True)[:100]
+        sells = sorted([s for s in data if s.get("signal") in ["SELL", "SELL_STRONG"]], key=lambda x: x.get("score", 0), reverse=True)[:100]
+        holds = sorted([s for s in data if s.get("signal") in ["NEUTRAL", "HOLD"]], key=lambda x: x.get("score", 0), reverse=True)[:100]
         
         return sanitize_json_data({
             "buys": buys,
@@ -120,11 +120,11 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
                     response[sector] = {"buys": [], "sells": [], "holds": [], "last_updated": timestamp}
                 
                 signal = stock_data.get("signal")
-                if signal == "BUY":
+                if signal in ["BUY", "BUY_STRONG"]:
                     response[sector]["buys"].append(stock_data)
-                elif signal == "SELL":
+                elif signal in ["SELL", "SELL_STRONG"]:
                     response[sector]["sells"].append(stock_data)
-                elif signal == "NEUTRAL":
+                elif signal in ["NEUTRAL", "HOLD"]:
                     response[sector]["holds"].append(stock_data)
             except: continue
             
