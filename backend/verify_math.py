@@ -1,61 +1,73 @@
 import sys
 import pandas as pd
 import numpy as np
+import asyncio
 
 sys.path.append(r"c:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend")
 from app.services.intraday_engine import intraday_engine
+from app.services.liquidity_service import liquidity_service
 
-def verify_math():
-    print("--- 🧪 INTRADAY ENGINE MATH VERIFICATION ---")
+async def verify_math():
+    print("--- 🧪 INTRADAY ENGINE MATH VERIFICATION (V12.9) ---")
+    
+    symbol = "RELIANCE.NS"
+    # Seed mock liquidity data for RELIANCE.NS (High liquidity)
+    liquidity_service.liquidity_data[symbol] = {
+        "adv20": 5000000,
+        "level": "High",
+        "last_updated": 0
+    }
     
     # 1. Setup a clean, strongly trending dataframe
     dates = pd.date_range("2026-04-10 09:15", periods=50, freq="15min")
     df = pd.DataFrame(index=dates)
+    df.attrs["symbol"] = symbol
     df['open'] = np.linspace(100, 110, 50)
     df['high'] = df['open'] + 1
     df['low'] = df['open'] - 0.5
     df['close'] = df['open'] + 0.8
-    # Add a massive volume spike at the end to trigger RVOL > 2.0
-    vols = [1000] * 48 + [5000, 6000] 
+    # Trigger RVOL > 2.0
+    vols = [1000] * 48 + [150000, 200000] 
     df['volume'] = vols
     
-    df_1h = df.resample('1h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+    # Analyze
+    res = await intraday_engine.analyze_stock(symbol, pulse_data={symbol: df})
     
-    # 2. Extract Indicators
-    indicators = intraday_engine._get_indicators(df, df_1h)
+    print("\n--- 1. ANALYSIS RESULTS ---")
+    print(f"Symbol: {res['symbol']}")
+    print(f"Price: {res['price']}")
+    print(f"Score: {res['score']} | Signal: {res['signal']}")
+    print(f"Alpha Mode: {res['alpha_mode']}")
     
-    print("\n--- 1. INDICATORS ---")
-    print(f"Price: {indicators['price']:.2f}")
-    print(f"EMA20: {indicators['ema20']:.2f} (Slope: {indicators['ema_slope']:.2f})")
-    print(f"VWAP: {indicators['vwap']:.2f}")
-    print(f"RVOL: {indicators['rvol']:.2f}")
-    print(f"Structure OK: {indicators['structure_ok']}")
+    print("\n--- 2. LIQUIDITY METRICS ---")
+    liq = res['liquidity']
+    print(f"Level: {liq['level']}")
+    print(f"ADV20: {liq['adv20']:,}")
+    print(f"Max Stealth Buy Qty: {liq['max_stealth_buy_qty']:,} shares")
+    print(f"Max Stealth Buy Value: ₹{liq['max_stealth_buy_value']:,}")
     
-    # 3. Layer 1 (DNA Gate)
-    l1_score, l1_data = intraday_engine._run_layer1(indicators)
-    print(f"\n--- 2. LAYER 1 (DNA Gate < 13) ---")
-    print(f"L1 Score: {l1_score} / 20")
-    for r in l1_data['reasons']: print(f"  └ {r}")
+    print("\n--- 3. SAFEGUARDS (L3) ---")
+    l3_details = res['groups']['Safeguards (L3)']['details']
+    for d in l3_details:
+        print(f"  └ {d['text']}: {d['impact']}")
+
+    # Test Illiquid Scrip Penalty
+    print("\n--- 4. TESTING ILLIQUID PENALTY ---")
+    symbol_low = "PENNY.NS"
+    liquidity_service.liquidity_data[symbol_low] = {
+        "adv20": 50000, # Below 100k
+        "level": "Very Low",
+        "last_updated": 0
+    }
+    df_low = df.copy()
+    df_low.attrs["symbol"] = symbol_low
     
-    if l1_score < 13:
-        print("\n❌ FAILED DNA GATE")
-        return
-        
-    # 4. Layer 2 (Alpha)
-    l2_score, l2_data = intraday_engine._run_layer2(indicators, df, df_1h)
-    print(f"\n--- 3. LAYER 2 (Alpha Edge) ---")
-    print(f"L2 Score: {l2_score} / 60")
-    print(f"Alpha Mode: {l2_data['mode']}")
-    for r in l2_data['reasons']: print(f"  └ {r}")
-    
-    # 5. Layer 3 (Safeguards)
-    l3_penalty, l3_data = intraday_engine._run_layer3(indicators, df, None, l2_data)
-    print(f"\n--- 4. LAYER 3 (Safeguards) ---")
-    print(f"L3 Penalty: -{l3_penalty}")
-    for r in l3_data['reasons']: print(f"  └ {r}")
-    
-    final_score = l1_score + l2_score - l3_penalty
-    print(f"\n✅ FINAL ENGINE SCORE: {final_score}")
+    res_low = await intraday_engine.analyze_stock(symbol_low, pulse_data={symbol_low: df_low})
+    p_reasons = [r['text'] for r in res_low['reasons'] if "Illiquid" in r['text']]
+    if p_reasons:
+        print(f"✅ Penalty Detected: {p_reasons[0]}")
+    else:
+        print("❌ Penalty NOT Detected (Check ADV threshold logic)")
 
 if __name__ == "__main__":
-    verify_math()
+    asyncio.run(verify_math())

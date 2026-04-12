@@ -63,6 +63,12 @@ export interface Signal {
             stop_price: number;
         };
     };
+    liquidity?: {
+        level: string;
+        adv20: number;
+        max_stealth_buy_qty: number;
+        max_stealth_buy_value: number;
+    };
 }
 
 interface DealCardProps {

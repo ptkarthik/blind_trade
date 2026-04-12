@@ -146,6 +146,45 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                     </div>
                                 </div>
 
+                                {/* --- INSTITUTIONAL LIQUIDITY PROFILE [NEW] --- */}
+                                {data.liquidity && (
+                                    <div className="w-full max-w-xl bg-blue-50/50 border border-blue-100 rounded-3xl p-6 shadow-sm">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-4 w-4 bg-blue-500 rounded-full flex items-center justify-center">
+                                                    <Activity className="text-white h-2 w-2" />
+                                                </div>
+                                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">Institutional Liquidity Profile</h4>
+                                            </div>
+                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase border ${
+                                                data.liquidity.level === 'High' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-200' :
+                                                data.liquidity.level === 'Medium' ? 'bg-amber-500/10 text-amber-600 border-amber-200' :
+                                                'bg-red-500/10 text-red-600 border-red-200'
+                                            }`}>
+                                                {data.liquidity.level} Liquidity
+                                            </span>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div className="flex flex-col">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Avg Daily Vol (20D)</span>
+                                                <span className="text-xl font-black text-slate-700 tracking-tighter">
+                                                    {(data.liquidity.adv20 / 1000000).toFixed(1)}M <span className="text-xs opacity-40">SHARES</span>
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col border-l border-blue-100 pl-6">
+                                                <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">Stealth Buy Capacity (1%)</span>
+                                                <span className="text-xl font-black text-blue-600 tracking-tighter">
+                                                    {data.liquidity.max_stealth_buy_qty.toLocaleString()} <span className="text-xs opacity-40 text-slate-400">SHARES</span>
+                                                </span>
+                                                <span className="text-xs font-bold text-slate-500 mt-1">
+                                                    ≈ ₹{(data.liquidity.max_stealth_buy_value / 100000).toFixed(1)}L Valuation
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* --- SCORE IMPACT ANALYSIS (GROUPED LAYERS) --- */}
                                 {safeReasons.some((r: any) => r.impact) && (
                                     <div className="w-full max-w-xl bg-slate-50 border border-slate-200 rounded-3xl p-6 shadow-sm">

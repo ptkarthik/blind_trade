@@ -2060,11 +2060,6 @@
         "raw_symbol": "CIPLA"
     },
     {
-        "symbol": "CLCIND.NS",
-        "name": "CLC Industries Limited",
-        "raw_symbol": "CLCIND"
-    },
-    {
         "symbol": "CLEAN.NS",
         "name": "Clean Science and Technology Limited",
         "raw_symbol": "CLEAN"
@@ -2903,11 +2898,6 @@
         "symbol": "EMAMIREAL.NS",
         "name": "Emami Realty Limited",
         "raw_symbol": "EMAMIREAL"
-    },
-    {
-        "symbol": "EMBDL.NS",
-        "name": "Embassy Developments Limited",
-        "raw_symbol": "EMBDL"
     },
     {
         "symbol": "EMCURE.NS",
@@ -6580,11 +6570,6 @@
         "raw_symbol": "NACLIND"
     },
     {
-        "symbol": "NAGAFERT.NS",
-        "name": "Nagarjuna Fertilizers and Chemicals Limited",
-        "raw_symbol": "NAGAFERT"
-    },
-    {
         "symbol": "NAGREEKCAP.NS",
         "name": "Nagreeka Capital & Infrastructure Limited",
         "raw_symbol": "NAGREEKCAP"
@@ -8098,11 +8083,6 @@
         "symbol": "RELIGARE.NS",
         "name": "Religare Enterprises Limited",
         "raw_symbol": "RELIGARE"
-    },
-    {
-        "symbol": "RELINFRA.NS",
-        "name": "Reliance Infrastructure Limited",
-        "raw_symbol": "RELINFRA"
     },
     {
         "symbol": "RELTD.NS",

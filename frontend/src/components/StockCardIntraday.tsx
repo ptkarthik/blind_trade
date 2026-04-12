@@ -147,6 +147,24 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
                 </div>
             </div>
 
+            {/* --- INSTITUTIONAL CAPACITY [NEW] --- */}
+            {signal.liquidity && (
+                <div className="bg-blue-500/[0.03] border border-blue-100/50 rounded-xl p-2 mb-3 flex items-center justify-between group-hover:bg-blue-500/5 transition-all">
+                    <div className="flex items-center gap-1.5">
+                        <Activity size={10} className="text-blue-500" />
+                        <span className="text-[9px] font-black text-blue-600 uppercase tracking-tighter">Market Capacity</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-slate-700">
+                            {signal.liquidity.max_stealth_buy_qty.toLocaleString()} <span className="text-[8px] opacity-50">SHARES</span>
+                        </span>
+                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase ${signal.liquidity.level === 'High' ? 'bg-emerald-100 text-emerald-700' : signal.liquidity.level === 'Medium' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                            {signal.liquidity.level}
+                        </span>
+                    </div>
+                </div>
+            )}
+
             {/* --- LAYER 3: SAFEGUARDS [NEW] --- */}
             <div className="bg-slate-900/5 p-2 rounded-lg border border-slate-200/50 mb-3 group-hover:bg-slate-900/10 transition-all">
                 <div className="flex justify-between items-center mb-1">
