@@ -20,8 +20,9 @@ system_logger = logging.getLogger("worker_system")
 system_logger.setLevel(logging.INFO)
 
 if not system_logger.handlers:
-    # 10MB limit per file, keep 5 backups
-    handler = RotatingFileHandler(_log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+    # [V14.1 HARDENED] Increase limit to 512MB to prevent rotation crashes on Windows during large scans.
+    # Added delay=True to mitigate file handle contention.
+    handler = RotatingFileHandler(_log_file, maxBytes=512*1024*1024, backupCount=10, encoding='utf-8', delay=True)
     formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', '%H:%M:%S')
     handler.setFormatter(formatter)
     system_logger.addHandler(handler)

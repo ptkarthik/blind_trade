@@ -79,7 +79,7 @@ class IntradayEngine:
                 "ad_ratio": ad_ratio, "sector_perfs": sector_perfs,
                 "day_change_pct": round(((close - nifty_df['open'].iloc[0])/nifty_df['open'].iloc[0])*100, 2)
             }
-        except: return {"score": 50, "market_regime": "Mixed"}
+        except: return {"score": 50, "market_regime": "Mixed", "is_sideways": False, "ad_ratio": 1.0, "day_change_pct": 0.0}
 
     async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None, pulse_data: dict = None):
         """
@@ -236,9 +236,13 @@ class IntradayEngine:
         
         try:
             ema_1h_series = EMAIndicator(close=df_1h['close'], window=20).ema_indicator()
-            ema_1h = ema_1h_series.iloc[-1]
-            ema_1h_prev = ema_1h_series.iloc[-2]
-            ema_1h_trend_up = ema_1h > ema_1h_prev
+            # Safety: Ensure at least two candles for trend comparison
+            if len(ema_1h_series) >= 2:
+                ema_1h = ema_1h_series.iloc[-1]
+                ema_1h_prev = ema_1h_series.iloc[-2]
+                ema_1h_trend_up = ema_1h > ema_1h_prev
+            else:
+                ema_1h_trend_up = False
         except:
             ema_1h_trend_up = False
             
@@ -246,6 +250,11 @@ class IntradayEngine:
 
     def _compute_indicators(self, df: pd.DataFrame):
         df = df.copy().tail(100)
+        
+        # Hardness Gate: Prevent library crashes (e.g. TA logic) on low data
+        if len(df) < 20:
+            return None
+            
         price = df['close'].iloc[-1]
         
         vwap_series = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap_series(df)
@@ -257,16 +266,26 @@ class IntradayEngine:
         ema_slope = ema20_series.diff().rolling(3).mean().iloc[-1]
         
         avg_vol = df['volume'].rolling(20).mean()
-        # Fix partial-candle leakage: Anchor average and compare against recent momentum max
-        avg = avg_vol.iloc[-2] if len(avg_vol) > 1 else avg_vol.iloc[-1]
-        vol_ref = df['volume'].iloc[-2] if len(df) > 1 else df['volume'].iloc[-1]
-        vol_raw = max(df['volume'].iloc[-1], vol_ref)
-        rvol = vol_raw / avg if avg > 0 else 0
-        
+        current_vol = df['volume'].iloc[-1]
         high, low = df['high'], df['low']
-        # Relaxed structure logic: Maximum Profitability Setup (Flags / Inside Bars allowed)
-        # Ensure the stock is holding its ground and has not sliced through recent support
-        structure_ok = price >= low.iloc[-2] if len(low) >= 2 else True
+        
+        # Clean RVOL logic: Benchmark against time-of-day if available, fallback to trailing avg
+        time_bucket = datetime.now().strftime("%H:%M")
+        benchmark = liquidity_service.get_benchmark_vol(df.attrs.get("symbol", ""), time_bucket)
+        
+        if benchmark > 0:
+            rvol = current_vol / benchmark
+        else:
+            avg = avg_vol.iloc[-2] if len(avg_vol) > 1 else avg_vol.iloc[-1]
+            rvol = current_vol / avg if avg > 0 else 0
+        
+        # Strict HH/HL Structure check (5-candle window)
+        if len(df) >= 5:
+            recent_lows = df['low'].tail(5)
+            # Ensure price is above the minimum low of the structure and hasn't broken the trend
+            structure_ok = price > recent_lows.min() and price >= low.iloc[-2]
+        else:
+            structure_ok = price >= low.iloc[-2] if len(low) >= 2 else True
         
         is_pullback = (price > ema20 and low.iloc[-1] <= ema20 * 1.01 and df['close'].iloc[-1] > df['close'].iloc[-2])
         
@@ -274,8 +293,9 @@ class IntradayEngine:
         atr = atr_indicator.average_true_range().iloc[-1]
         
         distance_ema = ((price - ema20) / ema20) * 100
-        # Institutional Exhaustion: >3.5% from VWAP or >5% from EMA
-        is_exhausted = distance_vwap > 3.5 or distance_ema > 5.0
+        # Dynamic Institutional Exhaustion: Scaled by ATR (3x ATR Band)
+        exhaustion_limit = (atr * 3 / price) * 100 if price > 0 else 5.0
+        is_exhausted = distance_vwap > 3.5 or distance_ema > exhaustion_limit
         
         if pd.isna(price) or pd.isna(ema20) or pd.isna(vwap) or pd.isna(rvol):
             return None
@@ -373,8 +393,10 @@ class IntradayEngine:
         if not liq:
             liq = liquidity_service.get_liquidity(indicators.get("symbol", ""))
             
-        if liq.get("adv20", 0) < 100000 and liq.get("adv20", 0) > 0:
-            penalty += 20; reasons.append({"text": "Penalty: Illiquid Scrip (ADV < 100k)", "impact": -20})
+        adv20 = liq.get("adv20", 0)
+        daily_turnover = adv20 * price
+        if daily_turnover < 50000000 and adv20 > 0: # Institutional minimum: 5 Cr Turnover
+            penalty += 20; reasons.append({"text": "Penalty: Low Daily Turnover (< ₹5 Cr)", "impact": -20})
         
         last_candle = df_15m.iloc[-1]; high, low, close = last_candle['high'], last_candle['low'], last_candle['close']
         candle_range = high - low
@@ -382,10 +404,22 @@ class IntradayEngine:
             penalty += 15; reasons.append({"text": "Penalty: Strong upper wick (selling pressure)", "impact": -15})
             
         risk = abs(price - ema20) if abs(price - ema20) > (atr * 0.1) else (atr * 0.5)
-        reward = atr * 1.5
+        # Scalable Reward based on institutional momentum
+        reward_mult = 2.5 if rvol > 2.5 else (2.0 if rvol > 1.2 else 1.5)
+        reward = atr * reward_mult
         rr_ratio = reward / risk if risk > 0 else 0
         if rr_ratio < 1.2: 
             penalty += 15; reasons.append({"text": f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})", "impact": -15})
+        
+        # Global Market Regime Integration
+        if market_ctx:
+            regime = market_ctx.get("market_regime", "Mixed")
+            is_sideways = market_ctx.get("is_sideways", False)
+            
+            if regime == "Strong Bearish":
+                penalty += 20; reasons.append({"text": "Penalty: Extreme Market Weakness (Nifty Bearish)", "impact": -20})
+            elif is_sideways and rvol < 2.0:
+                penalty += 10; reasons.append({"text": "Penalty: Sideways Market (Low Momentum Filter)", "impact": -10})
         
         # Safe Momentum Check (Requires at least 4 candles)
         if len(df_15m) >= 4:
@@ -408,7 +442,7 @@ class IntradayEngine:
         if not symbols: return {"status": "error"}
 
         total = len(symbols)
-        print(f"🛰️ [V11 RESTORED] Pulse Scan: {total} symbols")
+        print(f"[SCAN] Pulse Scan: {total} symbols")
         
         # [V13.1] Initialize services before scan
         await liquidity_service.initialize()
@@ -426,9 +460,8 @@ class IntradayEngine:
             # Process in Streaming Batches of 100
             chunk_size = 100
             for i in range(0, total, chunk_size):
-                # [V12.1 STOP CHECK] 🛑
                 if job_id in self.job_states and not self.job_states[job_id].get("is_running", True):
-                    if logger: logger.warning(f"🛑 [INTRA] Stop Signal Received. Terminating job {job_id} at {i}/{total}.")
+                    if logger: logger.warning(f"[STOP] [INTRA] Stop Signal Received. Terminating job {job_id} at {i}/{total}.")
                     break
 
                 # [V12.1 PAUSE CHECK] ⏸️
@@ -439,25 +472,26 @@ class IntradayEngine:
                 chunk = symbols[i:i + chunk_size]
                 chunk_syms = [s["symbol"] if isinstance(s, dict) else s for s in chunk]
                 
-                print(f"🛰️ Pulse Batch: {i}/{total} ({len(chunk_syms)} symbols)")
+                print(f"[BATCH] Pulse Batch: {i}/{total} ({len(chunk_syms)} symbols)")
                 
                 # 1. Fetch data for this specific batch (with 30s HARD TIMEOUT)
                 try:
-                    res_15m, res_prices = await asyncio.wait_for(
+                    res_15m, res_1h, res_prices = await asyncio.wait_for(
                         asyncio.gather(
-                            market_service.get_batch_ohlc(chunk_syms),
+                            market_service.get_batch_ohlc(chunk_syms, interval="15m", period="7d"),
+                            market_service.get_batch_ohlc(chunk_syms, interval="60m", period="15d"),
                             market_service.get_batch_prices(chunk_syms)
                         ),
                         timeout=120.0
                     )
                 except asyncio.TimeoutError:
-                    print(f"⚠️ [V11 TIMEOUT] Batch {i} hung. Force-skipping to maintain engine flow.")
+                    print(f"[TIMEOUT] Batch {i} hung. Force-skipping to maintain engine flow.")
                     self.job_states[job_id]["progress"] += len(chunk)
                     continue
 
                 batch_pulse = {}
                 for s in chunk_syms:
-                    batch_pulse[s] = {"15m": res_15m.get(s), "price": res_prices.get(s, {}).get("price", 0.0)}
+                    batch_pulse[s] = {"15m": res_15m.get(s), "1h": res_1h.get(s), "price": res_prices.get(s, {}).get("price", 0.0)}
 
                 # 2. Analyze the batch immediately
                 async def sem_task(s_obj):
@@ -490,22 +524,24 @@ class IntradayEngine:
                                         if not reason_text:
                                             details = res.get('groups', {}).get('Alpha Edge (60%)', {}).get('details', [])
                                             reason_text = details[0].get('text', 'Gate Blocked') if details else 'Gate Blocked'
-                                            
+                                        
                                         if isinstance(reason_text, dict): 
                                             reason_text = reason_text.get('text', 'Unknown')
-                                            
-                                        logger.info(f"⏭️ {sym}: IGNORE ({reason_text})")
+                                        
+                                        logger.info(f"SKIP {sym}: {reason_text}")
                                     else:
-                                        logger.info(f"✅ {sym}: {res['score']:>5} | [L1:{l1:>4} | L2:{l2:>4} | L3:{l3:>5}] | {res['signal']} ({res.get('alpha_mode', 'NONE')})")
-                                        logger.info(f"   └ 📊 Capacity: {cap_str} shares | Level: {liq_info.get('level', 'Unknown')}")
-                                        if catalysts: logger.info(f"   └ 🚀 Catalysts: {', '.join(catalysts[:4])}")
-                                        if penalties: logger.info(f"   └ 🛡️ Penalties: {', '.join(penalties[:4])}")
+                                        # COMPACT INSTITUTIONAL LOGGING
+                                        msg = f"OK {sym}: {res['score']:>3} | {res['signal']} | L1:{l1} L2:{l2} L3:{l3} | Cap:{cap_str}"
+                                        logger.info(msg)
+                                        # Keep catalysts/penalties in stdout (print) but omit from system_logger info to save space
+                                        print(f"   └ 🚀 Catalysts: {', '.join(catalysts[:4])}", flush=True) if catalysts else None
+                                        print(f"   └ 🛡️ Penalties: {', '.join(penalties[:4])}", flush=True) if penalties else None
                             else:
-                                if logger: logger.warning(f"⚠️ {sym}: Skipped. Reason: {res.get('skip_reason', 'Unknown')}")
+                                if logger: logger.warning(f"[SKIP] {sym}: {res.get('skip_reason', 'Unknown')}")
                         except Exception as e:
                             import traceback
                             traceback.print_exc()
-                            if logger: logger.error(f"❌ {sym}: Analysis ERROR: {str(e)}")
+                            if logger: logger.error(f"[ERROR] {sym}: Analysis ERROR: {str(e)}")
                             pass
                         finally:
                             self.job_states[job_id]["progress"] += 1
@@ -523,19 +559,19 @@ class IntradayEngine:
         """[V12.1 RESTORED] Programmatic termination signal."""
         if job_id in self.job_states:
             self.job_states[job_id]["is_running"] = False
-            print(f"🛑 Signal sent to stop job {job_id}")
+            print(f"[STOP] Signal sent to stop job {job_id}")
 
     async def pause_job(self, job_id: str):
         """[V12.1] Pause terminal signal."""
         if job_id in self.job_states:
             self.job_states[job_id]["pause_requested"] = True
-            print(f"⏸️ Signal sent to pause job {job_id}")
+            print(f"[PAUSE] Signal sent to pause job {job_id}")
 
     async def resume_job(self, job_id: str):
         """[V12.1] Resume terminal signal."""
         if job_id in self.job_states:
             self.job_states[job_id]["pause_requested"] = False
-            print(f"▶️ Signal sent to resume job {job_id}")
+            print(f"[RESUME] Signal sent to resume job {job_id}")
 
     async def _progress_loop(self, job_id: str, total: int):
         while job_id in self.job_states and self.job_states[job_id]["is_running"]:

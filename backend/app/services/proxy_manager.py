@@ -45,9 +45,9 @@ class ProxyManager:
                     cached = json.load(f)
                     if isinstance(cached, list) and cached:
                         self.proxies = cached
-                        print(f"📦 ProxyManager: Loaded {len(self.proxies)} proxies from local cache.")
+                        print(f"[CACHE] ProxyManager: Loaded {len(self.proxies)} proxies from local cache.")
             except Exception as e:
-                print(f"⚠️ Failed to load proxy cache: {e}")
+                print(f"[ERROR] Failed to load proxy cache: {e}")
 
     def _save_cache(self):
         """Saves current valid proxies to a local cache file."""
@@ -56,7 +56,7 @@ class ProxyManager:
             with open(self.cache_file, "w") as f:
                 json.dump(self.proxies, f)
         except Exception as e:
-            print(f"⚠️ Failed to save proxy cache: {e}")
+            print(f"[ERROR] Failed to save proxy cache: {e}")
 
     async def get_proxy(self) -> Optional[str]:
         """
@@ -96,7 +96,7 @@ class ProxyManager:
         """
         Scrapes and Validates new proxies.
         """
-        print("🔄 ProxyManager: Refreshing Proxy List (Threaded)...")
+        print("[REFRESH] ProxyManager: Refreshing Proxy List (Threaded)...")
         raw_proxies = set()
         
         def fetch_source(url):
@@ -120,7 +120,7 @@ class ProxyManager:
                         if ":" in line and not line.startswith("#"):
                             raw_proxies.add(f"http://{line.strip()}")
 
-        print(f"🔎 Found {len(raw_proxies)} raw proxies. Validating...")
+        print(f"[STATUS] Found {len(raw_proxies)} raw proxies. Validating...")
         
         # 2. Validate (Batch processing)
         candidates = list(raw_proxies - self.blacklist_set)
@@ -152,9 +152,9 @@ class ProxyManager:
             self.last_refresh = time.time()
             self.blacklist_set.clear() # Reset blacklist on new fetch
             self._save_cache()
-            print(f"✅ ProxyManager: Activated {len(self.proxies)} working proxies.")
+            print(f"[SUCCESS] ProxyManager: Activated {len(self.proxies)} working proxies.")
         else:
-            print(f"⚠️ ProxyManager: Refresh failed (0 valid proxies). Keeping {len(self.proxies)} from cache.")
+            print(f"[WARNING] ProxyManager: Refresh failed (0 valid proxies). Keeping {len(self.proxies)} from cache.")
             # Trigger smaller REFRESH_INTERVAL to try again sooner if we are empty
             if not self.proxies:
                  self.last_refresh = time.time() - (self.REFRESH_INTERVAL - 300) # retry in 5 mins

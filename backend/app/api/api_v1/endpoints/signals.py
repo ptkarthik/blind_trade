@@ -37,13 +37,12 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
         else: job_type = "intraday"
         
         # Allow results from completed, processing (live), and stopped (partial) jobs
-        # Favor jobs that actually have results data, then order by most recent
+        # Favor processing jobs first, then the most recently updated
         query = select(Job).where(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing", "stopped"])
         ).order_by(
             desc(Job.status == "processing"),
-            Job.result.isnot(None).desc(), 
             Job.updated_at.desc()
         ).limit(1)
         res = await db.execute(query)
@@ -77,13 +76,12 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
         elif mode == "swing": job_type = "swing_scan"
         else: job_type = "intraday"
         
-        # SMARTER PICK: Favor jobs that actually have result data, then by latest update.
+        # SMARTER PICK: Favor processing jobs first, then the most recently updated
         query = select(Job).where(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing", "stopped"])
         ).order_by(
             desc(Job.status == "processing"),
-            (func.json_extract(Job.result, '$.data').isnot(None)).desc(),
             Job.updated_at.desc()
         ).limit(1)
         res = await db.execute(query)

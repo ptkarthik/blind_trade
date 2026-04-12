@@ -5,6 +5,7 @@ import math
 def sanitize_data(data):
     """
     Recursively converts non-serializable types (numpy, etc.) to standard Python types.
+    Also handles NaN and Infinity values which crash standard JSON encoders.
     """
     if isinstance(data, dict):
         return {k: sanitize_data(v) for k, v in data.items()}
@@ -15,6 +16,7 @@ def sanitize_data(data):
     elif isinstance(data, (np.integer, int)):
         return int(data)
     elif isinstance(data, (np.floating, float)):
+        # Deep Sanitization: SQLite and JSON serialisers fail on inf/nan
         if math.isnan(data) or math.isinf(data):
             return 0.0
         # Round to 2 decimals for significant space saving in large JSON results

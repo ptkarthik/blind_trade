@@ -204,7 +204,8 @@ function App() {
   // 3. Auto-Fetch Signals on Pulse (Replaces the Interval)
   useEffect(() => {
     if (scanJob?.status === 'processing') {
-      fetchSignals(true); // RE-ENABLED: Keeps the lists (Buys/Sells/Holds) synced during scan
+      // Explicitly pass the scanJob.id to safely poll only the LIVE job data, ignoring old DB caches
+      fetchSignals(true, scanJob.id); 
       fetchSectorSignals();
     }
   }, [scanJob?.result?.progress, scanJob?.updated_at, mode]); // Trigger on job progress, status changes, or mode switch
