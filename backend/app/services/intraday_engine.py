@@ -505,6 +505,8 @@ class IntradayEngine:
                             )
                             
                             if res and "skip_reason" not in res: 
+                                # [V14.6 SEQUENCE PERSISTENCE] Add index to preserve discovery order
+                                res["analysis_index"] = symbols.index(s_obj) if isinstance(s_obj, dict) else symbols.index(s_obj)
                                 self.job_states[job_id]["results"].append(res)
                                 if logger:
                                     # [V12.7 HIGH-TRANSPARENCY LOGGER]
@@ -552,7 +554,8 @@ class IntradayEngine:
             self.job_states[job_id]["is_running"] = False
             await sync_task
 
-        results = sorted(self.job_states[job_id]["results"], key=lambda x: x["score"], reverse=True)
+        # [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
+        results = sorted(self.job_states[job_id]["results"], key=lambda x: (x.get("score", 0), -(x.get("analysis_index", 0))), reverse=True)
         return sanitize_data({"total": total, "success": len(results), "data": results})
 
     async def stop_job(self, job_id: str):

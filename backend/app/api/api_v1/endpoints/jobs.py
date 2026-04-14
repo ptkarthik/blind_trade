@@ -10,8 +10,6 @@ import uuid
 
 router = APIRouter()
 
-router = APIRouter()
-
 # Schema
 class JobCreate(BaseModel):
     type: str # 'full_scan', 'sector_scan', 'intraday', or 'swing_scan'
@@ -88,7 +86,7 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
         
     query = query.order_by(
         desc(Job.status == "processing"), 
-        Job.updated_at.desc()
+        Job.created_at.desc()
     ).limit(1)
     
     result = await db.execute(query)

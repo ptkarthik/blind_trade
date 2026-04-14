@@ -18,9 +18,14 @@ interface SectorDealsProps {
     mode: 'intraday' | 'longterm' | 'swing';
     onSignalClick: (signal: Signal) => void;
     onBuy?: (signal: Signal) => void;
+    stats?: {
+        started_at?: string;
+        finished_at?: string;
+        duration?: string;
+    };
 }
 
-export function SectorDeals({ data, mode, onSignalClick, onBuy }: SectorDealsProps) {
+export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorDealsProps) {
     const [selectedSector, setSelectedSector] = useState<string>("All Sectors");
     const [capFilter, setCapFilter] = useState<"All" | "Large" | "Mid" | "Small">("All");
 
@@ -58,7 +63,11 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy }: SectorDealsPro
                 if (!x) return acc.concat([current]);
                 else return acc;
             }, [] as Signal[]);
-            return unique.sort((a, b) => b.score - a.score);
+            // [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
+            return unique.sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return (a.analysis_index || 0) - (b.analysis_index || 0);
+            });
         };
 
         currentData = {
@@ -114,11 +123,28 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy }: SectorDealsPro
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex flex-col">
                     <h2 className="text-2xl font-bold">Sector Opportunities</h2>
-                    {currentData.last_updated && (
-                        <span className="text-xs text-muted-foreground font-mono">
-                            Updated: {currentData.last_updated}
-                        </span>
-                    )}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                        {stats?.started_at && (
+                            <span className="text-[10px] text-muted-foreground font-mono font-bold uppercase tracking-wider">
+                                Started: <span className="text-primary">{stats.started_at}</span>
+                            </span>
+                        )}
+                        {stats?.finished_at && (
+                            <span className="text-[10px] text-muted-foreground font-mono font-bold uppercase tracking-wider">
+                                Finished: <span className="text-primary">{stats.finished_at}</span>
+                            </span>
+                        )}
+                        {stats?.duration && (
+                            <span className="text-[10px] text-muted-foreground font-mono font-bold uppercase tracking-wider">
+                                Duration: <span className="text-amber-500">{stats.duration}</span>
+                            </span>
+                        )}
+                        {currentData.last_updated && !stats?.finished_at && (
+                            <span className="text-[10px] text-muted-foreground font-mono font-bold uppercase tracking-wider">
+                                Last Sync: <span className="text-primary">{currentData.last_updated}</span>
+                            </span>
+                        )}
+                    </div>
                 </div>
 
             </div>

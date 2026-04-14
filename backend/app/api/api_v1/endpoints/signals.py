@@ -12,10 +12,40 @@ from app.services.utils import sanitize_data # Use shared version
 import asyncio
 import numpy as np
 import uuid
-import datetime
+from datetime import datetime, timedelta
 
-with open("signals_runtime_check.txt", "a") as f:
-    f.write(f"[{datetime.datetime.now()}] Signals.py loaded from: {__file__} (TOTAL_COUNT_IS_HERE)\n")
+def sanitize_json_data(data):
+    """Helper for final API responses"""
+    return sanitize_data(data)
+
+def get_job_pulse_stats(job: Job):
+    """Helper to calculate IST timings for the dashboard"""
+    stats = {
+        "started_at": "",
+        "finished_at": "",
+        "duration": "",
+        "status": job.status if job else "unknown"
+    }
+    if not job:
+        return stats
+        
+    # UTC to IST (+5:30)
+    if job.created_at:
+        ist_start = job.created_at + timedelta(hours=5, minutes=30)
+        stats["started_at"] = ist_start.strftime("%H:%M:%S")
+        
+    if job.updated_at:
+        ist_end = job.updated_at + timedelta(hours=5, minutes=30)
+        stats["finished_at"] = ist_end.strftime("%H:%M:%S")
+        
+        if job.status in ["completed", "stopped"]:
+            diff = job.updated_at - job.created_at
+            mins, secs = divmod(int(diff.total_seconds()), 60)
+            stats["duration"] = f"{mins}m {secs}s"
+        elif job.status == "processing":
+            stats["duration"] = "Scanning..."
+            
+    return stats
 
 router = APIRouter()
 
@@ -27,7 +57,11 @@ def sanitize_json_data(data):
     return sanitize_data(data)
 
 @router.get("/today")
-async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(get_db)):
+async def get_todays_signals(
+    mode: str = "longterm", 
+    job_id: str = None,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Returns structured Top 100 buys, sells, holds for the dashboard.
     """
@@ -36,38 +70,57 @@ async def get_todays_signals(mode: str = "longterm", db: AsyncSession = Depends(
         elif mode == "swing": job_type = "swing_scan"
         else: job_type = "intraday"
         
-        # Allow results from completed, processing (live), and stopped (partial) jobs
-        # Favor processing jobs first, then the most recently updated
-        query = select(Job).where(
-            Job.type == job_type, 
-            Job.status.in_(["completed", "processing", "stopped"])
-        ).order_by(
-            desc(Job.status == "processing"),
-            Job.updated_at.desc()
-        ).limit(1)
-        res = await db.execute(query)
-        valid_job = res.scalars().first()
+        from datetime import datetime, timedelta
+        since = datetime.utcnow() - timedelta(hours=24)
         
-        if not valid_job or not valid_job.result:
-             return sanitize_json_data({"buys": [], "sells": [], "holds": [], "total_count": 0})
+        # [V14.7 DIRECT LOCKING] Use specific Job ID if provided by the UI
+        if job_id:
+            valid_job = await db.get(Job, job_id)
+        else:
+            # SMARTER PICK: Favor processing jobs first, then the most recently updated
+            query = select(Job).where(
+                Job.type == job_type, 
+                Job.status.in_(["completed", "processing", "stopped"]),
+                Job.created_at >= since
+            ).order_by(
+                desc(Job.status == "processing"),
+                Job.updated_at.desc()
+            ).limit(1)
+            res = await db.execute(query)
+            valid_job = res.scalars().first()
+        
+        if not valid_job:
+            return sanitize_json_data({"buys": [], "sells": [], "holds": [], "total_count": 0, "stats": {}})
 
+        # Unified Pulse Statistics (IST)
+        stats = get_job_pulse_stats(valid_job)
+        
         data = valid_job.result.get("data", [])
-        buys = sorted([s for s in data if s.get("signal") in ["BUY", "BUY_STRONG"]], key=lambda x: x.get("score", 0), reverse=True)[:100]
-        sells = sorted([s for s in data if s.get("signal") in ["SELL", "SELL_STRONG"]], key=lambda x: x.get("score", 0), reverse=True)[:100]
-        holds = sorted([s for s in data if s.get("signal") in ["NEUTRAL", "HOLD"]], key=lambda x: x.get("score", 0), reverse=True)[:100]
+        # [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
+        def sort_key(x): return (x.get("score", 0), -(x.get("analysis_index", 0)))
+        
+        buys = sorted([s for s in data if s.get("signal") in ["BUY", "BUY_STRONG"]], key=sort_key, reverse=True)[:100]
+        sells = sorted([s for s in data if s.get("signal") in ["SELL", "SELL_STRONG"]], key=sort_key, reverse=True)[:100]
+        holds = sorted([s for s in data if s.get("signal") in ["NEUTRAL", "HOLD"]], key=sort_key, reverse=True)[:100]
         
         return sanitize_json_data({
             "buys": buys,
             "sells": sells,
             "holds": holds,
-            "total_count": len(data)
+            "total_count": len(data),
+            "stats": stats
         })
     except Exception as e:
-        print(f"CRASH in get_todays_signals: {e}")
-        return sanitize_json_data({"buys": [], "sells": [], "holds": []})
+        import traceback
+        traceback.print_exc()
+        return sanitize_json_data({"buys": [], "sells": [], "holds": [], "stats": {}})
 
 @router.get("/sectors")
-async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(get_db)):
+async def get_sector_signals(
+    mode: str = "longterm", 
+    job_id: str = None,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Returns signals grouped by industry sectors for heatmaps.
     """
@@ -76,30 +129,85 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
         elif mode == "swing": job_type = "swing_scan"
         else: job_type = "intraday"
         
-        # SMARTER PICK: Favor processing jobs first, then the most recently updated
-        query = select(Job).where(
-            Job.type == job_type, 
-            Job.status.in_(["completed", "processing", "stopped"])
-        ).order_by(
-            desc(Job.status == "processing"),
-            Job.updated_at.desc()
-        ).limit(1)
-        res = await db.execute(query)
-        valid_job = res.scalars().first()
+        from datetime import datetime, timedelta
+        since = datetime.utcnow() - timedelta(hours=24)
         
-        if not valid_job or not valid_job.result:
-            return {}
+        # [V14.7 DIRECT LOCKING] Use specific Job ID if provided by the UI
+        if job_id:
+            valid_job = await db.get(Job, job_id)
+        else:
+            query = select(Job).where(
+                Job.type == job_type, 
+                Job.status.in_(["completed", "processing", "stopped"]),
+                Job.created_at >= (datetime.utcnow() - timedelta(hours=24))
+            ).order_by(
+                desc(Job.status == "processing"),
+                Job.created_at.desc()
+            ).limit(1)
+            res = await db.execute(query)
+            valid_job = res.scalars().first()
+            
+        if not valid_job:
+            return sanitize_json_data({"data": {}, "stats": {}})
+
+        # Unified Pulse Statistics (IST)
+        stats = get_job_pulse_stats(valid_job)
+        data = valid_job.result.get("data", [])
+        
+        # Dynamic Aggregation
+        response = {}
+        for stock_data in data:
+            try:
+                sym = stock_data.get("symbol", "UNKNOWN")
+                sector = stock_data.get("sector")
+                
+                if not sector or sector == "Unknown":
+                    sector = market_service.get_sector_for_symbol(sym)
+                
+                if sector not in response:
+                    response[sector] = {"buys": [], "sells": [], "holds": []}
+                
+                signal = stock_data.get("signal")
+                if signal in ["BUY", "BUY_STRONG"]:
+                    response[sector]["buys"].append(stock_data)
+                elif signal in ["SELL", "SELL_STRONG"]:
+                    response[sector]["sells"].append(stock_data)
+                elif signal in ["NEUTRAL", "HOLD"]:
+                    response[sector]["holds"].append(stock_data)
+            except: continue
+            
+        return sanitize_json_data({
+            "data": response,
+            "stats": stats
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return sanitize_json_data({"data": {}, "stats": {}})
             
         data = valid_job.result.get("data", [])
         
-        timestamp = ""
+        stats = {
+            "started_at": "",
+            "finished_at": "",
+            "duration": "",
+            "status": valid_job.status
+        }
+        
+        if valid_job.created_at:
+             ist_start = valid_job.created_at + datetime.timedelta(hours=5, minutes=30)
+             stats["started_at"] = ist_start.strftime("%H:%M:%S")
+             
         if valid_job.updated_at:
-            try:
-                import datetime
-                ist_time = valid_job.updated_at + datetime.timedelta(hours=5, minutes=30)
-                timestamp = ist_time.strftime("%d %b, %H:%M:%S")
-            except:
-                 timestamp = valid_job.updated_at.strftime("%H:%M:%S")
+             ist_end = valid_job.updated_at + datetime.timedelta(hours=5, minutes=30)
+             stats["finished_at"] = ist_end.strftime("%H:%M:%S")
+             
+             if valid_job.status in ["completed", "stopped"]:
+                 diff = valid_job.updated_at - valid_job.created_at
+                 mins, secs = divmod(int(diff.total_seconds()), 60)
+                 stats["duration"] = f"{mins}m {secs}s"
+             elif valid_job.status == "processing":
+                 stats["duration"] = "Scanning..."
         
         # Dynamic Aggregation
         response = {}
@@ -126,7 +234,10 @@ async def get_sector_signals(mode: str = "longterm", db: AsyncSession = Depends(
                     response[sector]["holds"].append(stock_data)
             except: continue
             
-        return sanitize_json_data(response)
+        return sanitize_json_data({
+            "data": response,
+            "stats": stats
+        })
     except Exception as e:
         print(f"Sector signals crash: {e}")
         return {}

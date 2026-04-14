@@ -18,7 +18,7 @@ function App() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [marketStatus, setMarketStatus] = useState<any>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'intraday' | 'longterm' | 'swing'>('longterm');
+  const [mode, setMode] = useState<'intraday' | 'longterm' | 'swing'>('intraday');
   const [loading, setLoading] = useState(false);
   const [autoRestart, setAutoRestart] = useState(true);
 
@@ -28,7 +28,7 @@ function App() {
 
   // Refs for Worker Context
   const isInitialMount = useRef(true);
-  const modeRef = useRef<'intraday' | 'longterm' | 'swing'>(mode);
+  const modeRef = useRef<'intraday' | 'longterm' | 'swing'>('intraday');
 
 
   // Modal State
@@ -55,7 +55,10 @@ function App() {
     sells: Signal[];
   }
   const [sectorSignals, setSectorSignals] = useState<Record<string, SectorData>>({});
+  const [sectorStats, setSectorStats] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade'>('deals');
+  const lastCompletedJobId = useRef<string | null>(null);
+  const currentSignalJobId = useRef<string | null>(null);
 
   const openAnalysis = (signal: Signal) => {
     setSelectedSignal(signal);
@@ -70,7 +73,7 @@ function App() {
         const res = await jobsApi.getResults(jobId);
         resData = res.data;
       } else {
-        const signalsRes = await signalApi.getTodaySignals(mode);
+        const signalsRes = await signalApi.getTodaySignals(mode, jobId);
         resData = signalsRes.data;
       }
 
@@ -83,7 +86,17 @@ function App() {
         newData = resData;
       }
 
+      // [V14.8 JOB-AWARE TRANSITION]
+      // Only keep old results if we are fetching the SAME job that produced them.
+      // If the Job ID has changed, we must clear the screen for the new run.
+      const isNewJob = jobId && jobId !== currentSignalJobId.current;
+      
+      if (!isNewJob && jobId && newData.length === 0 && signals.length > 0) {
+        return;
+      }
+
       setSignals(newData);
+      if (jobId) currentSignalJobId.current = jobId;
       localStorage.setItem(`signals_v2_${mode}`, JSON.stringify(newData));
     } catch (error) {
       console.error("Failed to fetch signals:", error);
@@ -92,11 +105,19 @@ function App() {
     }
   };
 
-  const fetchSectorSignals = async () => {
+  const fetchSectorSignals = async (jobId?: string) => {
     try {
-      const sectorRes = await signalApi.getSectorSignals(mode);
-      setSectorSignals(sectorRes.data);
-      localStorage.setItem(`sector_v2_${mode}`, JSON.stringify(sectorRes.data));
+      const sectorRes = await signalApi.getSectorSignals(mode, jobId);
+      const resData = sectorRes.data;
+      
+      if (resData && resData.data) {
+        setSectorSignals(resData.data);
+        setSectorStats(resData.stats);
+        localStorage.setItem(`sector_v2_${mode}`, JSON.stringify(resData.data));
+        if (resData.stats) localStorage.setItem(`sector_stats_v2_${mode}`, JSON.stringify(resData.stats));
+      } else {
+        setSectorSignals(resData);
+      }
     } catch (e) {
       console.error("Auto-sector refresh failed", e);
     }
@@ -184,9 +205,11 @@ function App() {
           const currentJobType = currentMode === 'intraday' ? 'intraday' : currentMode === 'swing' ? 'swing_scan' : 'full_scan';
           const activeJob = newStates[currentJobType];
 
-          if (activeJob?.status === 'processing') {
-            // Refresh signals silently
-          }
+          // [V14.7 REACTIVITY REFACTOR]
+          // The background worker ONLY updates the job status/progress.
+          // We rely on the dedicated React 'Watcher' useEffect below to detect changes 
+          // in activeJob.result.progress and trigger the signal/sector fetches.
+          // This eliminates stale closures and ensures 100% UI reactivity.
         } catch (err) {
           // Silent fail
         }
@@ -201,14 +224,25 @@ function App() {
     };
   }, []); // Run ONCE. Worker persists across mode switches.
 
-  // 3. Auto-Fetch Signals on Pulse (Replaces the Interval)
+  // 3. Auto-Fetch Signals on Pulse
+  // This watcher detects "Pulses" (progress updates) from the background worker
+  // and triggers a data refresh.
   useEffect(() => {
-    if (scanJob?.status === 'processing') {
-      // Explicitly pass the scanJob.id to safely poll only the LIVE job data, ignoring old DB caches
-      fetchSignals(true, scanJob.id); 
-      fetchSectorSignals();
+    const isProcessing = scanJob?.status === 'processing';
+    const isCompleted = scanJob?.status === 'completed';
+    const jobChanged = scanJob?.id !== lastCompletedJobId.current;
+
+    if (isProcessing || (isCompleted && jobChanged)) {
+      // PULSE: Trigger refreshes whenever progress changes or the job finishes.
+      fetchSignals(true, scanJob.id);
+      fetchSectorSignals(scanJob.id);
+      
+      if (isCompleted) {
+        lastCompletedJobId.current = scanJob.id;
+      }
     }
-  }, [scanJob?.result?.progress, scanJob?.updated_at, mode]); // Trigger on job progress, status changes, or mode switch
+  }, [scanJob?.id, scanJob?.status, scanJob?.result?.progress, mode]); 
+
 
 
   // 3. Logic: Mode Switch & Dashboard Sync
@@ -653,6 +687,7 @@ function App() {
             <ErrorBoundary>
               <SectorDeals
                 data={sectorSignals}
+                stats={sectorStats}
                 mode={mode}
                 onSignalClick={openAnalysis}
                 onBuy={handleBuyRequest}

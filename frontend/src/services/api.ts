@@ -26,9 +26,9 @@ export const marketApi = {
 };
 
 export const signalApi = {
-    getTodaySignals: (mode = 'swing') => api.get(`/signals/today?mode=${mode}`),
+    getTodaySignals: (mode = 'swing', jobId?: string) => api.get(`/signals/today?mode=${mode}${jobId ? `&job_id=${jobId}` : ''}`),
     analyze: (symbol: string, mode = 'swing') => api.get(`/signals/${symbol}?mode=${mode}`),
-    getSectorSignals: (mode = 'intraday') => api.get(`/signals/sectors?mode=${mode}`),
+    getSectorSignals: (mode = 'intraday', jobId?: string) => api.get(`/signals/sectors?mode=${mode}${jobId ? `&job_id=${jobId}` : ''}`),
     getPortfolioAnalysis: () => api.get('/signals/portfolio'),
 };
 
