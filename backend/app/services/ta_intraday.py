@@ -136,6 +136,13 @@ class IntradayTechnicalAnalysis:
             vwap_now = safe_scalar(vwap_series.iloc[-1])
             latest = df.iloc[-1]
             
+            # Preceding trend verification: MUST have been trending above VWAP
+            was_trending_above = False
+            if len(df) >= 5:
+                closes_above = sum(1 for i in range(-5, -1) if df['close'].iloc[i] > vwap_series.iloc[i])
+                if closes_above >= 3:
+                    was_trending_above = True
+            
             # 1. Test of VWAP (Low is near or below VWAP)
             # We want to catch candles that 'bounce' off VWAP
             pullback_test = latest['low'] <= vwap_now * 1.0025
@@ -153,7 +160,7 @@ class IntradayTechnicalAnalysis:
             l_vol_val = safe_scalar(_l_vol)
             high_vol = l_vol_val > vol_ma
             
-            setup_detected = pullback_test and is_bullish and high_vol
+            setup_detected = pullback_test and is_bullish and high_vol and was_trending_above
             
             return {
                 "is_pullback_setup": setup_detected,
@@ -458,20 +465,21 @@ class IntradayTechnicalAnalysis:
             if col in df.columns:
                 df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
-            rsi = RSIIndicator(close=df['close'], window=14).rsi()
-            if len(df) < 15: return {"type": "None"}
+            # V15 Pioneer Fix: Shifted RSI to 9-period for highly responsive intraday momentum (was 14)
+            rsi = RSIIndicator(close=df['close'], window=9).rsi()
+            if len(df) < 30: return {"type": "None"}
             
-            # FIX H4: Use local swing highs/lows for proper peak-to-peak divergence
+            # FIX H4 & V2: Use macroscopic local swing highs/lows for proper peak-to-peak divergence
             # OLD: compared candle[-1] vs candle[-5] — arbitrary, not actual peaks
-            # NEW: find local high/low in two windows (last 5 and prior 5) and compare
-            window = 5
-            # Recent swing: last 5 candles
+            # NEW: find local high/low in two windows (last 15 and prior 15) and compare
+            window = 15
+            # Recent swing: last 15 candles
             recent_price_high = df['close'].iloc[-window:].max()
             recent_price_high_idx = df['close'].iloc[-window:].idxmax()
             recent_price_low = df['close'].iloc[-window:].min()
             recent_price_low_idx = df['close'].iloc[-window:].idxmin()
             
-            # Prior swing: 5-10 candles ago
+            # Prior swing: 15-30 candles ago
             prior_price_high = df['close'].iloc[-(window*2):-window].max()
             prior_price_high_idx = df['close'].iloc[-(window*2):-window].idxmax()
             prior_price_low = df['close'].iloc[-(window*2):-window].min()
@@ -479,9 +487,9 @@ class IntradayTechnicalAnalysis:
             
             # RSI at those peaks
             recent_rsi_high = rsi.loc[recent_price_high_idx] if recent_price_high_idx in rsi.index else rsi.iloc[-1]
-            prior_rsi_high = rsi.loc[prior_price_high_idx] if prior_price_high_idx in rsi.index else rsi.iloc[-6]
+            prior_rsi_high = rsi.loc[prior_price_high_idx] if prior_price_high_idx in rsi.index else rsi.iloc[-15]
             recent_rsi_low = rsi.loc[recent_price_low_idx] if recent_price_low_idx in rsi.index else rsi.iloc[-1]
-            prior_rsi_low = rsi.loc[prior_price_low_idx] if prior_price_low_idx in rsi.index else rsi.iloc[-6]
+            prior_rsi_low = rsi.loc[prior_price_low_idx] if prior_price_low_idx in rsi.index else rsi.iloc[-15]
             
             # Bearish Divergence: Price Higher High but RSI Lower High (at overbought territory)
             if recent_price_high > prior_price_high and recent_rsi_high < prior_rsi_high and recent_rsi_high > 60:
@@ -1181,20 +1189,39 @@ class IntradayTechnicalAnalysis:
             liquidity_bonus = 10 if sweep_ctx.get("is_sweep", False) else 0
 
             # --- V4.2 NEW ADVANCED FILTERS ---
-            # 7. FALSE BREAKOUT FILTER (10 pts penalty)
+            # 7. FALSE BREAKOUT FILTER & ABSORPTION REWARD (V4.3)
             trap_risk = False
             trap_penalty = 0
+            absorption_bonus = 0
+            wicks_above_res = 0
+            
             # Check last 10 candles before current breakout candle
             for i in range(-11, -1):
                 if i >= -len(df):
                     _h_prev = df['high'].iloc[i]
                     _c_prev = df['close'].iloc[i]
+                    _o_prev = df['open'].iloc[i]
+                    _l_prev = df['low'].iloc[i]
+                    
                     hp_val = safe_scalar(_h_prev)
                     cp_val = safe_scalar(_c_prev)
+                    op_val = safe_scalar(_o_prev)
+                    lp_val = safe_scalar(_l_prev)
+                    
                     if hp_val > consolidation_high and cp_val < consolidation_high:
-                        trap_risk = True
-                        break
-            if trap_risk: trap_penalty = 10
+                        # Deep rejection check: did it close near the low of the candle?
+                        prev_range = hp_val - lp_val if hp_val > lp_val else 1e-6
+                        close_pos = (cp_val - lp_val) / prev_range
+                        if close_pos < 0.3:
+                            trap_risk = True # Deep rejection (bearish fakeout)
+                        else:
+                            wicks_above_res += 1 # Shallow tap (bullish absorption)
+            
+            if trap_risk: 
+                trap_penalty = 10
+            elif wicks_above_res >= 2:
+                # Multiple taps without deep rejections = Coiling/Ascending Triangle
+                absorption_bonus = 10
 
             # 8. EXPANSION vs EXHAUSTION (15 pts)
             expansion_ratio = candle_range / max(atr_val, 1e-6)
@@ -1218,7 +1245,8 @@ class IntradayTechnicalAnalysis:
                 trend_score + 
                 liquidity_bonus + 
                 expansion_score + 
-                location_score - 
+                location_score +
+                absorption_bonus - 
                 trap_penalty
             ))
             
@@ -1301,21 +1329,21 @@ class IntradayTechnicalAnalysis:
             atr_val = float(atr_series.iloc[-1])
             atr_val = atr_val if atr_val > 0 else (l_close_val * 0.001)
 
-            # --- 2. PULLBACK DEFINITION (30 pts) ---
-            dist_ema9 = abs(l_low_val - ema9_val) / max(l_close_val, 1e-6)
-            dist_vwap = abs(l_low_val - vwap) / max(l_close_val, 1e-6)
-            dist_retest = abs(l_low_val - breakout_level) / max(l_close_val, 1e-6)
+            # --- 2. PULLBACK DEFINITION (30 pts) (V4.6 ATR-NORMALIZED) ---
+            dist_ema9_atr = abs(l_low_val - ema9_val) / max(atr_val, 1e-6)
+            dist_vwap_atr = abs(l_low_val - vwap) / max(atr_val, 1e-6)
+            dist_retest_atr = abs(l_low_val - breakout_level) / max(atr_val, 1e-6)
 
             pullback_score = 0
             entry_type = "None"
             
-            if dist_ema9 < 0.002: 
+            if dist_ema9_atr < 0.4: 
                 pullback_score = 30
                 entry_type = "EMA Pullback"
-            elif dist_vwap < 0.002: 
+            elif dist_vwap_atr < 0.4: 
                 pullback_score = 30
                 entry_type = "VWAP Bounce"
-            elif dist_retest < 0.002: 
+            elif dist_retest_atr < 0.4: 
                 pullback_score = 30
                 entry_type = "Retest"
             elif l_low_val > min(ema9_val, vwap, breakout_level):
@@ -1667,13 +1695,13 @@ class IntradayTechnicalAnalysis:
                 s_range = (s_high - s_low) / (lc_val if lc_val > 0 else 1) * 100
                 return s_range < 2.5
 
-            # FIX N2: Guard the fragile duration_validation iteration with try/except
-            # OLD: all([is_consolidating(i) for i in range(len(df), len(df)-4, -1)])
-            # Issue: if df length < 4 or slice offsets OOB, this raises silently or gives wrong result
+            # FIX N2 & V2: Overhauled logic to strictly prevent false positives
+            duration_validation = False
             try:
-                duration_validation = all([is_consolidating(i) for i in range(len(df), len(df)-4, -1) if i > 0])
+                if len(df) >= 4:
+                    duration_validation = all([is_consolidating(i) for i in range(len(df), max(0, len(df)-4), -1)])
             except Exception:
-                duration_validation = True  # Default to True to not penalise valid setups on edge cases
+                duration_validation = False  # DO NOT default to True on error
 
             # --- 5. ACCUMULATION CONFIRMATION (V3.8 Weighted Scoring) ---
             accumulation_score = 0
