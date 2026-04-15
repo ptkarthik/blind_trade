@@ -69,6 +69,11 @@ export interface Signal {
         max_stealth_buy_qty: number;
         max_stealth_buy_value: number;
     };
+    tradability?: {
+        is_kite_restricted: boolean;
+        multiplier: number;
+        reason: string;
+    };
 }
 
 interface DealCardProps {

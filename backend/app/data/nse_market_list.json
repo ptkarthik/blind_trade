@@ -110,11 +110,6 @@
         "raw_symbol": "AAVAS"
     },
     {
-        "symbol": "ABAN.NS",
-        "name": "Aban Offshore Limited",
-        "raw_symbol": "ABAN"
-    },
-    {
         "symbol": "ABB.NS",
         "name": "ABB India Limited",
         "raw_symbol": "ABB"
@@ -483,11 +478,6 @@
         "symbol": "AKUMS.NS",
         "name": "Akums Drugs and Pharmaceuticals Limited",
         "raw_symbol": "AKUMS"
-    },
-    {
-        "symbol": "AKZOINDIA.NS",
-        "name": "Akzo Nobel India Limited",
-        "raw_symbol": "AKZOINDIA"
     },
     {
         "symbol": "ALANKIT.NS",
@@ -1535,11 +1525,6 @@
         "raw_symbol": "BIL"
     },
     {
-        "symbol": "BILVYAPAR.NS",
-        "name": "BIL VYAPAR LIMITED",
-        "raw_symbol": "BILVYAPAR"
-    },
-    {
         "symbol": "BIOCON.NS",
         "name": "Biocon Limited",
         "raw_symbol": "BIOCON"
@@ -2068,11 +2053,6 @@
         "symbol": "CIPLA.NS",
         "name": "Cipla Limited",
         "raw_symbol": "CIPLA"
-    },
-    {
-        "symbol": "CLCIND.NS",
-        "name": "CLC Industries Limited",
-        "raw_symbol": "CLCIND"
     },
     {
         "symbol": "CLEAN.NS",
@@ -2915,11 +2895,6 @@
         "raw_symbol": "EMAMIREAL"
     },
     {
-        "symbol": "EMBDL.NS",
-        "name": "Embassy Developments Limited",
-        "raw_symbol": "EMBDL"
-    },
-    {
         "symbol": "EMCURE.NS",
         "name": "Emcure Pharmaceuticals Limited",
         "raw_symbol": "EMCURE"
@@ -3453,11 +3428,6 @@
         "symbol": "GFLLIMITED.NS",
         "name": "GFL Limited",
         "raw_symbol": "GFLLIMITED"
-    },
-    {
-        "symbol": "GFSTEELS.NS",
-        "name": "Grand Foundry Limited",
-        "raw_symbol": "GFSTEELS"
     },
     {
         "symbol": "GHCL.NS",
@@ -5053,6 +5023,11 @@
         "symbol": "JSWCEMENT.NS",
         "name": "JSW Cement Limited",
         "raw_symbol": "JSWCEMENT"
+    },
+    {
+        "symbol": "JSWDULUX.NS",
+        "name": "JSW Dulux Limited",
+        "raw_symbol": "JSWDULUX"
     },
     {
         "symbol": "JSWENERGY.NS",
@@ -6785,11 +6760,6 @@
         "raw_symbol": "NETWORK18"
     },
     {
-        "symbol": "NEUEON.NS",
-        "name": "Neueon Corporation Limited",
-        "raw_symbol": "NEUEON"
-    },
-    {
         "symbol": "NEULANDLAB.NS",
         "name": "Neuland Laboratories Limited",
         "raw_symbol": "NEULANDLAB"
@@ -7870,11 +7840,6 @@
         "raw_symbol": "QUICKHEAL"
     },
     {
-        "symbol": "QUINTEGRA.NS",
-        "name": "Quintegra Solutions Limited",
-        "raw_symbol": "QUINTEGRA"
-    },
-    {
         "symbol": "RACE.NS",
         "name": "Race Eco Chain Limited",
         "raw_symbol": "RACE"
@@ -8118,11 +8083,6 @@
         "symbol": "RELIGARE.NS",
         "name": "Religare Enterprises Limited",
         "raw_symbol": "RELIGARE"
-    },
-    {
-        "symbol": "RELINFRA.NS",
-        "name": "Reliance Infrastructure Limited",
-        "raw_symbol": "RELINFRA"
     },
     {
         "symbol": "RELTD.NS",
@@ -10463,11 +10423,6 @@
         "symbol": "UNITEDTEA.NS",
         "name": "The United Nilgiri Tea Estates Company Limited",
         "raw_symbol": "UNITEDTEA"
-    },
-    {
-        "symbol": "UNIVAFOODS.NS",
-        "name": "Univa Foods Limited",
-        "raw_symbol": "UNIVAFOODS"
     },
     {
         "symbol": "UNIVASTU.NS",

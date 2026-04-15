@@ -58,11 +58,17 @@ class LiquidityService:
     def get_benchmark_vol(self, symbol: str, time_bucket: str) -> float:
         return self.benchmarks.get(symbol, {}).get(time_bucket, 0)
 
-    def classify_liquidity(self, adv):
-        if adv < 200000: return "Very Low"
-        if adv < 500000: return "Low"
-        if adv < 2000000: return "Moderate"
-        return "High"
+    def classify_liquidity(self, adv, price=0.0):
+        # FIX #4: Value-Based Liquidity (Turnover in Crores)
+        # OLD: 200k shares = 'Very Low' regardless of price
+        # Issue: 200k shares of ₹5000 stock = ₹100Cr (Institutional!)
+        #        200k shares of ₹5 penny = ₹10 Lakh (Illiquid!)
+        # NEW: use Daily Turnover (Shares × Price) to classify correctly
+        turnover_cr = (adv * price) / 1e7  # Convert to Crores
+        if turnover_cr < 1 or price == 0:   return "Very Low"   # < ₹1 Cr
+        if turnover_cr < 10:                 return "Low"        # ₹1-10 Cr
+        if turnover_cr < 50:                 return "Moderate"   # ₹10-50 Cr
+        return "High"                                            # > ₹50 Cr
 
     async def refresh_all_benchmarks(self, symbols: list):
         """
@@ -102,9 +108,10 @@ class LiquidityService:
             for symbol, df in results.items():
                 if not df.empty:
                     adv = df['volume'].tail(20).mean()
+                    last_price = float(df['close'].iloc[-1]) if 'close' in df.columns and not df.empty else 0.0
                     self.liquidity_data[symbol] = {
                         "adv20": round(float(adv), 0),
-                        "level": self.classify_liquidity(adv),
+                        "level": self.classify_liquidity(adv, last_price),
                         "last_updated": time.time()
                     }
                     count += 1
@@ -137,9 +144,10 @@ class LiquidityService:
             if not df.empty:
                 adv = df['volume'].tail(20).mean()
                 if adv > 0:
+                    last_price = float(df['close'].iloc[-1]) if 'close' in df.columns else 0.0
                     self.liquidity_data[symbol] = {
                         "adv20": round(float(adv), 0),
-                        "level": self.classify_liquidity(adv),
+                        "level": self.classify_liquidity(adv, last_price),
                         "last_updated": time.time()
                     }
                     self._save_cache()

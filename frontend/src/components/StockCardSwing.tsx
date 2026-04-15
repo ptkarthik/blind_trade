@@ -34,6 +34,11 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
                 </div>
 
                 <div className="flex flex-col items-end">
+                    {signal.tradability?.is_kite_restricted && (
+                        <div className="flex items-center gap-1 bg-red-500/10 border border-red-500/30 px-2 py-0.5 rounded-md mb-2 animate-pulse">
+                            <span className="text-[9px] font-black text-red-600 uppercase tracking-tighter">Kite: MIS Blocked</span>
+                        </div>
+                    )}
                     <ScoreGauge score={signal.score} />
                     <div className="flex gap-1 mt-1">
                         {setupTags.map((tag, i) => (

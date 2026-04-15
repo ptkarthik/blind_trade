@@ -34,7 +34,10 @@ class MarketDiscoveryService:
                 name = str(row['NAME OF COMPANY']).strip()
                 series = str(row[' SERIES']).strip()
                 
-                if series in ['EQ', 'BE']:
+                # FIX #5: Only EQ series — BE (Trade-for-Trade) stocks CANNOT be traded intraday
+                # OLD: allowed both 'EQ' and 'BE', wasting ~15% of scan capacity on blocked stocks
+                # BE stocks are restricted by SEBI and blocked by all major brokers for MIS/intraday
+                if series == 'EQ':
                     stocks.append({
                         "symbol": f"{symbol}.NS",
                         "name": name,

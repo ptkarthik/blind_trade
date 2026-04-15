@@ -72,6 +72,11 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
 
                 {/* Institutional Context (Paid App) + Specialist Setup Tags */}
                 <div className="flex flex-col items-end gap-1.5 min-w-[100px]">
+                    {signal.tradability?.is_kite_restricted && (
+                        <div className="flex items-center gap-1 bg-red-500/10 border border-red-500/30 px-2 py-0.5 rounded-md animate-pulse">
+                            <span className="text-[9px] font-black text-red-600 uppercase tracking-tighter">Kite: MIS Blocked</span>
+                        </div>
+                    )}
                     <div className="flex gap-1 flex-wrap justify-end">
                         {setupTags.slice(0, 2).map((tag, i) => (
                             <span key={i} className={`text-[8px] font-black px-1.5 py-0.5 rounded border border-slate-200/50 text-slate-400 bg-white/50 uppercase tracking-tighter ${tag.includes('💎') ? 'border-primary/30 text-primary bg-primary/5' : ''}`}>

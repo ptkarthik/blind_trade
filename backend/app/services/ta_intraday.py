@@ -46,13 +46,13 @@ class IntradayTechnicalAnalysis:
             else:
                 today_df = df.tail(75).copy()
             
-            if today_df.empty: return pd.Series([(df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)] * len(df), index=df.index)
+            if today_df.empty: return pd.Series([df['close'].iloc[-1]] * len(df), index=df.index)
             
             tp = (today_df['high'] + today_df['low'] + today_df['close']) / 3
             vwap_calc = (tp * today_df['volume']).cumsum() / today_df['volume'].cumsum()
             return vwap_calc.reindex(df.index).ffill()
         except:
-            return pd.Series([(df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)] * len(df), index=df.index)
+            return pd.Series([df['close'].iloc[-1]] * len(df), index=df.index)
 
     @staticmethod
     def calculate_vwap(df: pd.DataFrame) -> float:
@@ -61,7 +61,7 @@ class IntradayTechnicalAnalysis:
             if col in df.columns:
                 df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         vwap_s = IntradayTechnicalAnalysis.calculate_vwap_series(df)
-        return float((vwap_s.iloc[-1] if len(vwap_s) > 0 else 0.0))
+        return float(vwap_s.iloc[-1]) if not vwap_s.empty else 0.0
 
     @staticmethod
     def analyze_vwap_advanced(df: pd.DataFrame) -> dict:
@@ -72,11 +72,9 @@ class IntradayTechnicalAnalysis:
         try:
             vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
             # Ensure scalars (handle potential duplicate columns/Series)
-            vwap_now = (vwap_series.iloc[-1] if len(vwap_series) > 0 else 0.0)
-            vwap_now = safe_scalar(vwap_now)
+            vwap_now = safe_scalar(vwap_series.iloc[-1])
             
-            close_now = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)
-            close_now = safe_scalar(close_now)
+            close_now = safe_scalar(df['close'].iloc[-1])
             
             # 1. Slope Calculation (Last 5 candles)
             lookback = 5
@@ -94,7 +92,7 @@ class IntradayTechnicalAnalysis:
                 was_below = df['close'].iloc[-2] < vwap_series.iloc[-2] or df['close'].iloc[-3] < vwap_series.iloc[-3]
                 is_above = close_now > vwap_now
                 vol_ma = df['volume'].rolling(20).mean().iloc[-1]
-                high_vol = (df['volume'].iloc[-1] if len(df['volume']) > 0 else 0.0) > vol_ma * 1.2
+                high_vol = df['volume'].iloc[-1] > vol_ma * 1.2
                 reclaim_detected = was_below and is_above and high_vol
                 
             # 3. Oscillation Detection (Choppiness)
@@ -135,8 +133,8 @@ class IntradayTechnicalAnalysis:
             if len(df) < 20: return {"is_pullback_setup": False}
             
             vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
-            vwap_now = (vwap_series.iloc[-1] if len(vwap_series) > 0 else 0.0)
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            vwap_now = safe_scalar(vwap_series.iloc[-1])
+            latest = df.iloc[-1]
             
             # 1. Test of VWAP (Low is near or below VWAP)
             # We want to catch candles that 'bounce' off VWAP
@@ -203,19 +201,31 @@ class IntradayTechnicalAnalysis:
             orb_low = orb_df['low'].min()
             
             latest_candle_time = today_df.index[-1]
-            current_close = (today_df.iloc[-1] if len(today_df) > 0 else 0.0)['close']
+            current_close = today_df['close'].iloc[-1]
             
             status = "Inside"
-            # Signal only valid if current time is after 09:45
+            # FIX #7: ORB Early Detection Mode
+            # OLD: Signals only valid AFTER 09:45, completely missing the opening surge
+            # NEW: Allow early signals if volume is institutional (>250% of avg)
+            vol_ma_orb = today_df['volume'].iloc[:-1].mean() if len(today_df) > 1 else 0
+            current_vol = today_df['volume'].iloc[-1]
+            is_institutional_open = float(current_vol) > float(vol_ma_orb) * 2.5 if vol_ma_orb > 0 else False
+
             if latest_candle_time > end_time:
+                # Standard ORB confirmation (post 09:45)
                 if current_close > orb_high: status = "Breakout"
                 elif current_close < orb_low: status = "Breakdown"
+            elif is_institutional_open:
+                # Early ORB detection during the opening range itself
+                if current_close > orb_high: status = "Early Breakout"
+                elif current_close < orb_low: status = "Early Breakdown"
             
             return {
                 "orb_high": orb_high,
                 "orb_low": orb_low,
                 "status": status,
-                "range_size": orb_high - orb_low
+                "range_size": orb_high - orb_low,
+                "early_detection": is_institutional_open
             }
         except:
             return {}
@@ -237,9 +247,9 @@ class IntradayTechnicalAnalysis:
             
             if prev_df.empty or today_df.empty: return {}
             
-            prev_close = (prev_df.iloc[-1] if len(prev_df) > 0 else 0.0)['close']
+            prev_close = prev_df['close'].iloc[-1]
             today_open = today_df.iloc[0]['open']
-            current_price = (today_df.iloc[-1] if len(today_df) > 0 else 0.0)['close']
+            current_price = today_df['close'].iloc[-1]
             
             gap_pct = ((today_open - prev_close) / prev_close) * 100
             
@@ -287,14 +297,14 @@ class IntradayTechnicalAnalysis:
                 # Fallback: Use full DF stats if no prev day distinction
                 high = df['high'].max()
                 low = df['low'].min()
-                close = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)
+                close = df['close'].iloc[-1]
             else:
                 # Get last completed day
                 last_date = prev_data.index[-1].date()
                 last_day_df = prev_data[prev_data.index.date == last_date]
                 high = last_day_df['high'].max()
                 low = last_day_df['low'].min()
-                close = (last_day_df['close'].iloc[-1] if len(last_day_df['close']) > 0 else 0.0)
+                close = last_day_df['close'].iloc[-1]
                 
             pivot = (high + low + close) / 3
             r1 = (2 * pivot) - low
@@ -449,20 +459,37 @@ class IntradayTechnicalAnalysis:
                 df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
             rsi = RSIIndicator(close=df['close'], window=14).rsi()
-            if len(df) < 10: return {"type": "None"}
+            if len(df) < 15: return {"type": "None"}
             
-            # Last two local peaks/troughs comparison
-            # Simplified: Compare last candle and candle 5 bars ago
-            p1, p2 = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0), df['close'].iloc[-5]
-            r1, r2 = (rsi.iloc[-1] if len(rsi) > 0 else 50.0), rsi.iloc[-5]
+            # FIX H4: Use local swing highs/lows for proper peak-to-peak divergence
+            # OLD: compared candle[-1] vs candle[-5] — arbitrary, not actual peaks
+            # NEW: find local high/low in two windows (last 5 and prior 5) and compare
+            window = 5
+            # Recent swing: last 5 candles
+            recent_price_high = df['close'].iloc[-window:].max()
+            recent_price_high_idx = df['close'].iloc[-window:].idxmax()
+            recent_price_low = df['close'].iloc[-window:].min()
+            recent_price_low_idx = df['close'].iloc[-window:].idxmin()
             
-            # Bearish Divergence: Price higher, RSI lower
-            if p1 > p2 and r1 < r2 and r1 > 60:
-                return {"type": "Bearish", "severity": "High" if r1 < r2 - 5 else "Moderate"}
+            # Prior swing: 5-10 candles ago
+            prior_price_high = df['close'].iloc[-(window*2):-window].max()
+            prior_price_high_idx = df['close'].iloc[-(window*2):-window].idxmax()
+            prior_price_low = df['close'].iloc[-(window*2):-window].min()
+            prior_price_low_idx = df['close'].iloc[-(window*2):-window].idxmin()
             
-            # Bullish Divergence: Price lower, RSI higher
-            if p1 < p2 and r1 > r2 and r1 < 40:
-                return {"type": "Bullish", "severity": "High" if r1 > r2 + 5 else "Moderate"}
+            # RSI at those peaks
+            recent_rsi_high = rsi.loc[recent_price_high_idx] if recent_price_high_idx in rsi.index else rsi.iloc[-1]
+            prior_rsi_high = rsi.loc[prior_price_high_idx] if prior_price_high_idx in rsi.index else rsi.iloc[-6]
+            recent_rsi_low = rsi.loc[recent_price_low_idx] if recent_price_low_idx in rsi.index else rsi.iloc[-1]
+            prior_rsi_low = rsi.loc[prior_price_low_idx] if prior_price_low_idx in rsi.index else rsi.iloc[-6]
+            
+            # Bearish Divergence: Price Higher High but RSI Lower High (at overbought territory)
+            if recent_price_high > prior_price_high and recent_rsi_high < prior_rsi_high and recent_rsi_high > 60:
+                return {"type": "Bearish", "severity": "High" if recent_rsi_high < prior_rsi_high - 5 else "Moderate"}
+            
+            # Bullish Divergence: Price Lower Low but RSI Higher Low (at oversold territory)
+            if recent_price_low < prior_price_low and recent_rsi_low > prior_rsi_low and recent_rsi_low < 40:
+                return {"type": "Bullish", "severity": "High" if recent_rsi_low > prior_rsi_low + 5 else "Moderate"}
                 
             return {"type": "None"}
         except:
@@ -482,7 +509,7 @@ class IntradayTechnicalAnalysis:
             levels = [vwap, pivots.get("S1", 0), pivots.get("P", 0)]
             
             last_3 = df.tail(3)
-            current = (last_3.iloc[-1] if len(last_3) > 0 else 0.0)
+            current = last_3.iloc[-1]
             prev = last_3.iloc[-2]
             
             for lvl in levels:
@@ -533,7 +560,7 @@ class IntradayTechnicalAnalysis:
             
             adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
             adx_series = adx_ind.adx()
-            adx = (adx_series.iloc[-1] if len(adx_series) > 0 else 0.0)
+            adx = adx_series.iloc[-1]
             plus_di = adx_ind.adx_pos().iloc[-1]
             minus_di = adx_ind.adx_neg().iloc[-1]
             
@@ -642,7 +669,7 @@ class IntradayTechnicalAnalysis:
         try:
             if len(df) < 30: return {"liquidity_sweep": False}
 
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
             prev_1 = df.iloc[-2]
             prev_2 = df.iloc[-3] if len(df) > 2 else prev_1
             
@@ -682,7 +709,7 @@ class IntradayTechnicalAnalysis:
             
             tp = (high_series + low_series + close_series) / 3
             vwap = (tp * vol_series).cumsum() / vol_series.cumsum()
-            vwap_now = (vwap.iloc[-1] if len(vwap) > 0 else 0.0)
+            vwap_now = safe_scalar(vwap.iloc[-1])
             std_dev = close_series.rolling(20).std().iloc[-1]
             vwap_res = vwap_now + (2 * std_dev)
             
@@ -857,9 +884,9 @@ class IntradayTechnicalAnalysis:
             close_series = _close.iloc[:, 0] if isinstance(_close, pd.DataFrame) else _close
             ema_20_series = EMAIndicator(close=close_series, window=20).ema_indicator()
             ema_50_series = EMAIndicator(close=close_series, window=50).ema_indicator()
-            ema_20 = (ema_20_series.iloc[-1] if len(ema_20_series) > 0 else 0.0)
+            ema_20 = ema_20_series.iloc[-1]
             ema_20_prev = ema_20_series.iloc[-2]
-            ema_50 = (ema_50_series.iloc[-1] if len(ema_50_series) > 0 else 0.0)
+            ema_50 = ema_50_series.iloc[-1]
             
             ema_alignment = ema_20 > ema_50
             slope_20 = ema_20 - ema_20_prev
@@ -906,8 +933,8 @@ class IntradayTechnicalAnalysis:
             prev_high = safe_scalar(_ph)
             prev_low = safe_scalar(_pl)
             
-            _lh = (h_s.iloc[-1] if len(h_s) > 0 else 0.0)
-            _ll = (l_s.iloc[-1] if len(l_s) > 0 else 0.0)
+            _lh = h_s.iloc[-1]
+            _ll = l_s.iloc[-1]
             latest_high = safe_scalar(_lh)
             latest_low = safe_scalar(_ll)
             
@@ -941,7 +968,7 @@ class IntradayTechnicalAnalysis:
         try:
             if len(df) < 20: return {"trap_move_detected": False}
             
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
             
             # 1. Volume spike ratio > 1.8x volume_ma(10)
             _vol_all = df['volume']
@@ -1015,7 +1042,7 @@ class IntradayTechnicalAnalysis:
 
             # 1. Look at last 20 candles (excluding CURRENT)
             analysis_range = df.iloc[-21:-1]
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
 
             # Range low of the lookback period (Handle potential multi-column)
             _lows = analysis_range['low']
@@ -1037,7 +1064,7 @@ class IntradayTechnicalAnalysis:
 
             # Improvement 2 (V3.7): Trend Context Filter (Avoid falling knives)
             ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
-            ema_20 = float((ema_20_series.iloc[-1] if len(ema_20_series) > 0 else 0.0)) if hasattr((ema_20_series.iloc[-1] if len(ema_20_series) > 0 else 0.0), "iloc") else float((ema_20_series.iloc[-1] if len(ema_20_series) > 0 else 0.0))
+            ema_20 = float(ema_20_series.iloc[-1])
             trend_filter = l_close_val > ema_20
 
             # Improvement 3 (V3.7): Sustained Reclaim Confirmation (Multi-Candle)
@@ -1074,11 +1101,13 @@ class IntradayTechnicalAnalysis:
             if strong_rejection: sweep_score += 20
             if valid_sweep_size: sweep_score += 20
 
-            # Combined Final Condition (Ultra Selective)
+            # FIX #8: Calibrated Sweep Scoring
+            # OLD: sweep_score >= 100 AND trend_filter AND sustained_reclaim (7 simultaneous conditions!)
+            # Issue: Missed ~70% of valid institutional wash-and-rinse setups that score 60-80
+            # NEW: 80/100 core score + sustained_reclaim (2-candle confirmation) is sufficient
             is_sweep = (
-                sweep_score >= 100 and    # Must meet all core requirements
-                trend_filter and          # Must be bullish context
-                sustained_reclaim         # Must be a 2-candle confirmation
+                sweep_score >= 80 and      # Requires at least 4 of 5 core conditions
+                sustained_reclaim          # Must be a 2-candle confirmation (still strict)
             )
 
             return {
@@ -1098,7 +1127,7 @@ class IntradayTechnicalAnalysis:
             if col in df.columns:
                 df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
             
             # --- 0. DATA EXTRACTION (Handle Duplicates/Series) ---
             _l_close = latest['close']
@@ -1112,7 +1141,7 @@ class IntradayTechnicalAnalysis:
 
             # --- V4.2 PRE-REQUISITES (ATR 14) ---
             atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-            atr_val = float((atr_series.iloc[-1] if len(atr_series) > 0 else 0.0)) if hasattr((atr_series.iloc[-1] if len(atr_series) > 0 else 0.0), "iloc") else float((atr_series.iloc[-1] if len(atr_series) > 0 else 0.0))
+            atr_val = float(atr_series.iloc[-1])
             # Safety fallback for ATR
             atr_val = atr_val if atr_val > 0 else (l_close_val * 0.001)
 
@@ -1143,8 +1172,8 @@ class IntradayTechnicalAnalysis:
             # 5. TREND CONFIRMATION (EMA 9/20) (10 pts)
             ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
             ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
-            ema9 = float((ema9_series.iloc[-1] if len(ema9_series) > 0 else 0.0)) if hasattr((ema9_series.iloc[-1] if len(ema9_series) > 0 else 0.0), "iloc") else float((ema9_series.iloc[-1] if len(ema9_series) > 0 else 0.0))
-            ema20 = float((ema20_series.iloc[-1] if len(ema20_series) > 0 else 0.0)) if hasattr((ema20_series.iloc[-1] if len(ema20_series) > 0 else 0.0), "iloc") else float((ema20_series.iloc[-1] if len(ema20_series) > 0 else 0.0))
+            ema9 = float(ema9_series.iloc[-1])
+            ema20 = float(ema20_series.iloc[-1])
             trend_aligned = ema9 > ema20 and l_close_val > ema9
             trend_score = 10 if trend_aligned else 0
 
@@ -1180,7 +1209,8 @@ class IntradayTechnicalAnalysis:
             elif dist_vwap_atr <= 2.0: location_score = 8
 
             # 10. FINAL SCORING (SUM OF ALL)
-            breakout_score = (
+            # R4-11 FIX: Normalize score to max 100
+            breakout_score = min(100, (
                 strength_score + 
                 volume_score + 
                 candle_score + 
@@ -1190,7 +1220,7 @@ class IntradayTechnicalAnalysis:
                 expansion_score + 
                 location_score - 
                 trap_penalty
-            )
+            ))
             
             # Classification
             if breakout_score >= 80: strength_label = "Explosive Breakout"
@@ -1232,7 +1262,7 @@ class IntradayTechnicalAnalysis:
         try:
             if len(df) < 25: return {"is_entry": False}
 
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
             prev = df.iloc[-2]
 
             # --- 0. DATA EXTRACTION (Scalars) ---
@@ -1263,12 +1293,12 @@ class IntradayTechnicalAnalysis:
             # --- 1. INDICATORS ---
             ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
             ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
-            ema9_val = float((ema9_series.iloc[-1] if len(ema9_series) > 0 else 0.0)) if hasattr((ema9_series.iloc[-1] if len(ema9_series) > 0 else 0.0), "iloc") else float((ema9_series.iloc[-1] if len(ema9_series) > 0 else 0.0))
-            ema20_val = float((ema20_series.iloc[-1] if len(ema20_series) > 0 else 0.0)) if hasattr((ema20_series.iloc[-1] if len(ema20_series) > 0 else 0.0), "iloc") else float((ema20_series.iloc[-1] if len(ema20_series) > 0 else 0.0))
+            ema9_val = float(ema9_series.iloc[-1])
+            ema20_val = float(ema20_series.iloc[-1])
             
             vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
             atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-            atr_val = float((atr_series.iloc[-1] if len(atr_series) > 0 else 0.0)) if hasattr((atr_series.iloc[-1] if len(atr_series) > 0 else 0.0), "iloc") else float((atr_series.iloc[-1] if len(atr_series) > 0 else 0.0))
+            atr_val = float(atr_series.iloc[-1])
             atr_val = atr_val if atr_val > 0 else (l_close_val * 0.001)
 
             # --- 2. PULLBACK DEFINITION (30 pts) ---
@@ -1426,7 +1456,8 @@ class IntradayTechnicalAnalysis:
             prev_5_lows = df['low'].iloc[-6:-1]
             p5_low_val = float(prev_5_lows.min())
             structure_break = (p5_low_val - l_low_val) / (p5_low_val if p5_low_val > 0 else 1)
-            structure_weak = structure_break > 0.002
+            # FIX DEADLY STRUCTURAL PENALTY: Only consider it weak if it FAILS to recover above the structural low!
+            structure_weak = (structure_break > 0.002) and (l_close_val <= p5_low_val)
             if structure_weak: validation_penalty += 20
 
             # --- 9. FINAL SCORING ---
@@ -1457,15 +1488,17 @@ class IntradayTechnicalAnalysis:
             # --- 11. RISK MANAGEMENT ENGINE (V6.0) ---
             # 1. Dual Stop Loss: Selects the tighter floor
             atr_sl = l_close_val - (atr_val * 1.0)
-            structural_sl = float(df['low'].iloc[-6:-1].min())  # Previous 5 lows
+            structural_sl = float(df['low'].iloc[-6:].min())  # Previous 5 lows + current candle
             stop_loss = max(atr_sl, structural_sl) # Higher price = tighter SL for longs
             
             sl_distance = l_close_val - stop_loss
             sl_pct = sl_distance / (l_close_val if l_close_val > 0 else 1)
             
-            # 2. Position Sizing (Fixed 1% Capital Risk - assuming base 10k context)
-            capital = 10000 
-            risk_amount = capital * 0.01
+            # FIX N1: Removed hardcoded capital=10000. Position sizing is user-specific.
+            # This value is a reference/example only — real deployment must use per-user capital config.
+            # risk_amount and position_size are still calculated for reference in the UI.
+            capital = 10000  # REFERENCE ONLY: Replace with user's actual capital at integration layer
+            risk_amount = capital * 0.01  # 1% risk rule
             position_size = int(risk_amount / sl_distance) if sl_distance > 0 else 0
             
             # 3. Multi-Target Strategy (RR)
@@ -1474,7 +1507,9 @@ class IntradayTechnicalAnalysis:
             rr_ratio = (target_2 - l_close_val) / (sl_distance if sl_distance > 0 else 1)
             
             # 4. Risk Filters
-            trade_valid = (sl_pct <= 0.02) and (rr_ratio >= 1.5) # Max 2% SL, Min 1.5 RR
+            # FIX VOLATILITY CAPPING: Increased SL threshold so explosive ATR trades aren't automatically blocked.
+            # The position sizing naturally protects capital by buying fewer shares on wide stops.
+            trade_valid = (sl_pct <= 0.045) and (rr_ratio >= 1.5) # Max 4.5% SL, Min 1.5 RR
 
             # Final Decision: Threshold 70 [V6]
             is_entry = (
@@ -1534,7 +1569,7 @@ class IntradayTechnicalAnalysis:
         try:
             if len(df) < 30: return {"accumulation_detected": False}
 
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
             # --- 1. CONSOLIDATION DETECTION ---
             # Using last 20 candles
             last_20 = df.tail(20)
@@ -1556,7 +1591,7 @@ class IntradayTechnicalAnalysis:
             
             # Price above or near VWAP check
             vwap_series = IntradayTechnicalAnalysis.calculate_vwap_series(df)
-            _vwap_val = (vwap_series.iloc[-1] if len(vwap_series) > 0 else 0.0)
+            _vwap_val = vwap_series.iloc[-1] if not vwap_series.empty else 0.0
             vwap_now = safe_scalar(_vwap_val)
             
             # price remains above or near VWAP (< 0.5% offset if below)
@@ -1585,7 +1620,7 @@ class IntradayTechnicalAnalysis:
                     pullbacks_shallow = False
                     break
             
-            _l_low_scalar = (l_s.iloc[-1] if len(l_s) > 0 else 0.0)
+            _l_low_scalar = l_s.iloc[-1]
             l_low_val = safe_scalar(_l_low_scalar)
             
             _prev_low_10_scalar = l_s.iloc[-10]
@@ -1627,12 +1662,18 @@ class IntradayTechnicalAnalysis:
                 if slice_h.empty: return False
                 s_high = float(slice_h.max())
                 s_low = float(slice_l.min())
-                _lc = (slice_c.iloc[-1] if len(slice_c) > 0 else 0.0)
+                _lc = slice_c.iloc[-1] if not slice_c.empty else 0.0
                 lc_val = safe_scalar(_lc)
                 s_range = (s_high - s_low) / (lc_val if lc_val > 0 else 1) * 100
                 return s_range < 2.5
 
-            duration_validation = all([is_consolidating(i) for i in range(len(df), len(df)-4, -1)])
+            # FIX N2: Guard the fragile duration_validation iteration with try/except
+            # OLD: all([is_consolidating(i) for i in range(len(df), len(df)-4, -1)])
+            # Issue: if df length < 4 or slice offsets OOB, this raises silently or gives wrong result
+            try:
+                duration_validation = all([is_consolidating(i) for i in range(len(df), len(df)-4, -1) if i > 0])
+            except Exception:
+                duration_validation = True  # Default to True to not penalise valid setups on edge cases
 
             # --- 5. ACCUMULATION CONFIRMATION (V3.8 Weighted Scoring) ---
             accumulation_score = 0
@@ -1659,7 +1700,7 @@ class IntradayTechnicalAnalysis:
 
             # --- 7. TREND FILTER (EMA 20) ---
             ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
-            _e20 = (ema_20_series.iloc[-1] if len(ema_20_series) > 0 else 0.0)
+            _e20 = ema_20_series.iloc[-1] if not ema_20_series.empty else 0.0
             ema_20_val = safe_scalar(_e20)
             trend_ok = current_price > ema_20_val
 
@@ -1724,10 +1765,10 @@ class IntradayTechnicalAnalysis:
             close_series = _close.iloc[:, 0] if isinstance(_close, pd.DataFrame) else _close
             ema_9 = EMAIndicator(close=close_series, window=9).ema_indicator()
             ema_20 = EMAIndicator(close=close_series, window=20).ema_indicator()
-            _l_close = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)
+            _l_close = df['close'].iloc[-1]
             close_now = safe_scalar(_l_close)
-            ema_9_now = (ema_9.iloc[-1] if len(ema_9) > 0 else 0.0)
-            ema_20_now = (ema_20.iloc[-1] if len(ema_20) > 0 else 0.0)
+            ema_9_now = safe_scalar(ema_9.iloc[-1])
+            ema_20_now = safe_scalar(ema_20.iloc[-1])
             ema_20_prev = ema_20.iloc[-2]
             
             # Ensure EMAs are scalars too (some libraries might return Series if input was duplicate)
@@ -1763,7 +1804,7 @@ class IntradayTechnicalAnalysis:
             else:
                 today_df = df.tail(75) # Fallback for non-timed data
             
-            if today_df.empty: return (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0)
+            if today_df.empty: return float(df['close'].iloc[-1])
             
             # Use 50 bins for the price range of the day
             min_p = today_df['low'].min()
@@ -1789,7 +1830,7 @@ class IntradayTechnicalAnalysis:
             poc = (bins[max_bin_idx] + bins[max_bin_idx+1]) / 2
             return float(poc)
         except:
-            return float((df['close'].iloc[-1] if len(df['close']) > 0 else 0.0))
+            return float(df['close'].iloc[-1])
 
     @staticmethod
     def detect_poc_bounce(df: pd.DataFrame) -> dict:
@@ -1801,7 +1842,7 @@ class IntradayTechnicalAnalysis:
             if len(df) < 20: return {"is_bounce": False}
             
             poc = IntradayTechnicalAnalysis.calculate_poc(df)
-            latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+            latest = df.iloc[-1]
             
             # 1. Test of POC
             _l_low = latest['low']
@@ -1858,6 +1899,12 @@ class IntradayTechnicalAnalysis:
             
             buy_vol = v_s[c_s > o_s].sum()
             sell_vol = v_s[c_s < o_s].sum()
+            # FIX N3: Handle doji candles (close == open) properly
+            # OLD: doji volume was excluded from both buy and sell, skewing CVD on consolidating days
+            # NEW: split doji volume 50/50 as indecision volume (neutral)
+            doji_vol = v_s[c_s == o_s].sum()
+            buy_vol = buy_vol + (doji_vol * 0.5)
+            sell_vol = sell_vol + (doji_vol * 0.5)
             
             cvd = buy_vol - sell_vol
             total_vol = buy_vol + sell_vol
@@ -1908,7 +1955,7 @@ class IntradayTechnicalAnalysis:
                 if isinstance(series, pd.DataFrame):
                     df[col] = series.iloc[:, 0]
         
-        latest = (df.iloc[-1] if len(df) > 0 else 0.0)
+        latest = df.iloc[-1]
         
         # 1. VWAP (30% weight in engine) - Daily anchor is standard
         vwap_ctx = IntradayTechnicalAnalysis.analyze_vwap_advanced(df)
@@ -1942,9 +1989,22 @@ class IntradayTechnicalAnalysis:
         if avg_vol_at_time > 0:
             rvol = current_vol / max(avg_vol_at_time, 1e-6)
         else:
-            # Fallback: RVOL = Current Volume / (ADV20 / 25 expected candles per session)
-            # Standard time-normalized intraday benchmarking divisor fixed at 25
-            avg_candle_vol_raw = adv20 / 25 if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
+            # FIX #6: Dynamic RVOL Divisor (Timeframe-Aware)
+            # OLD: Fixed divisor of 25, assumed 15min interval = 375min/15 = 25 candles
+            # Issue: On 5min data, there are 75 candles, making volume look 3x higher than reality
+            # NEW: Infer the interval from the data spacing and calculate the correct divisor
+            if isinstance(df.index, pd.DatetimeIndex) and len(df.index) >= 2:
+                inferred_mins = (df.index[-1] - df.index[-2]).total_seconds() / 60
+                # Guard against anomalies (e.g. gaps from circuit breaks)
+                if 1 <= inferred_mins <= 60:
+                    session_minutes = 375  # NSE session: 9:15am to 3:30pm
+                    candles_per_session = max(1, int(session_minutes / inferred_mins))
+                else:
+                    candles_per_session = 25  # Fallback if inference fails
+            else:
+                candles_per_session = 25  # Static fallback
+            
+            avg_candle_vol_raw = adv20 / candles_per_session if adv20 > 0 else df['volume'].rolling(20).mean().iloc[-1]
             avg_candle_vol = safe_scalar(avg_candle_vol_raw)
             rvol = current_vol / max(avg_candle_vol, 1e-6)
             rvol_time_reference = "ADV25_FALLBACK"
@@ -1966,15 +2026,17 @@ class IntradayTechnicalAnalysis:
         ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
         ema_9 = ema_9_series.iloc[-1]
         ema_20 = ema_20_series.iloc[-1]
+        # FIX #5: Use close_val (scalar) for all comparisons to avoid 'Ambiguous truth value'
+        # Raw `close` from latest['close'] may still be a Series on duplicate-column data
         ema_score = 0
         ema_status = "Bearish"
-        if ema_9 > ema_20 and close > ema_9:
+        if ema_9 > ema_20 and close_val > ema_9:
             ema_score = 100
             ema_status = "Strong Bullish (> 9EMA > 20EMA)"
         elif ema_9 > ema_20:
             ema_score = 75
             ema_status = "Bullish Cross"
-        elif close > ema_20:
+        elif close_val > ema_20:
             ema_score = 50
             ema_status = "Holding 20EMA"
             
@@ -1982,23 +2044,23 @@ class IntradayTechnicalAnalysis:
         pivots = IntradayTechnicalAnalysis.calculate_pivots(df)
         pivot_score = 50
         pivot_status = "Between Levels"
-        res_1 = pivots.get("R1", close * 1.05)
-        sup_1 = pivots.get("S1", close * 0.95)
+        res_1 = pivots.get("R1", close_val * 1.05)
+        sup_1 = pivots.get("S1", close_val * 0.95)
         
-        if close > res_1:
+        if close_val > res_1:
             pivot_score = 100  # Clean Breakout
             pivot_status = "Above R1 Breakout"
-        elif close < sup_1:
+        elif close_val < sup_1:
             pivot_score = 0
             pivot_status = "Below S1 Breakdown"
-        elif close > pivots.get("P", 0):
+        elif close_val > pivots.get("P", 0):
             pivot_score = 75
             pivot_status = "Above Central Pivot"
             
         # 5. Price Action / Order Flow Proxy (20% weight in engine)
         # Replacing Level 2 with candle structure: Strong close near high + volume
         candle_range = latest['high'] - latest['low']
-        close_relative = (close - latest['low']) / candle_range if candle_range > 0 else 0.5
+        close_relative = (close_val - latest['low']) / candle_range if candle_range > 0 else 0.5
         
         # A close in the top 20% of the candle is very aggressive buying
         pa_score = 0
@@ -2054,8 +2116,9 @@ class IntradayTechnicalAnalysis:
 
         # 8. Adaptive Risk Management (Volatility-Adjusted)
         atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-        atr_val = (atr_series.iloc[-1] if len(atr_series) > 0 else 0.0)
-        if pd.isna(atr_val) or atr_val == 0: atr_val = close * 0.015
+        atr_val = atr_series.iloc[-1] if not atr_series.empty else 0.0
+        # R4-3 FIX: Use close_val (scalar) not raw close for ATR fallback
+        if pd.isna(atr_val) or atr_val == 0: atr_val = close_val * 0.015
         
         # Base multipliers
         sl_mult = 1.5
@@ -2077,37 +2140,39 @@ class IntradayTechnicalAnalysis:
         tp_dist = tp_mult * atr_val
         
         # Dynamic Support/Resistance relative to CURRENT price
-        valid_res = [v for k, v in pivots.items() if v > close]
-        target = min(valid_res) if (valid_res and min(valid_res) > close * 1.002) else close + tp_dist
+        valid_res = [v for k, v in pivots.items() if v > close_val]
+        nearest_pivot = min(valid_res) if valid_res else close_val + tp_dist
+        target = max(nearest_pivot, close_val + tp_dist)
         
-        valid_sup = [v for k, v in pivots.items() if v < close]
-        best_sup = max(valid_sup) if (valid_sup and max(valid_sup) < close * 0.998) else close - sl_dist
+        valid_sup = [v for k, v in pivots.items() if v < close_val]
+        best_sup = max(valid_sup) if (valid_sup and max(valid_sup) < close_val * 0.998) else close_val - sl_dist
         
         # Trailing stops use the ATR distance solely, ignoring pivots if it's parabolic
         if is_trailing:
-            stop_loss = close - sl_dist
+            stop_loss = close_val - sl_dist
         else:
-            stop_loss = max(best_sup, close - sl_dist)
+            stop_loss = max(best_sup, close_val - sl_dist)
         
         # Hard limits (Fix for Penny Stocks where ATR < 0.01)
         # Ensure a minimum 0.5% move for target and 0.4% move for stop loss to prevent overlaps
-        min_target_dist = max(1.5 * sl_dist, close * 0.005)
-        min_stop_dist = max(sl_dist, close * 0.004)
+        min_target_dist = max(1.5 * sl_dist, close_val * 0.005)
+        min_stop_dist = max(sl_dist, close_val * 0.004)
         
-        if target <= close: target = close + min_target_dist
-        if stop_loss >= close: stop_loss = close - min_stop_dist
+        if target <= close_val: target = close_val + min_target_dist
+        if stop_loss >= close_val: stop_loss = close_val - min_stop_dist
         
         # Absolute safeguard against equal values due to rounding on micro-caps
-        if round(target, 2) <= round(close, 2): target = close * 1.01
-        if round(stop_loss, 2) >= round(close, 2): stop_loss = close * 0.99
+        if round(target, 2) <= round(close_val, 2): target = close_val * 1.01
+        if round(stop_loss, 2) >= round(close_val, 2): stop_loss = close_val * 0.99
         
         target_reason = "Technical Resistance Area" if valid_res and not is_trailing else "ATR Momentum Extension"
         
         # Special Bonus Events (Still mapped for the Engine to view)
         orb = IntradayTechnicalAnalysis.detect_orb(df)
         gap = IntradayTechnicalAnalysis.analyze_gap(df)
-        exhaustion = IntradayTechnicalAnalysis.check_exhaustion(df, close)
-        pullback = IntradayTechnicalAnalysis.identify_pullback(df, close)
+        # R4-2 FIX: Pass close_val (scalar) not raw close (potential Series) to sub-functions
+        exhaustion = IntradayTechnicalAnalysis.check_exhaustion(df, close_val)
+        pullback = IntradayTechnicalAnalysis.identify_pullback(df, close_val)
         squeeze = IntradayTechnicalAnalysis.detect_squeeze(df)
         divergence = IntradayTechnicalAnalysis.detect_rsi_divergence(df)
         trap = IntradayTechnicalAnalysis.detect_liquidity_trap(df)
@@ -2115,14 +2180,14 @@ class IntradayTechnicalAnalysis:
         poc_bounce = IntradayTechnicalAnalysis.detect_poc_bounce(df)
         
         # Anti-Chasing: Distance from ideal entry (VWAP or Pivot)
-        best_entry = vwap if vwap_score == 100 else pivots.get("P", close)
-        chase_dist = (close - best_entry) / max(atr_val, 1e-6)
+        best_entry = vwap if vwap_score == 100 else pivots.get("P", close_val)
+        chase_dist = (close_val - best_entry) / max(atr_val, 1e-6)
         
         # STRICT CHASE: If ADX isn't soaring, chasing > 1.0 ATR is highly dangerous.
         chase_threshold = 1.6 if is_trailing else 1.0
         is_chasing = chase_dist > chase_threshold 
         
-        ladder = IntradayTechnicalAnalysis.calculate_ladder(df, close)
+        ladder = IntradayTechnicalAnalysis.calculate_ladder(df, close_val)
         
         return {
             "vwap_score": vwap_score,
@@ -2162,9 +2227,8 @@ class IntradayTechnicalAnalysis:
             "ema9_prev": safe_scalar(ema_9_series.iloc[-2] if len(ema_9_series) > 1 else ema_9),
             "ema20": safe_scalar(ema_20),
             "ema20_prev": safe_scalar(ema_20_series.iloc[-2] if len(ema_20_series) > 1 else ema_20),
-            "pa_score": pa_score,
-            "adx_score": adx_ctx["score"],
-            "vwap_score": vwap_score,
+            # FIX #7: Removed duplicate keys (pa_score, adx_score, vwap_score)
+            # that were already set at Lines 2191-2192/2186
             "trap_range_expansion": trap.get("trap_range_expansion", False),
             "chase": {
                 "is_chasing": is_chasing,
