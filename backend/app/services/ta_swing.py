@@ -24,11 +24,35 @@ class SwingTechnicalAnalysis:
     """
 
     @staticmethod
-    def analyze_pullback(df: pd.DataFrame, nifty_20d_ret: float = 0) -> dict:
+    def compute_context(df: pd.DataFrame) -> dict:
+        close_series = df['close'].iloc[:, 0] if isinstance(df['close'], pd.DataFrame) else df['close']
+        vol_s = df['volume'].iloc[:, 0] if isinstance(df['volume'], pd.DataFrame) else df['volume']
+        from ta.volatility import AverageTrueRange
+        from ta.trend import ADXIndicator
+        from ta.volume import OnBalanceVolumeIndicator
+        
+        ctx = {}
+        ctx['sma_50'] = SMAIndicator(close=close_series, window=50).sma_indicator()
+        ctx['sma_200'] = SMAIndicator(close=close_series, window=200).sma_indicator() if len(df) >= 200 else pd.Series(dtype=float)
+        ctx['sma_150'] = SMAIndicator(close=close_series, window=150).sma_indicator() if len(df) >= 150 else pd.Series(dtype=float)
+        ctx['ema_20'] = EMAIndicator(close=close_series, window=20).ema_indicator()
+        ctx['rsi'] = RSIIndicator(close=close_series, window=14).rsi()
+        ctx['atr'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+        ctx['adx'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
+        ctx['obv'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
+        ctx['vol_ma'] = vol_s.rolling(20).mean()
+        ctx['close_series'] = close_series
+        ctx['vol_s'] = vol_s
+        return ctx
+
+    @staticmethod
+    def analyze_pullback(df: pd.DataFrame, nifty_20d_ret: float = 0, ctx: dict = None) -> dict:
         """
         Refined Pullback Strategy: Capturing bounces at supports with flexible confirmation.
         """
-        if df.empty or len(df) < 200:
+        if ctx is None:
+            ctx = SwingTechnicalAnalysis.compute_context(df)
+        if df.empty or len(df) < 60:
             return {"match": False, "reason": "Insufficient Data"}
 
         latest = df.iloc[-1]
@@ -59,16 +83,22 @@ class SwingTechnicalAnalysis:
         reasons = []
 
         # 1. Macro Trend & Slope Filter
-        close_series = df['close'].iloc[:, 0] if isinstance(df['close'], pd.DataFrame) else df['close']
-        _sma_50_series = SMAIndicator(close=close_series, window=50).sma_indicator()
-        _sma_200_series = SMAIndicator(close=close_series, window=200).sma_indicator()
+        close_series = ctx['close_series']
+        _sma_50_series = ctx['sma_50']
+        _sma_200_series = ctx['sma_200']
         
         sma_50 = safe_scalar(_sma_50_series.iloc[-1])
         sma_50_prev = safe_scalar(_sma_50_series.iloc[-2])
-        sma_200 = safe_scalar(_sma_200_series.iloc[-1])
         
-        # Rule: Price > SMA 50/200 AND SMA 50 must be trending up (slope > 0)
-        is_macro_bullish = (close > sma_50) and (close > sma_200)
+        # SMA 200 is optional — if data is truncated (< 200 candles), skip the SMA 200 check
+        _sma_200_series = ctx['sma_200']
+        sma_200 = safe_scalar(_sma_200_series.iloc[-1]) if len(_sma_200_series.dropna()) > 0 else 0.0
+        
+        # Rule: Price > SMA 50 AND SMA 50 must be trending up (slope > 0)
+        # SMA 200 is a bonus confirmation, not a hard gate
+        is_above_sma50 = close > sma_50
+        is_above_sma200 = (close > sma_200) if sma_200 > 0 else True  # Skip if unavailable
+        is_macro_bullish = is_above_sma50 and is_above_sma200
         is_slope_up = sma_50 > sma_50_prev
         
         if not (is_macro_bullish and is_slope_up):
@@ -78,7 +108,7 @@ class SwingTechnicalAnalysis:
         reasons.append({"text": "Strong Uptrend (SMA 50 Slope +)", "type": "positive", "label": "TREND", "value": "BULLISH"})
 
         # 2. Adaptive Support Zones (Wider: EMA20 ±3.5%, SMA50 ±5.0%)
-        _ema_20 = EMAIndicator(close=close_series, window=20).ema_indicator().iloc[-1]
+        _ema_20 = ctx['ema_20'].iloc[-1]
         ema_20 = safe_scalar(_ema_20)
         
         ema_20_bounce = (ema_20 * 0.965) <= close <= (ema_20 * 1.035)
@@ -139,7 +169,7 @@ class SwingTechnicalAnalysis:
         reasons.append({"text": f"Patterns: {', '.join(patterns[:2])}", "type": "positive", "label": "CANDLE", "value": "Confirmed"})
 
         # 4. RSI Setup Mapping (30-70)
-        _rsi = RSIIndicator(close=close_series, window=14).rsi().iloc[-1]
+        _rsi = ctx['rsi'].iloc[-1]
         rsi = safe_scalar(_rsi)
         if not (30 <= rsi <= 70):
             return {"match": False, "reason": f"RSI ({round(rsi,1)}) out of 30-70 range"}
@@ -148,9 +178,8 @@ class SwingTechnicalAnalysis:
         reasons.append({"text": f"Setup: {setup_type}", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
         # 5. Volume Confirmation (1.2x OR Rising Trend)
-        _vol = df['volume']
-        vol_s = _vol.iloc[:, 0] if isinstance(_vol, pd.DataFrame) else _vol
-        vol_ma = vol_s.rolling(20).mean().iloc[-1]
+        vol_s = ctx['vol_s']
+        vol_ma = ctx['vol_ma'].iloc[-1]
         is_vol_surge = c_c > (vol_ma * 1.2)
         is_vol_rising = (vol_s.iloc[-1] > vol_s.iloc[-2] > vol_s.iloc[-3])
         
@@ -160,8 +189,7 @@ class SwingTechnicalAnalysis:
         reasons.append({"text": "Volume Health Confirmed", "type": "positive", "label": "VOLUME", "value": f"{round(safe_scalar(latest['volume'])/vol_ma, 1)}x"})
 
         # Logistics
-        from ta.volatility import AverageTrueRange
-        _atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1]
+        _atr = ctx['atr'].iloc[-1]
         atr = safe_scalar(_atr)
         
         sl = c_c - (atr * 1.5)
@@ -188,10 +216,12 @@ class SwingTechnicalAnalysis:
         }
 
     @staticmethod
-    def analyze_breakout(df: pd.DataFrame, nifty_20d_ret: float = 0) -> dict:
+    def analyze_breakout(df: pd.DataFrame, nifty_20d_ret: float = 0, ctx: dict = None) -> dict:
         """
         Momentum Breakout Strategy: Capturing clear breaches of 20-day highs in bullish trends.
         """
+        if ctx is None:
+            ctx = SwingTechnicalAnalysis.compute_context(df)
         if df.empty or len(df) < 50:
             return {"match": False, "reason": "Insufficient Data"}
 
@@ -222,10 +252,10 @@ class SwingTechnicalAnalysis:
         reasons = [{"text": "Fresh 20-Day Breakout", "type": "positive", "label": "BREAKOUT", "value": "CONFIRMED"}]
 
         # 2. RSI & Trend
-        close_series = df['close'].iloc[:, 0] if isinstance(df['close'], pd.DataFrame) else df['close']
-        rsi = safe_scalar(RSIIndicator(close=close_series, window=14).rsi().iloc[-1])
+        close_series = ctx['close_series']
+        rsi = safe_scalar(ctx['rsi'].iloc[-1])
         
-        _sma50_s = SMAIndicator(close=close_series, window=50).sma_indicator()
+        _sma50_s = ctx['sma_50']
         sma50 = safe_scalar(_sma50_s.iloc[-1])
         sma50_prev = safe_scalar(_sma50_s.iloc[-2])
         
@@ -233,23 +263,45 @@ class SwingTechnicalAnalysis:
             return {"match": False, "reason": f"Insufficient RSI Momentum ({round(rsi,1)} < 60)"}
         if c_c < sma50 or sma50 <= sma50_prev:
             return {"match": False, "reason": "Trend not supportive (Below SMA50 or Negative Slope)"}
+
+        # --- Weekly Macro Trend Proxy (150-Day SMA / 30-Week) ---
+        if len(df) >= 150:
+            _sma150_s = ctx['sma_150']
+            sma150 = safe_scalar(_sma150_s.iloc[-1])
+            if sma150 > 0 and c_c < sma150:
+                return {"match": False, "reason": "Counter Macro-Trend (Below SMA 150 Proxy)"}
+
             
-        # --- Breakout Strength Validation (Range > Avg 5D Range) ---
+        # --- Volatility Contraction Pattern (VCP) Squeeze Filter ---
         current_range = safe_scalar(latest['high']) - safe_scalar(latest['low'])
-        avg_range_5d = (df['high'] - df['low']).iloc[-6:-1].mean()
+        avg_range_10d = (df['high'] - df['low']).iloc[-11:-1].mean()
         
-        if current_range <= avg_range_5d:
-             return {"match": False, "reason": f"Low Energy Breakout (Range {round(current_range, 1)} < Avg {round(avg_range_5d, 1)})", "breakout_strength": "WEAK"}
+        # The breakout candle MUST be explosive compared to the tight consolidation
+        if current_range < (avg_range_10d * 1.3):
+             return {"match": False, "reason": f"Missing VCP Squeeze (Range {round(current_range, 1)} < 1.3x Avg {round(avg_range_10d, 1)})", "breakout_strength": "WEAK"}
 
         reasons.append({"text": "Bullish Momentum Supported", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
         # 3. Volume Spike
-        vol_s = df['volume'].iloc[:, 0] if isinstance(df['volume'], pd.DataFrame) else df['volume']
-        vol_ma = vol_s.rolling(20).mean().iloc[-1]
+        vol_s = ctx['vol_s']
+        vol_ma = ctx['vol_ma'].iloc[-1]
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
         
         if vol_ratio < 1.5:
              return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.5x)"}
+
+        # --- Round 2: ADX Trending Market Check ---
+        adx = safe_scalar(ctx['adx'].iloc[-1])
+        if adx < 25:
+             return {"match": False, "reason": f"Low Trend Momentum (ADX {round(adx,1)} < 25)"}
+             
+        # --- Round 2: On-Balance Volume (OBV) Accumulation Check ---
+        obv_s = ctx['obv']
+        if len(obv_s) >= 10:
+            obv_current = safe_scalar(obv_s.iloc[-1])
+            obv_10d_ago = safe_scalar(obv_s.iloc[-10])
+            if obv_current < obv_10d_ago:
+                 return {"match": False, "reason": "OBV Divergence (Institutional Distribution detected)"}
 
         reasons.append({"text": "Volume Surge Verified", "type": "positive", "label": "VOLUME", "value": f"{round(vol_ratio, 1)}x"})
 
@@ -262,8 +314,7 @@ class SwingTechnicalAnalysis:
             return {"match": False, "reason": "Weak Breakout Close (Profit taking in wicks)"}
 
         # Logistics
-        from ta.volatility import AverageTrueRange
-        atr = safe_scalar(AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1])
+        atr = safe_scalar(ctx['atr'].iloc[-1])
         sl = c_c - (atr * 1.5)
         risk = c_c - sl
         target_1 = c_c + (risk * 1.5) # Initial partial exit
@@ -285,7 +336,7 @@ class SwingTechnicalAnalysis:
             "relative_strength": "OUTPERFORM",
             "stock_20d_return": round(stock_20d_ret, 2),
             "breakout_strength": "STRONG",
-            "volatility_ratio": round(current_range / max(avg_range_5d, 0.1), 2)
+            "volatility_ratio": round(current_range / max(avg_range_10d, 0.1), 2)
         }
 
     @staticmethod

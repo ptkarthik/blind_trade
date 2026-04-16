@@ -158,6 +158,15 @@ class TradeManager:
                 # Pullbacks follow strict Target at 2.0R
                 if latest_price >= trade["target"]:
                     await self.close_trade(symbol, latest_price, "TARGET_HIT")
+                    continue
+                
+                # Break-Even Safety Net (1.0R)
+                R = abs(trade["entry"] - trade["initial_stop_loss"])
+                if latest_price >= (trade["entry"] + 1.0 * R):
+                    new_be_sl = trade["entry"] + (0.1 * R)
+                    if new_be_sl > trade["stop_loss"]:
+                        trade["stop_loss"] = round(new_be_sl, 2)
+                        logger.info(f"🛡️ PULLBACK BE DEFENSE: {symbol} hit 1.0R. SL moved to {trade['stop_loss']}.")
             
             elif trade["strategy"] == "BREAKOUT":
                 # Breakouts use Hybrid Trailing Logic
@@ -232,6 +241,13 @@ class TradeManager:
         if R <= 0:
              return # Should not happen with valid trades
 
+        # 1.5 Break-Even Safety Net (1.0R)
+        if current_price >= (entry + 1.0 * R) and not trade.get("partial_exit_done"):
+            new_be_sl = entry + (0.1 * R)
+            if new_be_sl > trade.get("stop_loss", 0):
+                trade["stop_loss"] = round(new_be_sl, 2)
+                logger.info(f"🛡️ BREAKOUT BE DEFENSE: {trade['symbol']} hit 1.0R. SL moved to {trade['stop_loss']}.")
+
         # 2. Check for Partial Profit Booking (1.5R)
         target_1_5R = entry + (1.5 * R)
         
@@ -295,13 +311,30 @@ class TradeManager:
 
     async def check_daily_loss(self, total_capital: float) -> str:
         """
-        Checks if today's realized loss has breached the 2% safety limit.
+        Checks if today's net liquidation value (realized loss + unrealized drawdown) 
+        has breached the 2% safety limit.
         """
-        today_pnl = await self.calculate_today_pnl()
+        realized_pnl = await self.calculate_today_pnl()
+        unrealized_pnl = 0.0
         
-        # If P&L is negative and exceeds 2% of capital
-        if today_pnl < 0 and abs(today_pnl) >= (total_capital * 0.02):
-            logger.warning(f"🛑 DAILY LOSS LIMIT BREACHED: Today's loss ({round(today_pnl, 2)}) "
+        # 1. Fetch current prices for active trades to calculate unrealized drawdown
+        active_symbols = [t["symbol"] for t in self.active_trades]
+        if active_symbols:
+            from app.services.market_data import market_service
+            live_data = await market_service.get_batch_prices(active_symbols)
+            
+            for trade in self.active_trades:
+                sym = trade["symbol"]
+                if sym in live_data:
+                    current_price = live_data[sym].get("price", 0)
+                    if current_price > 0:
+                        position_pnl = (current_price - trade["entry"]) * trade["quantity"]
+                        unrealized_pnl += position_pnl
+
+        total_daily_drawdown = realized_pnl + unrealized_pnl
+        
+        if total_daily_drawdown < 0 and abs(total_daily_drawdown) >= (total_capital * 0.02):
+            logger.warning(f"🛑 DAILY LOSS LIMIT BREACHED: Net Drawdown ({round(total_daily_drawdown, 2)} | Realized: {round(realized_pnl, 2)}, Unrealized: {round(unrealized_pnl, 2)}) "
                          f"is >= 2% of capital. STOP_TRADING initiated.")
             return "STOP_TRADING"
             

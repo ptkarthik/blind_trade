@@ -157,19 +157,13 @@ class PortfolioEngine:
                 logger.warning(f"⏩ Skipping {symbol}: Sector limit reached.")
                 continue
 
-            # 3. Construct Final Trade Object
-            plan = {
-                "symbol": symbol,
-                "strategy_type": trade.get("strategy"),
-                "setup_type": trade.get("setup_type"),
-                "entry": entry,
-                "stop_loss": sl,
-                "target": target,
+            # 3. Construct Final Trade Object without destroying rich UI card data
+            plan = trade.copy()
+            plan.update({
                 "quantity": qty,
                 "capital_required": sizing["capital_required"],
-                "risk_amount": sizing["risk_amount"],
-                "confidence": trade.get("confidence")
-            }
+                "risk_amount": sizing["risk_amount"]
+            })
             
             final_plans.append(plan)
             # Update temporary tracking to account for this new candidate

@@ -79,11 +79,19 @@ function App() {
 
       let newData: Signal[] = [];
 
-      if (resData && typeof resData === 'object' && !Array.isArray(resData)) {
-        // Flatten buys, sells, holds into a single array for state/cache
-        newData = [...(resData.buys || []), ...(resData.sells || []), ...(resData.holds || [])];
-      } else if (Array.isArray(resData)) {
+      // Extract array intelligently depending on nesting levels from different API endpoints
+      if (Array.isArray(resData)) {
         newData = resData;
+      } else if (resData && typeof resData === 'object') {
+        if (Array.isArray(resData.data?.data)) {
+           newData = resData.data.data;
+        } else if (Array.isArray(resData.data)) {
+           newData = resData.data;
+        } else if (resData.buys || resData.sells || resData.holds) {
+           newData = [...(resData.buys || []), ...(resData.sells || []), ...(resData.holds || [])];
+        } else if (Array.isArray(resData.results)) {
+           newData = resData.results;
+        }
       }
 
       // [V14.8 JOB-AWARE TRANSITION]
@@ -225,23 +233,45 @@ function App() {
   }, []); // Run ONCE. Worker persists across mode switches.
 
   // 3. Auto-Fetch Signals on Pulse
-  // This watcher detects "Pulses" (progress updates) from the background worker
-  // and triggers a data refresh.
+  // This watcher detects "Pulses" (progress updates) from the background worker.
+  // Intraday/Longterm: Use API fetch (their engines write to DB directly).
+  // Swing: Stream from scanJob.result.data + API fetch at completion.
   useEffect(() => {
     const isProcessing = scanJob?.status === 'processing';
     const isCompleted = scanJob?.status === 'completed';
     const jobChanged = scanJob?.id !== lastCompletedJobId.current;
 
-    if (isProcessing || (isCompleted && jobChanged)) {
-      // PULSE: Trigger refreshes whenever progress changes or the job finishes.
+    if (isProcessing) {
+      if (mode === 'swing') {
+        // 🚀 SWING STREAMING: Read matches from the job state payload directly.
+        const liveData = scanJob?.result?.data;
+        if (liveData && Array.isArray(liveData) && liveData.length > 0) {
+           setSignals(liveData);
+           // Dynamically build sectorSignals for real-time streaming to the Sector UI
+           const streamedSectorSignals: Record<string, SectorData> = {};
+           liveData.forEach((sig: any) => {
+              const sec = sig.sector || 'General';
+              if (!streamedSectorSignals[sec]) {
+                  streamedSectorSignals[sec] = { buys: [], holds: [], sells: [] };
+              }
+              if (sig.signal === 'BUY') streamedSectorSignals[sec].buys.push(sig);
+              else if (sig.signal === 'SELL') streamedSectorSignals[sec].sells.push(sig);
+              else streamedSectorSignals[sec].holds.push(sig);
+           });
+           setSectorSignals(streamedSectorSignals);
+        }
+      } else {
+        // 📡 INTRADAY / LONGTERM: Use standard API fetch (these engines write to DB, not job state)
+        fetchSignals(true, scanJob.id);
+        fetchSectorSignals(scanJob.id);
+      }
+    } else if (isCompleted && jobChanged) {
+      // 🏁 FINISH LINE: Final API refresh for ALL modes — swing uses API here too (job state is cleared by backend at completion)
       fetchSignals(true, scanJob.id);
       fetchSectorSignals(scanJob.id);
-      
-      if (isCompleted) {
-        lastCompletedJobId.current = scanJob.id;
-      }
+      lastCompletedJobId.current = scanJob.id;
     }
-  }, [scanJob?.id, scanJob?.status, scanJob?.result?.progress, mode]); 
+  }, [scanJob?.id, scanJob?.status, scanJob?.result?.progress, mode]);
 
 
 
@@ -273,21 +303,9 @@ function App() {
     return () => { };
   }, [mode]);
 
-  // 4. Logic: Completion Refresh
-  useEffect(() => {
-    if (scanJob?.status === 'completed' || scanJob?.status === 'stopped') {
-      // ONLY pass the jobId if the completed job actually belongs to the active tab's mode.
-      // Otherwise, an intraday job finishing in the background will overwrite the swing tab's data!
-      const currentJobType = mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan';
-
-      if (scanJob?.id && scanJob?.type === currentJobType) {
-        fetchSignals(true, scanJob.id);
-      } else {
-        fetchSignals(true);
-      }
-      fetchSectorSignals();
-    }
-  }, [scanJob?.status, mode]);
+  // 4. Logic: Completion Refresh — HANDLED IN PULSE WATCHER (useEffect #3) above.
+  // Removed duplicate handler that was double-firing fetchSignals without jobId,
+  // overwriting matched stocks with empty results.
 
   const analyzeSymbol = async (symbol: string) => {
     setSearching(true);

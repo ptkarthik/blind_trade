@@ -78,7 +78,10 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
         Job.is_hidden,
         func.json_extract(Job.result, '$.progress').label("progress"),
         func.json_extract(Job.result, '$.total_steps').label("total_steps"),
-        func.json_extract(Job.result, '$.status_msg').label("status_msg")
+        func.json_extract(Job.result, '$.status_msg').label("status_msg"),
+        func.json_extract(Job.result, '$.active_symbols').label("active_symbols"),
+        func.json_extract(Job.result, '$.failed_symbols').label("failed_symbols"),
+        func.json_extract(Job.result, '$.data').label("data")
     ).where(Job.created_at >= since, Job.is_hidden == False)
     
     if job_type:
@@ -95,6 +98,13 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
     if not row:
         return None
         
+    import json as _json
+    def _parse_json_field(val):
+        if val is None: return []
+        if isinstance(val, list): return val
+        try: return _json.loads(val)
+        except: return []
+
     # Reconstruct a lightweight dict matching JobSchema
     return {
         "id": row.id,
@@ -108,7 +118,10 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
         "result": {
             "progress": row.progress or 0,
             "total_steps": row.total_steps or 0,
-            "status_msg": row.status_msg or ""
+            "status_msg": row.status_msg or "",
+            "active_symbols": _parse_json_field(row.active_symbols),
+            "failed_symbols": _parse_json_field(row.failed_symbols),
+            "data": _parse_json_field(row.data)
         }
     }
 

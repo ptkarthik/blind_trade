@@ -84,6 +84,91 @@ class SwingEngine:
         except Exception as e:
             logger.error(f"Failed to refresh market context: {e}")
 
+        try:
+            sector_perf = await market_service.get_sector_performances()
+            self.market_context["sector_performance"] = sector_perf
+            logger.info("🗺️ Sector Heatmap Refreshed.")
+        except Exception as e:
+            self.market_context["sector_performance"] = {}
+            logger.error(f"Failed to fetch sector performance: {e}")
+
+        try:
+            ad_ratio = await market_service.get_advance_decline_ratio()
+            self.market_context["ad_ratio"] = ad_ratio
+            logger.info(f"⚖️ Market Breadth (A/D Ratio): {round(ad_ratio, 2)}")
+        except Exception as e:
+            self.market_context["ad_ratio"] = 1.0
+            logger.error(f"Failed to fetch A/D ratio: {e}")
+
+    async def _fetch_swing_ohlc_with_evasion(self, sym: str, period: str = "1y", interval: str = "1d"):
+        """Isolated Anti-Ban Fetcher specifically for Swing. Never returns None — always tries direct as final fallback."""
+        import yfinance as yf
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        USER_AGENTS = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:122.0) Gecko/20100101 Firefox/122.0",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/122.0.2365.92"
+        ]
+
+        def _make_session(ua: str):
+            s = requests.Session()
+            s.verify = False
+            s.headers.update({"User-Agent": ua, "Accept": "*/*", "Connection": "close"})
+            return s
+
+        # Strategy 1: Try with proxy + rotated UA (2 attempts)
+        from app.services.proxy_manager import proxy_manager
+        for attempt in range(2):
+            proxy = await proxy_manager.get_proxy()
+            if proxy:  # Only use proxy if one actually exists — never pass None
+                ua = random.choice(USER_AGENTS)
+                session = _make_session(ua)
+                try:
+                    def _fetch_proxy():
+                        return yf.Ticker(sym, session=session, proxy=proxy).history(period=period, interval=interval)
+                    df = await asyncio.to_thread(_fetch_proxy)
+                    if df is not None and not df.empty:
+                        df.columns = [c.lower() for c in df.columns]
+                        return df
+                except Exception:
+                    pass
+                await asyncio.sleep(random.uniform(0.3, 0.8))
+
+        # Strategy 2: Direct fetch with rotated UA only (no proxy — guaranteed to attempt)
+        for attempt in range(2):
+            ua = random.choice(USER_AGENTS)
+            session = _make_session(ua)
+            try:
+                def _fetch_direct():
+                    return yf.Ticker(sym, session=session).history(period=period, interval=interval)
+                df = await asyncio.to_thread(_fetch_direct)
+                if df is not None and not df.empty:
+                    df.columns = [c.lower() for c in df.columns]
+                    return df
+            except Exception:
+                pass
+            await asyncio.sleep(random.uniform(0.2, 0.5))
+
+        # Strategy 3: Bare yfinance call — no session, no proxy (last resort)
+        try:
+            def _fetch_bare():
+                return yf.Ticker(sym).history(period=period, interval=interval)
+            df = await asyncio.to_thread(_fetch_bare)
+            if df is not None and not df.empty:
+                df.columns = [c.lower() for c in df.columns]
+                return df
+        except Exception:
+            pass
+
+        return pd.DataFrame()
+
+
     async def analyze_stock(self, sym: str, job_id: str = None):
         """
         Executes a Multi-Strategy Swing Scan (Pullback & Breakout).
@@ -91,40 +176,71 @@ class SwingEngine:
         try:
             if job_id and self.job_states.get(job_id, {}).get("stop_requested"): return None
 
-            # 1. Fetch 1D Data (Need 250 days for SMA 200 durability)
-            df_1d = await market_service.get_ohlc(sym, period="1y", interval="1d")
-            if df_1d is None or df_1d.empty or len(df_1d) < 200: return None
+            # 1. Fetch 1D Data - Swap to Anti-Ban Evasion
+            # Minimum 60 candles (SMA 50 + buffer). SMA 200 is optional and handled gracefully.
+            df_1d = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
+            if df_1d is None or df_1d.empty or len(df_1d) < 60:
+                print(f"  ⛔ {sym}: DATA INSUFFICIENT ({len(df_1d) if df_1d is not None and not df_1d.empty else 0} candles < 60 min)", flush=True)
+                return None
             
+            candle_count = len(df_1d)
+            
+            # --- Phase 5: Anti-Staleness Timestamp Check ---
+            from datetime import datetime, timedelta
+            try:
+                latest_date = pd.to_datetime(df_1d.index[-1])
+                if latest_date.tzinfo is not None:
+                     latest_date = latest_date.tz_convert(None)
+                if datetime.utcnow() - latest_date > timedelta(hours=96):
+                    print(f"  ⛔ {sym}: STALE DATA (Last candle: {latest_date.strftime('%Y-%m-%d')})", flush=True)
+                    return None
+            except Exception as e:
+                pass
+                
             real_price = safe_scalar(df_1d['close'].iloc[-1])
             if real_price <= 0: return None
             
             # 2. Parallel Strategy Execution
-            # We check both to allow for 'Conflict Resolution' based on Market Bias
             nifty_20d_ret = self.market_context.get("nifty_20d_return", 0)
-            pb_result = await asyncio.to_thread(ta_swing.analyze_pullback, df_1d, nifty_20d_ret)
             
-            # Breakout logic is only allowed if Nifty is Bullish OR stock is extremely strong
-            # (Exception: We still analyze it to see if it's near high)
-            bo_result = await asyncio.to_thread(ta_swing.analyze_breakout, df_1d, nifty_20d_ret)
+            ctx = ta_swing.compute_context(df_1d)
+            
+            pb_result = await asyncio.to_thread(ta_swing.analyze_pullback, df_1d, nifty_20d_ret, ctx)
+            bo_result = await asyncio.to_thread(ta_swing.analyze_breakout, df_1d, nifty_20d_ret, ctx)
+
+            # --- Diagnostic Log: Strategy Results ---
+            pb_status = "✅ MATCH" if pb_result.get("match") else f"❌ {pb_result.get('reason', 'No Match')}"
+            bo_status = "✅ MATCH" if bo_result.get("match") else f"❌ {bo_result.get('reason', 'No Match')}"
+            print(f"  📊 {sym} | ₹{real_price} | {candle_count}D | PB: {pb_status} | BO: {bo_status}", flush=True)
+
+            # --- Phase 3: Sector Dominance Filtering ---
+            sector = market_service.get_sector_for_symbol(sym)
+            sector_perf = self.market_context.get("sector_performance", {})
+            sector_return = sector_perf.get(sector, 0.0)
+            
+            # Apply conditional Sector Strength filtering for breakouts
+            if bo_result.get("match"):
+                if sector_return < 0.0:
+                    bo_result["match"] = False
+                    bo_result["reason"] = f"Sector Weakness ({round(sector_return, 2)}%) invalidates Breakout"
+                    print(f"    🔻 {sym}: Breakout KILLED by Sector Weakness ({sector}: {round(sector_return, 2)}%)", flush=True)
+                elif self.market_context.get("ad_ratio", 1.0) < 0.6:
+                    bo_result["match"] = False
+                    bo_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.6) invalidates Breakout"
+                    print(f"    🔻 {sym}: Breakout KILLED by A/D Ratio < 0.6", flush=True)
 
             # 3. Conflict Resolution & Selection
             selected = None
             is_nifty_bullish = self.market_context.get("nifty_bullish", False)
             is_market_exhausted = self.market_context.get("nifty_exhausted", False)
             
-            # Logic Override: If market is exhausted (RSI > 75), Force Pullback ONLY
             if is_market_exhausted:
                 if pb_result["match"]:
                     selected = pb_result
                     selected["market_context"] = "OVERBOUGHT_RECOVERY"
                 else:
-                    return None # No breakouts at market tops
-            
-            # Logic:
-            # - If both match:
-            #   - If Nifty Bullish OR Near 20D High (<1%) -> Prefer BREAKOUT
-            #   - Else -> Prefer PULLBACK
-            # - If only one matches: return that one
+                    print(f"    ⏭️ {sym}: SKIP (Market Exhausted, no Pullback)", flush=True)
+                    return None
             
             high_20 = safe_scalar(df_1d['high'].iloc[-21:-1].max())
             is_near_high = (high_20 - real_price) / max(high_20, 1) < 0.01
@@ -135,22 +251,15 @@ class SwingEngine:
                 else:
                     selected = pb_result
             elif bo_result["match"]:
-                # Breakout only allowed if Nifty is Bullish or it's a 'Super Breakout'
                 if is_nifty_bullish or is_near_high:
                     selected = bo_result
             elif pb_result["match"]:
                 selected = pb_result
                 
             if not selected: 
-                # Optional: Silent for non-matches to avoid console spam, 
-                # but we can add a very subtle indicator if needed.
                 return None
 
             strategy_name = selected.get("strategy", "UNKNOWN")
-            # --- HIGH VISIBILITY LOG FOR MATCHES ---
-            # Using emojis to make matches stand out in the terminal
-            icon = "🚀 [BREAKOUT]" if strategy_name == "BREAKOUT" else "📥 [PULLBACK]"
-            print(f"{icon} {sym}: MATCH FOUND! (Price: {real_price}, Vol-Ratio: {round(selected.get('vol_ratio', 0), 2)})", flush=True)
 
             # Extract Stop Loss and Target from the selected strategy
             sl = selected.get("stop_loss", 0.0)
@@ -158,19 +267,28 @@ class SwingEngine:
 
             # 4. Refined Scoring (Base 50)
             score = 50
+            score_breakdown = ["Base: 50"]
             
             # Booster: Volume Surge (+20)
             vol_ratio = selected.get("vol_ratio", 1.0)
-            if vol_ratio > 1.8: score += 20
-            elif vol_ratio > 1.4: score += 10
+            if vol_ratio > 1.8:
+                score += 20
+                score_breakdown.append(f"VolSurge: +20 (Ratio {round(vol_ratio, 2)})")
+            elif vol_ratio > 1.4:
+                score += 10
+                score_breakdown.append(f"VolSurge: +10 (Ratio {round(vol_ratio, 2)})")
             
             # Booster: SMA 50 Support (+15)
             if selected.get("strategy") == "PULLBACK":
                 zone_val = next((r["value"] for r in selected.get("reasons", []) if r["label"] == "ZONE"), "")
-                if "SMA 50" in zone_val: score += 15
+                if "SMA 50" in zone_val:
+                    score += 15
+                    score_breakdown.append("SMA50 Bounce: +15")
             
             # Booster: Near High (+10)
-            if is_near_high: score += 10
+            if is_near_high:
+                score += 10
+                score_breakdown.append("NearHigh: +10")
             
             # Strategy Priority Score (Dynamic Weighting)
             if is_nifty_bullish:
@@ -188,10 +306,21 @@ class SwingEngine:
             if final_score >= 85: confidence = "HIGH"
             elif final_score >= 70: confidence = "MEDIUM"
 
+            # --- HIGH VISIBILITY MATCH LOG ---
+            icon = "🚀 BREAKOUT" if strategy_name == "BREAKOUT" else "📥 PULLBACK"
+            print(f"  ✅ {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) | {' → '.join(score_breakdown)} | x{round(strategy_weight, 1)} = {final_score}", flush=True)
+            print(f"     Entry: ₹{real_price} | SL: ₹{sl} | Target: ₹{target} | Risk/Share: ₹{round(abs(real_price - sl), 2)}", flush=True)
+
             # 5. Metadata & Advisory
-            company_data = await market_service.get_fundamentals(sym)
+            try:
+                def _get_info():
+                    import yfinance as yf
+                    return yf.Ticker(sym).info or {}
+                company_data = await asyncio.to_thread(_get_info)
+            except Exception:
+                company_data = {}
             name = company_data.get("shortName", sym)
-            sector = market_service.get_sector_for_symbol(sym)
+            # Sector already fetched above
 
             from app.services.advisor_engine import advisor_engine
             advisory = advisor_engine.generate_advice(
@@ -324,37 +453,36 @@ class SwingEngine:
             tasks = [sem_task(sym, i) for i, sym in enumerate(symbols)]
             await asyncio.gather(*tasks)
             
-            # 5. Portfolio Finalization (The "Professional" Filter)
-            # After all stocks are scanned, we use the PortfolioEngine to pick the absolute best.
-            scan_results = state.get("data", [])
+            # 5. Finalization — Swing signals already have full position sizing embedded.
+            # portfolio_engine.select_trades/build_trade_plan are calibrated for Longterm format
+            # and silently return empty on Swing data. Use raw scan_results directly.
+            scan_results = state.get("results", [])
+            print(f"✅ [SWING SCAN COMPLETE] {len(scan_results)} qualified signals found from {total_stocks} scanned.", flush=True)
             
-            # Select best trades based on risk/reward/ranking
-            # Note: PortfolioEngine now tracks active positions internally
-            selected_signals = portfolio_engine.select_trades(scan_results)
-            
-            # Build final executable plans (Quantity, Capital, etc.)
-            trade_plan = portfolio_engine.build_trade_plan(selected_signals)
-
-            # NOTE: Auto-registration removed. User must manually 'confirm' a trade 
-            # for the engine to start tracking its lifecycle (stops, exits, etc.)
+            # Sort by score descending and cap at top 50
+            trade_plan = sorted(scan_results, key=lambda x: x.get("score", 0), reverse=True)[:50]
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
+            import traceback
             logger.error(f"Global Scan Error: {e}")
+            traceback.print_exc()
+            trade_plan = []
+            scan_results = []
         finally:
             if job_id in self.job_states: 
                 self.job_states[job_id]["stop_requested"] = True
                 self.job_states[job_id]["is_running"] = False
             if 'sync_task' in locals(): await sync_task
 
-        # Return the finalized Trade Plan instead of raw signals
+        # Return the finalized Trade Plan
         final_payload = {
-            "total_scanned": state.get("total_steps", 0),
+            "total_scanned": total_stocks,
             "raw_signal_count": len(scan_results),
             "trade_plan_count": len(trade_plan),
-            "data": trade_plan, # This is now the executable list
-            "status_msg": f"Adaptive Scan Complete: {len(trade_plan)} Trades Generated."
+            "data": trade_plan,
+            "status_msg": f"Swing Scan Complete: {len(trade_plan)} high-conviction trades identified from {total_stocks} stocks."
         }
         
         if job_id in self.job_states: del self.job_states[job_id]

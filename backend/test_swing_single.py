@@ -12,14 +12,14 @@ async def test_single(symbol):
     result = await swing_engine.analyze_stock(symbol, "test_job")
     
     if result:
-         print(f"✅ Match Found for {symbol}")
+         print(f"SUCCESS: Match Found for {symbol}")
          print(f"Target: {result.get('target')} | Stop Loss: {result.get('stop_loss')}")
          print(f"Hold: {result.get('hold_duration')}")
          print("Reasons:")
          for r in result['reasons']:
              print(f"  - {r['text']}: {r['value']}")
     else:
-         print(f"❌ No swing match for {symbol}")
+         print(f"FAILED: No swing match for {symbol}")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

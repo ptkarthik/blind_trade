@@ -362,8 +362,8 @@ if __name__ == "__main__":
         # Increase default thread pool size for massive parallel yfinance fetches
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        # Use 300 to give plenty of headroom for timed-out but still draining sockets
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=300)
+        # Use 30 to give enough headroom without triggering immediate 429 IP Bans.
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
         loop.set_default_executor(executor)
         
         # Run cleanup before entering main loop
