@@ -137,7 +137,12 @@ async def manage_recurring_scans():
                         should_trigger = True
             
             if should_trigger:
-                log(f"⏰ [SCHEDULER] Auto-triggering {job_type}")
+                # V16.1: Evasion Jitter (Random delay before trigger)
+                import random
+                jitter = random.randint(1, 15)  # V18 FIX #17: Reduced from 120s — 15s sufficient for de-correlation
+                log(f"⏰ [SCHEDULER] Auto-triggering {job_type} (Jitter: {jitter}s)")
+                await asyncio.sleep(jitter)
+                
                 # Phase 88: Auto-triggered scans are hidden from UI to avoid clutter
                 hidden = True if job_type == "intraday" else False
                 new_job = Job(type=job_type, status="pending", trigger_source="auto", is_hidden=hidden)
@@ -263,6 +268,14 @@ async def worker_loop():
                         job.updated_at = datetime.utcnow()
                         await session.commit()
                         
+                        # --- V16.1 PROXY HEALTH PRE-CHECK ---
+                        from app.services.proxy_manager import proxy_manager
+                        proxies = await proxy_manager.get_proxy()
+                        if not proxies:
+                            log(f"⚠️ [SAFETY] No Healthy Proxies available. Delaying job {job.id}...")
+                            await asyncio.sleep(10)
+                            continue
+
                         # 4. Launch Background Task (Non-Blocking)
                         task = asyncio.create_task(process_job_task(job.id, job.type))
                         active_tasks.add(task)

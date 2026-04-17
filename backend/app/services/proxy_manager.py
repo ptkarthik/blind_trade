@@ -130,10 +130,11 @@ class ProxyManager:
         valid_proxies = []
         
         def validate_sync(proxy):
-            # Reduced timeout for fast check
-            target_url = "https://www.google.com" 
+            # [V18 FIX #12] Validate against Yahoo Finance, not Google
+            # A proxy passing Google may still be 429'd by Yahoo
+            target_url = "https://query2.finance.yahoo.com/v8/finance/chart/RELIANCE.NS?range=1d&interval=1d" 
             try:
-                resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=4, verify=False)
+                resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=5, verify=False)
                 if resp.status_code == 200:
                     return proxy
             except:

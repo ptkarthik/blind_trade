@@ -1,6 +1,7 @@
 import asyncio
 import pandas as pd
 import numpy as np
+import random
 import time
 from app.services.market_data import market_service
 from app.services.index_context import index_ctx
@@ -34,204 +35,430 @@ class IntradayEngine:
         self.semaphore = asyncio.Semaphore(50) 
         self.job_states = {}
         
-        # FIX #2: Removed 13 dead SCORING_FLAGS that were never checked.
-        # Only enable_mtf_bonus (used at Line 109) is kept.
-        self.SCORING_FLAGS = {
-            "enable_mtf_bonus": True
+        # [V13] CENTRALIZED INSTITUTIONAL CONFIG
+        self.CONFIG = {
+            "version": "V13-PIONEER",
+            "rvol_threshold": 2.5,
+            "decay_factor": 15,
+            "bias_cap": 25,
+            "max_gate_atr": 0.8,
+            "min_gate_atr": 0.3,
+            "score_floor": 65,
+            "top_n_cap": 50,
+            "ers_reject_normal": 60,
+            "ers_reject_trend": 55,
+            "ers_degrade_normal": 75,
+            "ers_degrade_trend": 70,
+            "unlock_threshold": 3
         }
 
+        # [V13] SYSTEM STATE CONTROLLER
+        self.system_state = {
+            "regime": "Mixed",
+            "regime_strength": "NORMAL",
+            "regime_weight": 1.0,
+            "risk_mode": "Normal",
+            "freeze_mode": False,
+            "inflation_rate": 0.0,
+            "stable_scans_count": 0,
+            "health_score": 100,
+            "tighten_level": 0,
+            "last_regime_change": datetime.utcnow()
+        }
+
+        # [V13] PERFORMANCE METRICS (TIME-SEGMENTED)
+        self.performance_metrics = {
+            "morning": {"avg_score": 0, "total_signals": 0, "inflation_rate": 0},
+            "midday": {"avg_score": 0, "total_signals": 0, "inflation_rate": 0},
+            "eod": {"avg_score": 0, "total_signals": 0, "inflation_rate": 0},
+            "raw_score_max_seen": 0,
+            "scores_above_80": 0
+        }
+
+        self.persistence_cache = {} # Cross-scan memory
+        self.execution_profile = {} # Slippage feedback loop
+
     async def _get_index_context(self):
-        """[V11 RESTORED] Complex Market Regime Audit."""
+        """[V13] Elite Market Regime & State Synchronization."""
         try:
+            # 1. FETCH NIFTY DATA
             nifty_df = await market_service.get_ohlc("^NSEI", period="2d", interval="5m")
             if nifty_df is None or nifty_df.empty: 
-                return {"score": 50, "market_regime": "Mixed", "ad_ratio": 1.0, "day_change_pct": 0.0}
+                return self.system_state
             
             close = nifty_df['close'].iloc[-1]
             vwap = ta_intraday.IntradayTechnicalAnalysis.calculate_vwap(nifty_df)
             ad_ratio = await market_service.get_advance_decline_ratio()
-            sector_perfs = await market_service.get_sector_performances()
             
-            # [V12.7] Sideways Detection
-            adx_ctx = ta_intraday.IntradayTechnicalAnalysis.calculate_adx(nifty_df)
-            is_sideways = adx_ctx.get("adx", 0) < 20
-            
-            regime = "Strong Bullish" if close > vwap and ad_ratio > 1.2 else "Mixed"
-            if close < vwap and ad_ratio < 0.8: regime = "Strong Bearish"
+            # [V14] FETCH INDIA VIX
+            market_status = await market_service.get_market_status()
+            india_vix = market_status.get("india_vix", 15.0)
 
+            # 2. ADX STABILITY (3-Candle Check)
+            adx_series = ta_intraday.ADXIndicator(high=nifty_df['high'], low=nifty_df['low'], close=nifty_df['close']).adx()
+            curr_adx = adx_series.iloc[-1]
+            prev_adx_avg = adx_series.iloc[-3:].mean()
+            
+            # 3. REGIME DETECTION WITH HYSTERESIS
+            prev_regime = self.system_state.get("regime", "Mixed")
+            day_ret = (close - nifty_df['open'].iloc[0]) / nifty_df['open'].iloc[0]
+            
+            regime = prev_regime
+            if prev_regime == "Trend":
+                if curr_adx < 18 and abs(day_ret) < 0.002: regime = "Range"
+            else: # Range or Mixed
+                if curr_adx > 25 or abs(day_ret) > 0.004: regime = "Trend"
+
+            # 4. REGIME STRENGTH & WEIGHTING [V18 FIX #1: Was dead code — now reachable]
+            strength = "NORMAL"
+            weight = 1.0
+            if regime == "Trend":
+                if curr_adx > 30: 
+                    strength = "STRONG_TREND"; weight = 1.15
+                else: 
+                    strength = "WEAK_TREND"; weight = 1.05
+            else:
+                if curr_adx < 20: 
+                    strength = "CHOP"; weight = 0.85
+                    
+            # 5. SYNC SYSTEM STATE
+            self.system_state.update({
+                "regime": regime,
+                "regime_strength": strength,
+                "regime_weight": weight,
+                "day_change_pct": round(day_ret * 100, 2),
+                "ad_ratio": ad_ratio,
+                "nifty_close": close,
+                "nifty_vwap": vwap,
+                "india_vix": india_vix
+            })
+            
             return {
-                "market_trend": "Bullish" if close > vwap else "Bearish",
-                "market_regime": regime,
-                "is_sideways": is_sideways,
-                "ad_ratio": ad_ratio, "sector_perfs": sector_perfs,
-                "day_change_pct": round(((close - nifty_df['open'].iloc[0])/nifty_df['open'].iloc[0])*100, 2)
+                "day_change_pct": round(day_ret * 100, 2),
+                "india_vix": india_vix,
+                "regime": regime,
+                "regime_strength": strength,
+                "regime_weight": weight,
+                "15m_returns": nifty_df['close'].pct_change().dropna(),
+                "vwap": vwap,
+                "close": close,
+                "ad_ratio": ad_ratio
             }
-        except: return {"score": 50, "market_regime": "Mixed", "is_sideways": False, "ad_ratio": 1.0, "day_change_pct": 0.0}
+        except Exception as e:
+            print(f"Index Context Error: {e}")
+            return self.system_state
 
-    async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None, pulse_data: dict = None):
-        """
-        [V11 RESTORED] Full 12-Point Alpha Audit.
-        Integrated with Layer 1, 2, and 3 logic.
-        """
+    def _get_adaptive_ers_threshold(self) -> dict:
+        """[V14] Dynamic ERS Gating based on VIX and Regime."""
+        regime = self.system_state.get("regime", "Mixed")
+        vix = self.system_state.get("india_vix", 15.0)
+        
+        # Volatility Multiplier: As VIX rises, we tighten the gate (high slippage risk)
+        # Base VIX assumed at 15.0. 
+        # If VIX=20, mult = 1.0 + (20-15)/50 = 1.1
+        vix_mult = 1.0 + max(0, (vix - 15.0) / 50.0)
+        
+        is_trend = regime == "Trend" or self.system_state.get("regime_strength") == "STRONG_TREND"
+        
+        base_reject = self.CONFIG["ers_reject_trend"] if is_trend else self.CONFIG["ers_reject_normal"]
+        base_degrade = self.CONFIG["ers_degrade_trend"] if is_trend else self.CONFIG["ers_degrade_normal"]
+        
+        return {
+            "reject": round(base_reject * vix_mult, 1),
+            "degrade": round(base_degrade * vix_mult, 1)
+        }
+
+    async def _calculate_sector_heat(self, batch_pulse: dict):
+        """[V14] Industry Standard Sector Momentum Booster."""
+        sector_rets = {}
+        sector_counts = {}
+        
+        for sym, data in batch_pulse.items():
+            if not data or data.get("price", 0) == 0: continue
+            df = data.get("15m")
+            if df is None or df.empty: continue
+            
+            sector = market_service.get_sector_for_symbol(sym)
+            if sector == "General": continue
+            
+            # Safe access to Day Open (9:15 candle)
+            try:
+                if 'open' in df.columns:
+                    day_open = float(df['open'].iloc[0])
+                else:
+                    day_open = float(df.iloc[0, 0]) # Fallback to first column
+                
+                if day_open > 0:
+                    ret = (data["price"] - day_open) / day_open
+                    sector_rets[sector] = sector_rets.get(sector, 0.0) + ret
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
+            except:
+                continue
+            
+        heat = {}
+        for sector, total_ret in sector_rets.items():
+            avg_ret = total_ret / sector_counts[sector]
+            heat[sector] = avg_ret
+            
+        return heat
+
+    def report_execution_outcome(self, symbol: str, status: str, slippage_pct: float = 0.0):
+        """[V13] Execution Feedback Loop Infrastructure."""
+        if symbol not in self.execution_profile:
+            self.execution_profile[symbol] = {"success_count": 0, "fail_count": 0, "avg_slippage": 0.0}
+        
+        prof = self.execution_profile[symbol]
+        if status == "SUCCESS":
+            prof["success_count"] += 1
+            # Rolling average slippage
+            prof["avg_slippage"] = (prof["avg_slippage"] * (prof["success_count"] - 1) + slippage_pct) / prof["success_count"]
+        else:
+            prof["fail_count"] += 1
+
+    def _calculate_priority_score(self, base_score: float, indicators: dict, sym: str, persistence: int = 0) -> float:
+        """[V14] Explicit Institutional Priority Equation with Sigmoid Footprint."""
+        # 1. BASE FACTORS
+        conf_weight = 1.0
+        if base_score >= 85: conf_weight = 1.2
+        elif base_score < 70: conf_weight = 0.8
+        
+        regime_weight = self.system_state.get("regime_weight", 1.0)
+        
+        # 2. EXECUTION & PERSISTENCE
+        ers_score = indicators.get("ers_score", 100)
+        ers_weight = 1.0
+        
+        # [V14] Adaptive ERS Gating
+        ers_gates = self._get_adaptive_ers_threshold()
+        if ers_score < ers_gates["degrade"]: 
+            ers_weight = 0.8
+        
+        # [V14] PERSISTENCE FOOTPRINT (Centered Sigmoid)
+        # raw_footprint = persistence * rvol
+        # We use standard mean=5.0, std_dev=3.0 for institutional normalization
+        rvol = indicators.get("rvol", 1.0)
+        footprint_weight = ta_intraday.IntradayTechnicalAnalysis.calculate_institutional_footprint(
+            persistence, rvol, mean_fp=3.0, std_fp=2.0
+        )
+        # Scale footprint from (0,1) to (0.9, 1.2) range for priority impact
+        persistence_weight = 0.9 + (footprint_weight * 0.3)
+            
+        # Cooldown Penalty
+        cooldown_weight = 1.0
+        last_trade_time = indicators.get("last_trade_time") # Placeholder for execution sync
+        if last_trade_time:
+            cooldown_weight = 0.85 if self.system_state.get("regime_strength") == "STRONG_TREND" else 0.7
+            
+        # 3. FINAL EQUATION [V14 APEX]
+        base_priority = base_score * conf_weight * regime_weight * ers_weight * persistence_weight * cooldown_weight
+        
+        # [V14] DETERMINISTIC TIE-BREAKER (Industry Standard)
+        # We add 0.01% of RVOL to the priority. At identical base scores, 
+        # the stock with higher relative institutional participation wins the rank.
+        tie_breaker = min(rvol, 10.0) / 1000.0 
+        
+        priority = base_priority + tie_breaker
+            
+        # Clamp to 100 for consistency
+        return round(min(priority, 100), 3)
+
+    def _sync_scans_and_risk(self, signals: list):
+        """[V13] System State State-Machine Update."""
+        if not signals: return
+        
+        avg_score = sum(s["score"] for s in signals) / len(signals)
+        high_quality = [s for s in signals if s["score"] >= 80]
+        inflation_rate = len(high_quality) / len(signals) if signals else 0
+        
+        # Update segmented metrics based on current time
+        ist_now = datetime.now(pytz.timezone('Asia/Kolkata'))
+        hour = ist_now.hour + ist_now.minute/60.0
+        segment = "morning" if hour < 11.5 else ("midday" if hour < 14.0 else "eod")
+        
+        self.performance_metrics[segment].update({
+            "avg_score": avg_score,
+            "total_signals": len(signals),
+            "inflation_rate": inflation_rate
+        })
+        
+        # Risk Mode Logic (Gradual Degradation)
+        risk_mode = "Normal"
+        if inflation_rate > 0.4:
+            risk_mode = "Restricted" # Over-saturated / Noisy
+            self.system_state["tighten_level"] = 1
+        elif avg_score < 50 and self.system_state["regime_strength"] == "CHOP":
+            risk_mode = "Stop" # Capital Preservation
+            
+        # Adaptation Recover (Un-Freeze)
+        if inflation_rate < 0.2:
+            self.system_state["stable_scans_count"] += 1
+            if self.system_state["stable_scans_count"] >= self.CONFIG["unlock_threshold"]:
+                self.system_state["freeze_mode"] = False
+                self.system_state["tighten_level"] = 0
+        else:
+            self.system_state["stable_scans_count"] = 0
+
+        self.system_state.update({
+            "inflation_rate": inflation_rate,
+            "risk_mode": risk_mode,
+            "health_score": round(avg_score * (1 - inflation_rate), 2)
+        })
+
+    async def analyze_stock(self, sym: str, job_id: str = None, global_index_ctx: dict = None, pulse_data: dict = None, sector_heat: dict = None):
+        """[V14] Final 10/10 Institutional Analysis Pipeline (L1-L3)."""
         try:
-            # 1. DATA EXTRACTION
-            df_15m = None
-            df_1h = None
-            real_price = 0.0
-
+            # [V18 FIX #13] Null guard for index context
+            global_index_ctx = global_index_ctx or {}
+            regime = global_index_ctx.get("regime", "Mixed")
+            # 1. DATA EXTRACTION & L1 DETECTION
+            df_15m = None; df_1h = None; df_1d = None; real_price = 0.0
             if pulse_data and sym in pulse_data:
                 item = pulse_data[sym]
-                if isinstance(item, pd.DataFrame):
-                    df_15m = item
+                if isinstance(item, pd.DataFrame): df_15m = item
                 elif isinstance(item, dict):
-                    df_15m = item.get("15m")
-                    df_1h = item.get("1h")
-                
+                    df_15m = item.get("15m"); df_1h = item.get("1h")
                 if df_15m is not None and not df_15m.empty:
                     real_price = float(df_15m['close'].iloc[-1])
             else:
-                # Fallback to direct fetch
                 df_15m = await market_service.get_ohlc(sym, period="7d", interval="15m")
-                if self.SCORING_FLAGS.get("enable_mtf_bonus"):
-                    df_1h = await market_service.get_ohlc(sym, period="15d", interval="60m")
                 pinfo = await market_service.get_live_price(sym)
                 real_price = pinfo.get("price", 0.0)
 
             if df_15m is None or df_15m.empty or len(df_15m) < 20:
-                return {"symbol": sym, "skip_reason": "Data Depleted"}
-            
-            if real_price <= 0:
-                real_price = float(df_15m['close'].iloc[-1])
-            if real_price <= 0:
-                return {"symbol": sym, "skip_reason": "Price Invalid (0.0)"}
+                return {"symbol": sym, "skip_reason": "Data Failure"}
 
-            # =========================
-            # STEP 1: INDICATORS
-            # =========================
-            if df_1h is None or df_1h.empty:
-                df_1h = await market_service.get_ohlc(sym, period="15d", interval="60m")
-
+            # INDICATOR INTEGRITY GUARD
             indicators = self._get_indicators(df_15m, df_1h)
+            # [V18 FIX #8] Null guard for indicators
             if indicators is None:
-                return {"symbol": sym, "skip_reason": "Indicator Failure (NaN)"}
+                return {"symbol": sym, "skip_reason": "Indicator Computation Failed"}
+            guard = ta_intraday.IntradayTechnicalAnalysis.indicator_integrity_guard(df_15m, indicators)
+            if guard["status"] == "safe_skip":
+                return {"symbol": sym, "skip_reason": guard["reason"]}
 
-            # V16 AUDIT FIX 4: Daily (1D) Macro Trend Filter
-            # Prevents buying 15m bounces on stocks in catastrophic daily downtrends
-            is_1d_bullish = True  # Default: bullish (fail-open if data unavailable)
-            df_1d = None
-            if pulse_data and sym in pulse_data and isinstance(pulse_data[sym], dict):
-                df_1d = pulse_data[sym].get("1d")
-            if df_1d is None:
-                try:
-                    df_1d = await market_service.get_ohlc(sym, period="3mo", interval="1d")
-                except Exception:
-                    pass
-            if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
-                try:
-                    daily_ema20 = EMAIndicator(close=df_1d['close'], window=20).ema_indicator().iloc[-1]
-                    is_1d_bullish = real_price > float(daily_ema20)
-                except Exception:
-                    pass
-            indicators["is_1d_bullish"] = is_1d_bullish
-
-            # SMART GATE: Allow analysis if price is below EMA20 BUT has high-conviction reclaim
-            is_below_ema = indicators["price"] < indicators["ema20"]
-            # P6 FIX: Smart Gate now uses MAJORITY VOTE (2 of 3) instead of OR (any 1 of 3)
-            # OLD: OR logic let panic-selling stocks through on RVOL alone (distribution volume)
-            # NEW: require at least 2 conviction signals to confirm this is accumulation, not distribution
-            conviction_signals = [
-                indicators.get("rvol", 0) > 2.0,                                    # Institutional volume
-                indicators["price"] > indicators.get("vwap_val", 0) * 1.005,         # Above VWAP by 0.5%
-                indicators.get("pa_score", 0) > 80                                   # Aggressive buying candle
-            ]
-            has_reclaim_conviction = sum(conviction_signals) >= 2
-
-            # R4-1 FIX: Explicitly mark Smart Gate bypass so L3 and future code knows
-            # this stock is below EMA20 but was allowed through on conviction signals.
-            # Without this flag, a refactor removing L3's below-EMA penalty would silently break protection.
-            if is_below_ema and has_reclaim_conviction:
-                indicators["smart_gate_bypass"] = True
-
-            if is_below_ema and not has_reclaim_conviction:
-                liq = liquidity_service.get_liquidity(sym)
-                return {
-                    "symbol": sym,
-                    "price": round(real_price, 2),
-                    "score": 0,
-                    "signal": "IGNORE",
-                    "signal_label": "IGNORE",
-                    "verdict": "Below EMA20",
-                    "reason": "Below EMA20 (No Reclaim Conviction)",
-                    "alpha_mode": "NONE",
-                    "entry": round(real_price, 2),
-                    "target": 0.0,
-                    "stop_loss": 0.0,
-                    "tradability": {},
-                    "reasons": [],
-                    "groups": {
-                        "DNA (40%)": {"score": 0, "max": 40, "details": []},
-                        "Alpha Edge (60%)": {"score": 0, "max": 60, "details": []},
-                        "Safeguards (L3)": {"score": 0, "max": 0, "details": []}
-                    },
-                    "liquidity": {
-                        "level": liq.get("level", "Unknown"),
-                        "adv20": liq.get("adv20", 0),
-                        "max_stealth_buy_qty": 0,
-                        "max_stealth_buy_value": 0
-                    }
-                }
-
-            # =========================
-            # STEP 2: LAYER 1 (DNA)
-            # =========================
+            # PATTERN DETECTION (L1)
+            patterns = ta_intraday.IntradayTechnicalAnalysis.detect_pullback_entry_v45(df_15m, indicators['ema20'], context=global_index_ctx)
+            
+            # --- L2: SCORING ENGINE ---
             l1_score, l1_data = self._run_layer1(indicators)
-
-            # =========================
-            # STEP 3: DNA GATE (V14.1: Calibrated Floor)
-            # =========================
-            # OLD: floor was 13, blocking stocks with slope(10) + small RVOL(6) = 16
-            # NEW: floor is 10, allowing early momentum (slope only) through for L2 analysis
-            # Recovery Bonus: if RVOL > 2.0 (Institutional), bypass gate entirely
-            rvol_bypass = indicators.get("rvol", 0) > 2.0
-            if l1_score < 10 and not rvol_bypass:
-                l2_score = 0
-                # FIX M3: Use 'mode' key consistently (was 'alpha_mode') so EXHAUSTED check works
-                l2_data = {"mode": "NONE", "alpha_mode": "NONE", "reason": "DNA Gate Blocked"}
-                liq = liquidity_service.get_liquidity(sym) # Fast check for ignored
-                # P14 FIX: Skip L3 for DNA-blocked stocks — penalties are meaningless when score is already 0
-                l3_penalty = 0; l3_data = {"penalty": 0, "reasons": []}
+            l2_score, l2_data = self._run_layer2(indicators, df_15m)
+            
+            # [V17] Beta-Adjusted RS Alpha (Stock vs Index)
+            index_rets = global_index_ctx.get("15m_returns", pd.Series())
+            stock_rets = df_15m['close'].pct_change().dropna()
+            rs_alpha = ta_intraday.IntradayTechnicalAnalysis.calculate_relative_strength_alpha(stock_rets, index_rets)
+            
+            # [V18 FIX #15] Single RS contribution — no double counting
+            rs_contribution = max(min(rs_alpha * 1000, 15), -15)
+            
+            # [V19 APEX-A] MULTI-TIMEFRAME CONFLUENCE GATE
+            mtf_bonus = 0
+            if indicators.get("ema_1h_trend_up"):
+                mtf_bonus += 5  # 1h trend supports 15m setup
             else:
-                # [V13.1] Lazy-load liquidity for high-conviction candidates
-                liq = await liquidity_service.get_liquidity_async(sym)
+                mtf_bonus -= 10  # Counter-trend penalty: 15m bullish but 1h bearish
+            # Triple alignment bonus (15m + 1h + 1d all bullish)
+            if indicators.get("ema_1h_trend_up") and indicators.get("is_1d_bullish"):
+                mtf_bonus += 5  # Full alignment = highest conviction
+            
+            # [V17] SECTOR HEAT GATING (Structural Filter)
+            sector_boost = 0
+            sector = market_service.get_sector_for_symbol(sym)
+            heat = 0.0
+            if sector_heat:
+                heat = sector_heat.get(sector, 0.0)
+                # Hard rejection if sector is crashing
+                if heat < -0.005:
+                    return {"symbol": sym, "skip_reason": f"Negative Sector Heat ({heat*100:.2f}%)"}
+                if heat > 0:
+                    # Scale boost: 5 pts for 0.5% heat, max 10 pts
+                    sector_boost = min(10, heat * 1000)
+            
+            # [V19 APEX-F] SECTOR ROTATION ALPHA
+            # Stock outperforming a hot sector = institutional rotation play
+            rotation_boost = 0
+            if rs_alpha > 0.002 and heat > 0.005:
+                rotation_boost = min(8, heat * 800)  # +4 for 0.5% heat, +8 for 1%+
+            
+            base_score = max(0, min(100, l1_score + l2_score + rs_contribution + mtf_bonus + sector_boost + rotation_boost))
+            
+            # [V18 FIX #7] L3: PENALTY ENGINE — re-integrated into scoring
+            liq = liquidity_service.get_liquidity(sym)
+            l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data, liq)
+            base_score = max(0, min(100, base_score - l3_penalty))
+            
+            # --- L3: EXECUTION GATING ---
+            # 1. Freshness Guard
+            now = datetime.utcnow()
+            last_candle_time = df_15m.index[-1].to_pydatetime().replace(tzinfo=None)
+            if (now - last_candle_time).total_seconds() > 600: # 10m limit
+                return {"symbol": sym, "skip_reason": "Stale Data (>10m)"}
+            
+            # 2. Volatility Kill-Switch
+            atr_pct = indicators['atr'] / real_price
+            if atr_pct > 0.05: # Extreme volatility reject
+                return {"symbol": sym, "skip_reason": "Extreme Volatility (ATR > 5%)"}
+            
+            # [V14] 3. Multi-Day Weekly Resistance Hard Filter
+            # Automatically reject Longs if price is within 0.5% of 5-Day High
+            df_1d = pulse_data.get(sym, {}).get("1d") if pulse_data else None
+            if df_1d is not None and not df_1d.empty and len(df_1d) >= 5:
+                weekly_high = float(df_1d['high'].tail(5).max())
+                # If we are within 0.3% of the weekly high, the risk of a distribution trap is huge
+                if real_price >= weekly_high * 0.997 and real_price < weekly_high * 1.002:
+                    return {"symbol": sym, "skip_reason": "Multi-Day Resistance (Near 5D High)"}
                 
-                # P5/P13 FIX: Pass df_15m to _run_layer2 so signals are computed AFTER exhaustion check
-                l2_score, l2_data = self._run_layer2(indicators, df_15m)
+                # [V17] 3b. Macro-Alignment Hard Gate (Daily EMA-20)
+                # Hard rejection if trading against primary daily trend
+                ema20_1d = EMAIndicator(close=df_1d['close'], window=20).ema_indicator().iloc[-1]
+                if real_price < ema20_1d:
+                    return {"symbol": sym, "skip_reason": "Against Macro Trend (Price < 1D EMA-20)"}
+                
+                # [V18 FIX #14] Inject is_1d_bullish from actual 1D data for L3 penalties
+                indicators["is_1d_bullish"] = real_price > ema20_1d
+            else:
+                indicators["is_1d_bullish"] = True  # Default bullish if no daily data
+                
+            # 4. ERS Terminal Gating
+            ers_score = indicators.get("ers_score", 100)
+            ers_gates = self._get_adaptive_ers_threshold()
+            if ers_score < ers_gates["reject"]:
+                return {"symbol": sym, "skip_reason": f"Adaptive ERS Reject ({ers_score} < {ers_gates['reject']})"}
+            
+            # 4. VWAP Soft Penalty
+            vwap_dist = abs(real_price - indicators['vwap_val']) / max(indicators['atr'], 1e-6)
+            if vwap_dist > 1.5:
+                base_score *= 0.8 # Anti-chase penalty
+                
+            # 5. 9:30 Trap
+            ist_now = datetime.now(pytz.timezone('Asia/Kolkata'))
+            if ist_now.hour == 9 and ist_now.minute < 30:
+                # Require 'Open Drive' confirmation or high-velocity reclaim
+                if not patterns.get("hv_reclaim") and patterns.get("expansion_ratio", 0) < 1.0:
+                    return {"symbol": sym, "skip_reason": "9:30 Trap Guard"}
 
-            # =========================
-            # STEP 4: LAYER 3
-            # =========================
-            # P14: Only run L3 if stock passed DNA gate (l3 already set to 0 above for blocked stocks)
-            if l1_score >= 10 or rvol_bypass:
-                l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data, liq=liq)
+            # --- PRIORITY CALCULATION ---
+            indicators["ers_score"] = ers_score
+            scan_history = self.persistence_cache.get(sym, [])
+            persistence_count = sum(1 for s in scan_history if s.get("score", 0) >= 70)
+            
+            # [V19 APEX-E] MOMENTUM PERSISTENCE BOOST
+            # Stocks in 3+ consecutive scans with score >= 70 = accumulating institutional interest
+            persistence_boost = 0
+            if persistence_count >= 3:
+                persistence_boost = min(8, persistence_count * 2)  # 3→6, 4→8, cap 8
+                base_score = min(100, base_score + persistence_boost)
+            
+            priority = self._calculate_priority_score(base_score, indicators, sym, persistence=persistence_count)
 
-            # =========================
-            # FINAL SCORE
-            # =========================
-            # R4-5 FIX: Cap L3 penalty at 75% of (L1+L2) to prevent wiping valid setups
-            # OLD: L3 max = 125, L1+L2 max = 100 → even perfect setups zeroed
-            # NEW: A truly strong setup (40+60=100) can lose at most 75 pts from L3
-            effective_l3 = min(l3_penalty, int((l1_score + l2_score) * 0.75))
-            final_score = max(0, min(100, (l1_score + l2_score - effective_l3)))
-            signal = self._get_signal(final_score)
-
-            # [V12.9] Institutional Liquidity Analysis (already fetched above)
+            # [V18 FIX #2] Dead code block removed — Build Final Institutional Output
+            # [V18 FIX #7] Incorporate L3 into output for transparency
             adv20 = liq.get("adv20", 0)
             liq_level = liq.get("level", "Unknown")
-            # 1% Stealth Limit
             max_qty = int(adv20 * 0.01) if adv20 > 0 else 0
             max_value = round(max_qty * real_price, 0)
 
-            # Compatibility: build "reasons" list and "groups" for UI
+            # Build reasons list for UI transparency
             reasons = []
             for r_obj in l1_data.get("reasons", []):
                 reasons.append({"text": r_obj["text"], "type": "positive", "layer": 1, "impact": r_obj["impact"]})
@@ -246,40 +473,79 @@ class IntradayEngine:
                 "Safeguards (L3)": {"score": -l3_penalty, "max": 0, "details": [r for r in reasons if r["layer"] == 3]}
             }
 
-            verdict = "PIONEER PRIME" if final_score >= 85 else "Standard Setup"
-            signal_label = f"{signal} {('🏆' if final_score > 85 else '✅')}"
-            
-            if l2_data.get("mode") == "EXHAUSTED":
-                verdict = "AVOID - Overextended"
-                signal = "IGNORE"
-                signal_label = "EXHAUSTED 🛑"
+            signal = self._get_signal(base_score)
+            verdict = "PIONEER PRIME" if base_score >= 85 else "Standard"
 
-            # =========================
-            # STEP 5: TRADABILITY
-            # =========================
-            kite_audit = kite_service.get_tradability(sym)
+            # [V19 APEX-H] STRUCTURAL RISK MANAGEMENT
+            india_vix = global_index_ctx.get("india_vix", 15)
+            atr = indicators.get("atr", 0)
+            
+            # Stop-Loss: Tighter of (ATR-based, Structural Swing Low)
+            atr_sl = round(real_price - max(atr * (2.0 if india_vix > 20 else 1.5), real_price * 0.005), 2)
+            if df_15m is not None and len(df_15m) >= 6:
+                structural_sl = round(float(df_15m['low'].iloc[-6:].min()), 2)
+                stop_loss = max(structural_sl, atr_sl)  # Higher = tighter for longs
+            else:
+                stop_loss = atr_sl
+            stop_loss = l2_data.get("dynamic_zones", {}).get("stop_loss") or stop_loss
+            
+            # Target: Nearest resistance level, capped by ATR extension
+            atr_target = round(real_price + max(atr * (3.0 if india_vix > 20 else 2.0), real_price * 0.01), 2)
+            # Use pivot data if available for realistic resistance targeting
+            pivot_data = indicators.get("pivots", {})
+            valid_res = [v for v in pivot_data.values() if isinstance(v, (int, float)) and v > real_price * 1.002]
+            if valid_res:
+                nearest_res = min(valid_res)
+                # Use nearest resistance if it's reasonable (at least 0.5% above entry)
+                if nearest_res > real_price * 1.005:
+                    target = round(min(nearest_res, atr_target * 1.2), 2)  # Cap at 120% of ATR target
+                else:
+                    target = atr_target
+            else:
+                target = atr_target
+            target = l2_data.get("dynamic_zones", {}).get("target") or target
+            
+            sl_dist = max(abs(real_price - stop_loss), 0.01)
+            
+            # [V19 APEX-G] CONVICTION-WEIGHTED POSITION SIZING
+            # Higher conviction = slightly more risk allocation (capped)
+            if base_score >= 85:
+                risk_pct = 0.015  # 1.5% risk for Pioneer Prime
+            elif base_score >= 75:
+                risk_pct = 0.012  # 1.2% for high conviction
+            else:
+                risk_pct = 0.01   # Standard 1%
+            risk_amount = 100000 * risk_pct  # ₹1L baseline capital
 
             return {
-                "symbol": sym, 
-                "price": round(real_price, 2), 
-                "score": round(final_score, 1),
-                "signal": signal, 
-                "signal_label": signal_label, 
+                "symbol": sym,
+                "price": round(real_price, 2),
+                "score": round(base_score, 1),
+                "priority": priority,
+                "rs_alpha": round(rs_alpha, 4),
+                "regime": regime,
+                "mode": l2_data.get("mode", "NONE"),
+                "flags": {
+                    "HV_RECLAIM": patterns.get("hv_reclaim", False),
+                    "SQUEEZE": patterns.get("squeeze_detected", False),
+                    "STOP_HUNT": patterns.get("stop_hunt_reversal", False),
+                    "VACUUM": patterns.get("liquidity_vacuum", False),
+                    "FOOTPRINT": indicators.get("footprint", 0),
+                    "MTF_ALIGNED": indicators.get("ema_1h_trend_up", False) and indicators.get("is_1d_bullish", False),
+                    "PERSISTENCE": persistence_count
+                },
                 "verdict": verdict,
-                "tradability": kite_audit,
+                "signal": signal,
                 "reasons": reasons,
                 "groups": groups,
                 "entry": round(real_price, 2),
-                # V14.6 FIX: Pipe dynamic structural targets natively from the advanced models if available
-                "target": l2_data.get("dynamic_zones", {}).get("target") or round(real_price + max(indicators.get("atr", 0) * (2.5 if indicators.get("rvol", 0) > 2.5 else (2.0 if indicators.get("rvol", 0) > 1.2 else 1.5)), real_price * 0.0075), 2),
-                "stop_loss": l2_data.get("dynamic_zones", {}).get("stop_loss") or round(real_price - max(indicators.get("atr", 0) * 1.5, real_price * 0.005), 2),
-                # V16 AUDIT FIX 3: Position Allocation with safety caps
-                # Risk parity: 1% max risk on 100k capital baseline (₹1,000 risk per trade)
-                # Guards: (a) max ₹1L total exposure, (b) never exceed 1% of ADV20 (stealth limit)
+                "target": target,
+                "stop_loss": stop_loss,
+                "rr_ratio": round((target - real_price) / sl_dist, 2) if sl_dist > 0 else 0,
                 "position_size": min(
-                    int(1000 / max(abs(real_price - (l2_data.get("dynamic_zones", {}).get("stop_loss") or round(real_price - max(indicators.get("atr", 0) * 1.5, real_price * 0.005), 2))), 0.01)),
-                    int(100000 / max(real_price, 1)),     # Cap: ₹1 Lakh max exposure
-                    max(int(adv20 * 0.01), 1) if adv20 > 0 else int(100000 / max(real_price, 1))  # Cap: 1% of ADV20
+                    int(risk_amount / sl_dist),
+                    int(100000 / max(real_price, 1)),
+                    max(int(adv20 * 0.01), 1) if adv20 > 0 else int(100000 / max(real_price, 1))
                 ),
                 "alpha_mode": l2_data.get("mode", "NONE"),
                 "liquidity": {
@@ -287,10 +553,11 @@ class IntradayEngine:
                     "adv20": adv20,
                     "max_stealth_buy_qty": max_qty,
                     "max_stealth_buy_value": max_value
-                }
+                },
+                "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            return {"symbol": sym, "skip_reason": f"Analysis Error: {str(e)}"}
+            return {"symbol": sym, "skip_reason": f"System Error: {str(e)}"}
 
     def _get_indicators(self, df_15m, df_1h):
         ind_15m = self._compute_indicators(df_15m)
@@ -331,6 +598,7 @@ class IntradayEngine:
         
         ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
         ema20 = ema20_series.iloc[-1]
+        ema50 = EMAIndicator(close=df['close'], window=50).ema_indicator().iloc[-1]
         # FIX H1: Use raw single-candle diff for real-time slope (was rolling(3).mean() = 2-candle lag)
         ema_slope = ema20_series.diff().iloc[-1]
         
@@ -351,7 +619,26 @@ class IntradayEngine:
         if benchmark > 0:
             rvol = current_vol / benchmark
         else:
-            avg = avg_vol.iloc[-2] if len(avg_vol) > 1 else avg_vol.iloc[-1]
+            # FIX #6: Dynamic RVOL Divisor (Timeframe-Aware) [V16.1 Hardened]
+            # OLD: Assumed fixed 25 candles (15m). 
+            # NEW: Infer interval and calculate session density.
+            if isinstance(df.index, pd.DatetimeIndex) and len(df.index) >= 2:
+                inferred_mins = (df.index[-1] - df.index[-2]).total_seconds() / 60
+                if 1 <= inferred_mins <= 60:
+                    candles_per_session = max(1, int(375 / inferred_mins))
+                else:
+                    candles_per_session = 25
+            else:
+                candles_per_session = 25
+            
+            liq_ctx = liquidity_service.get_liquidity(symbol)
+            adv20 = liq_ctx.get("adv20", 0)
+            
+            if adv20 > 0:
+                avg = adv20 / candles_per_session
+            else:
+                avg = avg_vol.iloc[-2] if len(avg_vol) > 1 else avg_vol.iloc[-1]
+            
             rvol = current_vol / avg if avg > 0 else 0
         
         # FIX H3: Strengthen structure_ok with proper HH/HL check
@@ -419,6 +706,7 @@ class IntradayEngine:
             "symbol": symbol, 
             "price": price, 
             "ema20": ema20, 
+            "ema50": ema50,
             "ema_slope": ema_slope, 
             "vwap": vwap,
             "vwap_val": vwap,  # FIX C1: Add alias so Smart Gate's vwap_val check works correctly
@@ -525,7 +813,21 @@ class IntradayEngine:
             pb_reason = "PULLBACK: EMA retracement + recovery"
             if df_15m is not None:
                 try:
-                    pb_engine = ta_intraday.IntradayTechnicalAnalysis.detect_pullback_entry_v45(df_15m, indicators.get("vwap_val", price))
+                    # V16.1 Context Injection: Pass Smart Gate and Volatility characteristics
+                    liq_ctx = liquidity_service.get_liquidity(indicators.get("symbol", ""))  # V18 FIX #5
+                    vol_mult = 1.25 if liq_ctx.get("level") in ["High", "Moderate"] else 1.0
+                    
+                    pb_context = {
+                        "smart_gate": indicators.get("smart_gate_bypass", False),
+                        "vol_mult": vol_mult
+                    }
+                    
+                    pb_engine = ta_intraday.IntradayTechnicalAnalysis.detect_pullback_entry_v45(
+                        df_15m, 
+                        indicators.get("vwap_val", price),
+                        context=pb_context
+                    )
+                    
                     dynamic_zones["stop_loss"] = pb_engine.get("stop_loss")
                     dynamic_zones["target"] = pb_engine.get("target_2")
                     adv_score = pb_engine.get("entry_score", 0)
@@ -545,6 +847,25 @@ class IntradayEngine:
         # 2D. Early Phase Base (Catch-all for standard healthy setups that aren't explosive yet)
         elif is_near_vwap and is_trending and structure_ok:
             alpha_mode = "EARLY"; score += 45; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure", "impact": 45})
+        
+        # [V19 APEX-C] OPENING DRIVE DETECTION (9:15-9:45)
+        # The most profitable intraday window — gap-and-go, ORB breakouts, institutional opening orders
+        if alpha_mode == "NONE" and df_15m is not None and isinstance(df_15m.index, pd.DatetimeIndex):
+            try:
+                od_h, od_m = df_15m.index[-1].hour, df_15m.index[-1].minute
+                is_opening_window = (od_h == 9 and 15 <= od_m <= 45)
+                if is_opening_window:
+                    orb = indicators.get("orb", {})
+                    gap = indicators.get("gap", {})
+                    # Gap-and-Go: gap > 0.5% with strong volume
+                    is_gap_go = gap.get("gap_percent", 0) > 0.5 and rvol > 2.0
+                    # ORB Breakout: above opening range high
+                    is_orb = orb.get("breakout_type") == "bullish"
+                    if is_gap_go or is_orb:
+                        alpha_mode = "OPENING_DRIVE"
+                        score += 42; reasons.append({"text": f"OPENING DRIVE: {'Gap-and-Go' if is_gap_go else 'ORB Breakout'}", "impact": 42})
+            except Exception:
+                pass
             
         if rvol > 2.5: score += 10; reasons.append({"text": "Booster: High RVOL", "impact": 10})
         if ema_1h_trend_up: score += 5; reasons.append({"text": "Booster: 1H Trend Up", "impact": 5})
@@ -581,6 +902,35 @@ class IntradayEngine:
             poc_bounce = indicators.get("poc_bounce", {})
             if poc_bounce.get("is_bounce"):
                 score += 10; reasons.append({"text": "Confluence: V-POC Bounce (Volume Node Defense)", "impact": 10})
+            
+            # [V18 FIX #18] Candle Pattern Recognition at Key Levels
+            if df_15m is not None and len(df_15m) >= 3:
+                last = df_15m.iloc[-1]
+                prev = df_15m.iloc[-2]
+                c_range = float(last['high']) - float(last['low'])
+                body = abs(float(last['close']) - float(last['open']))
+                lower_wick = min(float(last['close']), float(last['open'])) - float(last['low'])
+                
+                vwap_val = indicators.get("vwap_val", 0)
+                atr = indicators.get("atr", max(c_range, 1e-6))
+                ema20 = indicators.get("ema20", 0)
+                
+                # Bullish Hammer at VWAP/EMA20 (lower wick > 2x body, near support)
+                is_hammer = (lower_wick > body * 2) and (float(last['close']) > float(last['open'])) and c_range > 0
+                near_support = (abs(float(last['low']) - vwap_val) < atr * 0.3) or (abs(float(last['low']) - ema20) < atr * 0.3)
+                
+                if is_hammer and near_support:
+                    score += 8; reasons.append({"text": "Confluence: Bullish Hammer at Support", "impact": 8})
+                
+                # Bullish Engulfing
+                is_engulfing = (
+                    float(prev['close']) < float(prev['open']) and   # prev bearish
+                    float(last['close']) > float(last['open']) and   # curr bullish
+                    float(last['close']) > float(prev['open']) and   # body engulfs
+                    float(last['open']) < float(prev['close'])
+                )
+                if is_engulfing and indicators.get("rvol", 0) > 1.2:
+                    score += 7; reasons.append({"text": "Confluence: Bullish Engulfing (reversal)", "impact": 7})
                 
         # P17: Smart Gate Reversal Booster
         # If the stock bypassed the DNA block via conviction signals, inject 15 points
@@ -665,13 +1015,32 @@ class IntradayEngine:
                 current_time = df_15m.index[-1]
                 if hasattr(current_time, 'hour'):
                     h, m = current_time.hour, current_time.minute
+                    
+                    # V16.1: LOTTO PASS [Hardened]
+                    # If the score is exceptional (A+ quality) or volume is parabolic, we reduce time-decay 
+                    # to allow high-conviction 'Hero' trades during typical dead zones.
+                    is_lotto = (l2_data.get("score", 0) >= 100) or (rvol > 4.0)
+                    t_mult = 0.5 if is_lotto else 1.0
+                    
                     # Lunch Chop Filter (11:30 to 13:30)
                     if (h == 11 and m >= 30) or h == 12 or (h == 13 and m <= 30):
-                        penalty += 20; reasons.append({"text": "Penalty: Lunch Chop Zone (Time Decay)", "impact": -20})
-                    # V16 AUDIT FIX 2: EOD Liquidation Risk Filter (After 14:45, including 15:00-15:30)
-                    # OLD: only h==14, m>=45 — missed the entire 15:00-15:30 window
+                        p_val = int(20 * t_mult)
+                        reasons.append({"text": f"Penalty: Lunch Chop Zone (Time Decay {'[LOTTO PASS]' if is_lotto else ''})", "impact": -p_val})
+                        penalty += p_val
+                    # [V19 APEX-D] POWER HOUR (14:00 - 14:45): Institutional accumulation window
+                    elif h == 14 and m < 45:
+                        if rvol > 1.5:
+                            # Power Hour with volume = institutional accumulation — no penalty
+                            reasons.append({"text": "Boost: Power Hour Momentum (14:00-14:45)", "impact": 0})
+                        else:
+                            p_val = 5  # Mild caution for low-volume Power Hour
+                            penalty += p_val
+                            reasons.append({"text": "Caution: Power Hour (low volume)", "impact": -p_val})
+                    # EOD Liquidation Risk Filter (After 14:45)
                     elif (h == 14 and m >= 45) or h >= 15:
-                        penalty += 30; reasons.append({"text": "Penalty: End Of Day Liquidation Risk", "impact": -30})
+                        p_val = int(30 * t_mult)
+                        reasons.append({"text": f"Penalty: End Of Day Liquidation Risk {'[LOTTO PASS]' if is_lotto else ''})", "impact": -p_val})
+                        penalty += p_val
         except Exception:
             pass
 
@@ -746,12 +1115,26 @@ class IntradayEngine:
         await kite_service.initialize()
         
         # [V13.5] Bulk Bootstrap liquidity for all symbols in the current scan
-        # This prevents the "500 Shares" loop by pre-loading volume data in batches
         all_symstr = [s["symbol"] if isinstance(s, dict) else s for s in symbols]
         asyncio.create_task(liquidity_service.bulk_bootstrap(all_symstr))
         
+        # [V17 Vanguard] Bootstrap Synchronization Guard
+        # Give the background task a few seconds to kick off and fetch the first few batches
+        # This prevents the initial batch of a scan from falling back to ADV25.
+        await asyncio.sleep(2)
+        
         self.job_states[job_id] = {"results": [], "failed_symbols": [], "progress": 0, "is_running": True, "pause_requested": False, "main_task": asyncio.current_task()}
         index_ctx = await self._get_index_context()
+        
+        # [V18 FIX #6] Pre-compute sector heat ONCE globally (not per-batch)
+        try:
+            sector_heat = await market_service.get_sector_performances()
+            # Convert from percentage to decimal for compatibility with gating thresholds
+            sector_heat = {k: v / 100.0 for k, v in sector_heat.items()}
+        except Exception as e:
+            print(f"[SECTOR] Failed to fetch global sector heat: {e}")
+            sector_heat = {}
+        
         sync_task = asyncio.create_task(self._progress_loop(job_id, total))
 
         # R4-8 FIX: Pre-build O(1) index lookup instead of O(n) symbols.index() per stock
@@ -795,6 +1178,9 @@ class IntradayEngine:
                 for s in chunk_syms:
                     batch_pulse[s] = {"15m": res_15m.get(s), "1h": res_1h.get(s), "1d": res_1d.get(s), "price": res_prices.get(s, {}).get("price", 0.0)}
 
+                # [V18 FIX #6] Sector heat now pre-computed globally before scan loop
+                # sector_heat = await self._calculate_sector_heat(batch_pulse)  # REMOVED: was per-batch
+
                 # 2. Analyze the batch immediately
                 async def sem_task(s_obj):
                     sym = s_obj["symbol"] if isinstance(s_obj, dict) else s_obj
@@ -802,7 +1188,7 @@ class IntradayEngine:
                         try:
                             # [PER-STOCK LOGGING REQUESTED]
                             res = await asyncio.wait_for(
-                                self.analyze_stock(sym, job_id, index_ctx, batch_pulse),
+                                self.analyze_stock(sym, job_id, index_ctx, batch_pulse, sector_heat),
                                 timeout=10.0
                             )
                             
@@ -824,22 +1210,17 @@ class IntradayEngine:
                                     cap_str = f"{liq_info.get('max_stealth_buy_qty', 0):,}"
                                     
                                     if res['signal'] == 'IGNORE':
-                                        reason_text = res.get('reason')
-                                        if not reason_text:
-                                            details = res.get('groups', {}).get('Alpha Edge (60%)', {}).get('details', [])
-                                            reason_text = details[0].get('text', 'Gate Blocked') if details else 'Gate Blocked'
-                                        
-                                        if isinstance(reason_text, dict): 
-                                            reason_text = reason_text.get('text', 'Unknown')
-                                        
-                                        logger.info(f"SKIP {sym}: {reason_text}")
+                                        logger.info(f"SKIP {sym}: {res.get('skip_reason', 'Threshold')}")
                                     else:
-                                        # COMPACT INSTITUTIONAL LOGGING
-                                        msg = f"OK {sym}: {res['score']:>3} | {res['signal']} | L1:{l1} L2:{l2} L3:{l3} | Cap:{cap_str}"
+                                        # [V13] INSTITUTIONAL LOG TRACE
+                                        flags = [k for k, v in res.get("flags", {}).items() if v]
+                                        flag_str = "|".join(flags) if flags else "None"
+                                        msg = f"{sym:10} | Score:{res['score']:>4} | RS:{res.get('rs_alpha', 0):>6.4f} | Regime:{res['regime']:10} | Mode:{res['mode']:10} | Flags:[{flag_str}]"
                                         logger.info(msg)
-                                        # Keep catalysts/penalties in stdout (print) but omit from system_logger info to save space
-                                        print(f"   └ 🚀 Catalysts: {', '.join(catalysts[:4])}", flush=True) if catalysts else None
-                                        print(f"   └ 🛡️ Penalties: {', '.join(penalties[:4])}", flush=True) if penalties else None
+                                        # Institutional detail logging
+                                        if catalysts or penalties:
+                                            print(f"   ├ 🚀 Catalysts: {', '.join(catalysts[:4])}") if catalysts else None
+                                            print(f"   ├ 🛡️ Penalties: {', '.join(penalties[:4])}") if penalties else None
                             else:
                                 if logger: logger.warning(f"[SKIP] {sym}: {res.get('skip_reason', 'Unknown')}")
                         except Exception as e:
@@ -851,14 +1232,62 @@ class IntradayEngine:
                             self.job_states[job_id]["progress"] += 1
 
                 await asyncio.gather(*[sem_task(s) for s in chunk])
+
+                # 6. Safety Delay (V16.1 Evasion Hardening)
+                # Spacing out batches to prevent 'robotic' request signatures
+                if i + chunk_size < total:
+                    delay = random.uniform(1.5, 3.0)
+                    await asyncio.sleep(delay)
+
                 
         finally:
             self.job_states[job_id]["is_running"] = False
             await sync_task
 
-        # [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
-        results = sorted(self.job_states[job_id]["results"], key=lambda x: (x.get("score", 0), -(x.get("analysis_index", 0))), reverse=True)
-        return sanitize_data({"total": total, "success": len(results), "data": results})
+        # --- L4: ALLOCATION LAYER ---
+        raw_results = self.job_states[job_id]["results"]
+        
+        # [V19 APEX-B] ADAPTIVE SCORE FLOOR BY REGIME
+        # STRONG_TREND: trend carries trades → loosen gate
+        # CHOP: only highest conviction → tighten gate
+        regime_strength = self.system_state.get("regime_strength", "NORMAL")
+        if regime_strength == "STRONG_TREND":
+            dynamic_floor = 55   # Trend carries — capture momentum runners
+        elif regime_strength == "CHOP":
+            dynamic_floor = 80   # Only highest conviction survives
+        else:
+            dynamic_floor = self.CONFIG["score_floor"]  # Standard 65
+        
+        filtered = [r for r in raw_results if r.get("score", 0) >= dynamic_floor]
+        
+        # 2. Top-N Selection (15% or Max 50)
+        top_n_target = min(self.CONFIG["top_n_cap"], max(5, int(len(filtered) * 0.15)))
+        
+        # 3. Final Sorting (Priority DESC, Footprint Tie-Break)
+        # We use a small epsilon for priority tie-breaking
+        results = sorted(
+            filtered, 
+            key=lambda x: (x.get("priority", 0), x.get("flags", {}).get("FOOTPRINT", 0)), 
+            reverse=True
+        )[:top_n_target]
+        
+        # 4. System State Synchronization
+        self._sync_scans_and_risk(results)
+        
+        # 5. Cross-Scan Persistence Update
+        for res in results:
+            sym = res["symbol"]
+            if sym not in self.persistence_cache: self.persistence_cache[sym] = []
+            self.persistence_cache[sym].append({"score": res["score"], "time": datetime.utcnow()})
+            # Keep only last 5 scans
+            if len(self.persistence_cache[sym]) > 5: self.persistence_cache[sym].pop(0)
+
+        return sanitize_data({
+            "total": total, 
+            "success": len(results), 
+            "system_state": self.system_state,
+            "data": results
+        })
 
     async def stop_job(self, job_id: str):
         """[V12.1 RESTORED] Programmatic termination signal."""

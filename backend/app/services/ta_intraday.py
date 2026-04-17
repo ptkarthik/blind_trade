@@ -11,8 +11,62 @@ def safe_scalar(x):
     val = float(x.iloc[0]) if hasattr(x, 'iloc') else float(x)
     return float(np.nan_to_num(val, nan=0.0))
 
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
 class IntradayTechnicalAnalysis:
     
+    @staticmethod
+    def calculate_institutional_footprint(persistence: int, volume_ratio: float, mean_fp: float = 0.0, std_fp: float = 1.0) -> float:
+        """[V14] Centered Sigmoid Footprint for Institutional Alpha."""
+        # raw_footprint combines persistence (time) and volume (intensity)
+        raw_footprint = persistence * volume_ratio
+        
+        # Centering using Z-score logic to prevent mid-range saturation
+        # std_fp should be > 0 to avoid division by zero
+        safe_std = max(std_fp, 0.001)
+        z_score = (raw_footprint - mean_fp) / safe_std
+        
+        return sigmoid(z_score)
+        
+    @staticmethod
+    def calculate_relative_strength_alpha(stock_rets: pd.Series, index_rets: pd.Series) -> float:
+        """[V17] Beta-Adjusted RS Alpha. Stock vs Nifty 50."""
+        if stock_rets.empty or index_rets.empty: return 0.0
+        
+        # Calculate trailing beta (20-period)
+        try:
+            # Align indices 
+            common_idx = stock_rets.index.intersection(index_rets.index)
+            if len(common_idx) < 5: return stock_rets.iloc[-1] - index_rets.iloc[-1]
+            
+            s = stock_rets.loc[common_idx]
+            i = index_rets.loc[common_idx]
+            
+            # Beta = Cov(s, i) / Var(i)
+            cov = s.cov(i)
+            var = i.var()
+            beta = cov / var if var > 0 else 1.0
+            
+            # Alpha = Stock_Return - (Beta * Index_Return)
+            # Use current day cumulative returns for the alpha output
+            stock_cum = (1 + s).prod() - 1
+            index_cum = (1 + i).prod() - 1
+            
+            alpha = stock_cum - (beta * index_cum)
+            return float(alpha)
+        except:
+            return float(stock_rets.iloc[-1] - index_rets.iloc[-1])
+
+    @staticmethod
+    def indicator_integrity_guard(df: pd.DataFrame, indicators: dict) -> dict:
+        """[V13] Phase 1: Core Integrity Guard."""
+        required = ['ema20', 'ema50', 'vwap', 'atr']
+        missing = [f for f in required if indicators.get(f) is None]
+        if missing or df is None or df.empty:
+            return {"status": "safe_skip", "reason": f"Missing indicators: {missing}"}
+        return {"status": "valid"}
+
     @staticmethod
     def _ensure_series(data):
         if isinstance(data, pd.DataFrame):
@@ -22,6 +76,8 @@ class IntradayTechnicalAnalysis:
     @staticmethod
     def calculate_vwap_series(df: pd.DataFrame) -> pd.Series:
         if df is None or df.empty: return pd.Series(dtype=float)
+        # [V18 FIX #9] Prevent in-place mutation of input DataFrame
+        df = df.copy()
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
                 df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
@@ -117,7 +173,8 @@ class IntradayTechnicalAnalysis:
                 "slope_up": slope_up,
                 "reclaim": reclaim_detected,
                 "oscillating": is_oscillating,
-                "cross_count": crosses
+                "cross_count": crosses,
+                "is_squeeze": (abs(close_now - vwap_now) / vwap_now < 0.0015) # VWAP Squeeze
             }
         except Exception as e:
             print(f"Error in advanced VWAP: {e}")
@@ -451,7 +508,8 @@ class IntradayTechnicalAnalysis:
                 "is_squeeze": is_squeeze,
                 "is_breakout": is_breakout,
                 "width": round((bb_width.iloc[-1] if len(bb_width) > 0 else 0.0), 4),
-                "width_percentile": round(((bb_width.iloc[-1] if len(bb_width) > 0 else 0.0) / (width_ma.iloc[-1] if len(width_ma) > 0 else 0.0)) * 100, 1),
+                # [V18 FIX #16] Prevent divide-by-zero on flat-price data
+                "width_percentile": round(((bb_width.iloc[-1] if len(bb_width) > 0 else 0.0) / max((width_ma.iloc[-1] if len(width_ma) > 0 else 1.0), 1e-8)) * 100, 1),
                 "upper": round((h_band.iloc[-1] if len(h_band) > 0 else 0.0), 2),
                 "lower": round((l_band.iloc[-1] if len(l_band) > 0 else 0.0), 2)
             }
@@ -1010,28 +1068,31 @@ class IntradayTechnicalAnalysis:
             close_position = (l_close_val - l_low_val) / candle_range if candle_range > 0 else 0.5
             cond_close = close_position <= 0.30
             
-            # 4. Range Expansion Confirmation (10-candle average)
-            _high = df['high']
-            _low = df['low']
-            high_series = _high.iloc[:, 0] if isinstance(_high, pd.DataFrame) else _high
-            low_series = _low.iloc[:, 0] if isinstance(_low, pd.DataFrame) else _low
-            _ranges_series = (high_series - low_series).rolling(10).mean()
-            _avg_range_val = _ranges_series.iloc[-2] if not np.isnan(_ranges_series.iloc[-2]) else (_ranges_series.iloc[-1] if len(_ranges_series) > 0 else 0.0)
-            avg_range = safe_scalar(_avg_range_val)
-            range_expansion_ratio = candle_range / avg_range if not np.isnan(avg_range) and avg_range > 0 else 1.0
-            cond_range = range_expansion_ratio >= 1.7
+            # 4. Range Expansion Check [V18 FIX #3: was missing, causing NameError]
+            atr_trap_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+            atr_trap_val = float(atr_trap_series.iloc[-1]) if not atr_trap_series.empty else max(candle_range, 1e-6)
+            range_expansion_ratio = candle_range / max(atr_trap_val, 1e-6)
+            cond_range = range_expansion_ratio > 1.5  # Range > 1.5x ATR = abnormal expansion
             
-            trap_move_detected = cond_vol and cond_wick and cond_close and cond_range
+            # 5. Divergent Volume Check (V17 Vanguard)
+            # Volume is rising while price fails to make new highs (Distribution)
+            vol_slope = vol_series.iloc[-5:].diff().mean()
+            price_slope = df['high'].iloc[-5:].diff().mean()
+            is_divergent = vol_slope > 0 and price_slope <= 0 and l_close_val < l_open_val
+            
+            trap_move_detected = (cond_vol and cond_wick and cond_close and cond_range) or (is_divergent and cond_vol)
             
             return {
                 "trap_move_detected": trap_move_detected,
-                "trap_range_expansion": cond_range, # FIX 4 (Patch 1): Metadata alignment
-                "range_expansion_ratio": round(range_expansion_ratio, 2), # FIX 2 (Patch 2)
+                "is_divergent": is_divergent,
+                "trap_range_expansion": cond_range, 
+                "range_expansion_ratio": round(range_expansion_ratio, 2),
                 "details": {
                     "vol_spike": cond_vol,
                     "upper_wick_ratio": round(upper_wick_ratio, 2),
                     "close_position": round(close_position, 2),
-                    "range_expansion_ratio": round(range_expansion_ratio, 2)
+                    "range_expansion_ratio": round(range_expansion_ratio, 2),
+                    "divergent_vol": is_divergent
                 }
             }
         except Exception as e:
@@ -1266,7 +1327,8 @@ class IntradayTechnicalAnalysis:
                 "trend_aligned": trend_aligned,
                 "expansion_ratio": round(expansion_ratio, 2),
                 "distance_from_vwap_atr": round(dist_vwap_atr, 2),
-                "trap_risk": trap_risk
+                "trap_risk": trap_risk,
+                "absorption_bonus": absorption_bonus  # V18 FIX #4: removed undefined vars
             }
         except Exception as e:
             # print(f"Error in Breakout Engine: {e}")
@@ -1278,11 +1340,12 @@ class IntradayTechnicalAnalysis:
                 "candle_strength": 0.0, 
                 "above_vwap": False, 
                 "trend_aligned": False,
-                "trap_risk": False
+                "trap_risk": False,
+                "absorption_bonus": 0
             }
 
     @staticmethod
-    def detect_pullback_entry_v45(df: pd.DataFrame, breakout_level: float) -> dict:
+    def detect_pullback_entry_v45(df: pd.DataFrame, breakout_level: float, context: dict = None) -> dict:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
@@ -1294,42 +1357,68 @@ class IntradayTechnicalAnalysis:
             prev = df.iloc[-2]
 
             # --- 0. DATA EXTRACTION (Scalars) ---
-            _l_open = latest['open']
-            l_open_val = safe_scalar(_l_open)
-            _l_close = latest['close']
-            l_close_val = safe_scalar(_l_close)
-            _l_high = latest['high']
-            l_high_val = safe_scalar(_l_high)
-            _l_low = latest['low']
-            l_low_val = safe_scalar(_l_low)
-            _l_vol = latest['volume']
-            l_vol_val = safe_scalar(_l_vol)
+            _l_open = latest['open']; l_open_val = safe_scalar(_l_open)
+            _l_close = latest['close']; l_close_val = safe_scalar(_l_close)
+            _l_high = latest['high']; l_high_val = safe_scalar(_l_high)
+            _l_low = latest['low']; l_low_val = safe_scalar(_l_low)
+            _l_vol = latest['volume']; l_vol_val = safe_scalar(_l_vol)
 
-            _p_high = prev['high']
-            p_high_val = safe_scalar(_p_high)
-            _p_close = prev['close']
-            p_close_val = safe_scalar(_p_close)
-            _p_low = prev['low']
-            p_low_val = safe_scalar(_p_low)
+            _p_high = prev['high']; p_high_val = safe_scalar(_p_high)
+            _p_close = prev['close']; p_close_val = safe_scalar(_p_close)
+            _p_low = prev['low']; p_low_val = safe_scalar(_p_low)
 
-            # --- EXTERNAL STATS (Needed for multiple sections) ---
-            last_3_vol = df['volume'].iloc[-3:]
-            prev_10_vol = df['volume'].iloc[-13:-3]
-            v3_avg = float(last_3_vol.mean())
-            v10_avg = float(prev_10_vol.mean())
-            
-            # --- 1. INDICATORS ---
+            # --- INDICATORS ---
             ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
             ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+            ema50_series = EMAIndicator(close=df['close'], window=50).ema_indicator()
             ema9_val = float(ema9_series.iloc[-1])
             ema20_val = float(ema20_series.iloc[-1])
+            ema50_val = float(ema50_series.iloc[-1])
             
             vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
             atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
             atr_val = float(atr_series.iloc[-1])
             atr_val = atr_val if atr_val > 0 else (l_close_val * 0.001)
 
-            # --- 2. PULLBACK DEFINITION (30 pts) (V4.6 ATR-NORMALIZED) ---
+            vol_ma_series = df['volume'].iloc[-21:-1]
+            v20_avg = float(vol_ma_series.mean())
+            
+            last_3_vol = df['volume'].iloc[-3:]
+            prev_10_vol = df['volume'].iloc[-13:-3]
+            v3_avg = float(last_3_vol.mean())
+            v10_avg = float(prev_10_vol.mean())
+
+            # --- 0.1 INTEGRITY & L1 MICRO-PARAMS [V13] ---
+            v_adj = atr_val / l_close_val
+            # Clamped Adaptive Gate: Widens for volatile stocks (min 0.3, max 0.8 ATR)
+            adaptive_gate = min(max(0.4 * (1 + (v_adj * 10)), 0.3), 0.8)
+            
+            # Normalized Trend Strength: Price-agnostic EMA spread
+            trend_strength = abs(ema20_val - ema50_val) / l_close_val
+            
+            # --- 0.2 ADVANCED L1 PATTERNS [V13] ---
+            # 1. High Velocity Reclaim (Structure Reclaim)
+            swing_low_series = df['low'].iloc[-6:-1]
+            prev_swing_low = float(swing_low_series.min())
+            reclaim_velocity = (l_close_val - l_low_val) / max(atr_val, 1e-6)
+            hv_reclaim = (reclaim_velocity > 0.5) and (l_close_val > prev_swing_low) and (l_close_val > vwap)
+            
+            # 2. Volatility Squeeze (Compression)
+            squeeze_detected = (atr_val / l_close_val) < 0.005 # Tight consolidation
+            
+            # 3. Stop-Hunt Reversal (Shakeout)
+            failed_breakdown = (l_low_val < prev_swing_low) and (l_close_val > prev_swing_low)
+            stop_hunt_reversal = failed_breakdown and (l_vol_val > (v20_avg * 1.5))
+            
+            # 4. Liquidity Vacuum (Ghost Move)
+            price_delta_pct = abs(l_close_val - l_open_val) / l_open_val
+            liquidity_vacuum = (price_delta_pct > 0.005) and (l_vol_val < (v20_avg * 0.5))
+
+            # --- 2. PULLBACK DEFINITION (30 pts) (V4.6 ADAPTIVE ATR-NORMALIZED) ---
+            # V16.1: Adaptive proximity based on beta/volatility context
+            vol_mult = context.get("vol_mult", 1.0) if context else 1.0
+            gate_size = 0.4 * vol_mult # Scales gate from 0.4 to 0.6 for high-beta
+            
             dist_ema9_atr = abs(l_low_val - ema9_val) / max(atr_val, 1e-6)
             dist_vwap_atr = abs(l_low_val - vwap) / max(atr_val, 1e-6)
             dist_retest_atr = abs(l_low_val - breakout_level) / max(atr_val, 1e-6)
@@ -1337,18 +1426,21 @@ class IntradayTechnicalAnalysis:
             pullback_score = 0
             entry_type = "None"
             
-            if dist_ema9_atr < 0.4: 
-                pullback_score = 30
-                entry_type = "EMA Pullback"
-            elif dist_vwap_atr < 0.4: 
-                pullback_score = 30
-                entry_type = "VWAP Bounce"
-            elif dist_retest_atr < 0.4: 
-                pullback_score = 30
-                entry_type = "Retest"
-            elif l_low_val > min(ema9_val, vwap, breakout_level):
-                pullback_score = 15
-                entry_type = "Loose Pullback"
+            # Use a weighted approach for "Near Hits" (Fractional Alpha)
+            def calculate_proximity_score(dist, gate):
+                if dist < gate: return 30
+                if dist < gate * 1.5: return 15 # "Near Miss" reward
+                return 0
+
+            s_ema = calculate_proximity_score(dist_ema9_atr, gate_size)
+            s_vwap = calculate_proximity_score(dist_vwap_atr, gate_size)
+            s_retest = calculate_proximity_score(dist_retest_atr, gate_size)
+            
+            pullback_score = max(s_ema, s_vwap, s_retest)
+            if s_ema == 30: entry_type = "EMA Pullback"
+            elif s_vwap == 30: entry_type = "VWAP Bounce"
+            elif s_retest == 30: entry_type = "Retest"
+            elif pullback_score == 15: entry_type = "Loose Pullback"
 
             # --- 3. TREND & SAFETY (20 pts) ---
             local_high = float(df['high'].tail(5).max())
@@ -1489,9 +1581,17 @@ class IntradayTechnicalAnalysis:
             if structure_weak: validation_penalty += 20
 
             # --- 9. FINAL SCORING ---
-            # Apply a heavy "Trend Gravity" penalty for trades in the negative/bearish range (Phase 104)
-            # This ensures that even if other indicators spike, a falling knife cannot show a high score.
-            trend_penalty = 50 if not trend_hold else 0
+            # V16.1: Harmonized Trend Bypass (Smart Gate)
+            # Apply a heavy "Trend Gravity" penalty for trades in the negative/bearish range
+            # UNLESS a Smart Gate (Reclaim/Div) is active, in which case we cut the penalty.
+            smart_gate = context.get("smart_gate", False) if context else False
+            
+            trend_penalty = 0
+            if not trend_hold:
+                if smart_gate:
+                    trend_penalty = 15 # Reduced penalty for high-conviction reclaims
+                else:
+                    trend_penalty = 50 # Standard hard penalty for falling knives
             
             base_score = (pullback_score + trend_score + trigger_score + volume_score + 
                          precision_score + sweep_score + ema_reclaim_score + compression_score + entry_zone_score)

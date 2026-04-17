@@ -47,7 +47,7 @@ class LiquidityService:
 
     def get_liquidity(self, symbol: str) -> dict:
         """Returns cached liquidity or a placeholder."""
-        return self.liquidity_data.get(symbol, {"adv20": 0, "level": "Unknown", "last_updated": 0})
+        return self.liquidity_data.get(symbol, {"adv20": 0, "turnover_3d": 0, "level": "Unknown", "last_updated": 0})
 
     async def get_liquidity_async(self, symbol: str) -> dict:
         """Async version that triggers a fetch if missing."""
@@ -58,13 +58,16 @@ class LiquidityService:
     def get_benchmark_vol(self, symbol: str, time_bucket: str) -> float:
         return self.benchmarks.get(symbol, {}).get(time_bucket, 0)
 
-    def classify_liquidity(self, adv, price=0.0):
-        # FIX #4: Value-Based Liquidity (Turnover in Crores)
-        # OLD: 200k shares = 'Very Low' regardless of price
-        # Issue: 200k shares of ₹5000 stock = ₹100Cr (Institutional!)
-        #        200k shares of ₹5 penny = ₹10 Lakh (Illiquid!)
-        # NEW: use Daily Turnover (Shares × Price) to classify correctly
-        turnover_cr = (adv * price) / 1e7  # Convert to Crores
+    def classify_liquidity(self, adv, price=0.0, turnover_3d=0.0):
+        # FIX #4/V17: Multi-Day Persistence Liquidity (Turnover in Crores)
+        # Turnover Persistence: We use the minimum of (ADV20 x Price) and 3-day avg Turnover
+        # This prevents "one-day volume flukes" from qualifying illiquid stocks.
+        
+        turnover_base = (adv * price)
+        # If turnover_3d is provided, use it to verify persistence
+        effective_turnover = min(turnover_base, turnover_3d) if turnover_3d > 0 else turnover_base
+        
+        turnover_cr = effective_turnover / 1e7  # Convert to Crores
         if turnover_cr < 1 or price == 0:   return "Very Low"   # < ₹1 Cr
         if turnover_cr < 10:                 return "Low"        # ₹1-10 Cr
         if turnover_cr < 50:                 return "Moderate"   # ₹10-50 Cr
@@ -108,10 +111,16 @@ class LiquidityService:
             for symbol, df in results.items():
                 if not df.empty:
                     adv = df['volume'].tail(20).mean()
+                    # V17: Calculate 3-day persistence turnover
+                    # turnover = volume * close
+                    df['turnover'] = df['volume'] * df['close']
+                    turnover_3d = df['turnover'].tail(3).mean()
+                    
                     last_price = float(df['close'].iloc[-1]) if 'close' in df.columns and not df.empty else 0.0
                     self.liquidity_data[symbol] = {
                         "adv20": round(float(adv), 0),
-                        "level": self.classify_liquidity(adv, last_price),
+                        "turnover_3d": round(float(turnover_3d), 0),
+                        "level": self.classify_liquidity(adv, last_price, turnover_3d=turnover_3d),
                         "last_updated": time.time()
                     }
                     count += 1
@@ -144,10 +153,13 @@ class LiquidityService:
             if not df.empty:
                 adv = df['volume'].tail(20).mean()
                 if adv > 0:
+                    df['turnover'] = df['volume'] * df['close']
+                    turnover_3d = df['turnover'].tail(3).mean()
                     last_price = float(df['close'].iloc[-1]) if 'close' in df.columns else 0.0
                     self.liquidity_data[symbol] = {
                         "adv20": round(float(adv), 0),
-                        "level": self.classify_liquidity(adv, last_price),
+                        "turnover_3d": round(float(turnover_3d), 0),
+                        "level": self.classify_liquidity(adv, last_price, turnover_3d=turnover_3d),
                         "last_updated": time.time()
                     }
                     self._save_cache()

@@ -222,20 +222,42 @@ class MarketDataService:
         return results
 
     async def get_advance_decline_ratio(self) -> float:
-        """[V11 RESTORED] Professional A/D Ratio Pulse."""
+        """[V18 FIX #11] Professional A/D Ratio with 30-stock sample for statistical significance."""
         try:
-            nifty50 = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "HUL.NS", "ITC.NS", "SBIN.NS"]
-            prices = await self.get_batch_prices(nifty50)
+            # Expanded from 8 to 30 Nifty 50 components for reliable breadth signal
+            nifty_sample = [
+                "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+                "HUL.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
+                "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "TITAN.NS",
+                "SUNPHARMA.NS", "BAJFINANCE.NS", "WIPRO.NS", "ULTRACEMCO.NS", "NESTLEIND.NS",
+                "TATASTEEL.NS", "POWERGRID.NS", "NTPC.NS", "ONGC.NS", "JSWSTEEL.NS",
+                "M&M.NS", "TATAMOTORS.NS", "ADANIENT.NS", "TECHM.NS", "HCLTECH.NS"
+            ]
+            prices = await self.get_batch_prices(nifty_sample)
             adv = sum(1 for p in prices.values() if p.get("change_percent", 0) > 0)
             dec = len(prices) - adv
             return adv / max(dec, 1)
         except: return 1.0
 
     async def get_sector_performances(self) -> Dict[str, float]:
-        """[V11 RESTORED] Sector Heatmap Pulse."""
+        """[V17 Optimized] Sector Heatmap Pulse via YahooFast."""
+        from app.services.yahoo_fast import yahoo_fast
         sectors = list(self.INDEX_MAP.values())
-        prices = await self.get_batch_prices(sectors)
-        return {s: p.get("change_percent", 0) for s, p in zip(self.INDEX_MAP.keys(), prices.values())}
+        
+        # Fetching 2 days to calculate % change accurately from previous close
+        results = await yahoo_fast.fetch_batch(sectors, interval="1d", period="5d")
+        
+        perf = {}
+        for s_name, ticker in self.INDEX_MAP.items():
+            df = results.get(ticker)
+            if df is not None and len(df) >= 2:
+                p_close = df['close'].iloc[-2]
+                curr = df['close'].iloc[-1]
+                chg = ((curr - p_close) / p_close) * 100 if p_close != 0 else 0
+                perf[s_name] = round(chg, 2)
+            else:
+                perf[s_name] = 0.0
+        return perf
 
     def get_sector_for_symbol(self, symbol: str) -> str:
         clean = symbol.split(".")[0].upper()
@@ -258,15 +280,24 @@ class MarketDataService:
         try:
             # Check price of Nifty Index
             ctx = await self.get_live_price("^NSEI")
-            status = "OPEN" if time.strftime("%H:%M") < "15:35" else "CLOSED"
+            
+            # [V14] Real-time VIX Pulse
+            vix_ctx = await self.get_live_price("^INDIAVIX")
+            vix_val = vix_ctx.get("price", 15.0)
+            
+            # [V18 FIX #10] Use IST timezone, not server local time
+            import pytz
+            ist_now = datetime.now(pytz.timezone('Asia/Kolkata'))
+            status = "OPEN" if ist_now.strftime("%H:%M") < "15:35" else "CLOSED"
             return {
                 "status": status,
                 "nifty_50": ctx.get("price", 0.0),
                 "nifty_change": ctx.get("change_percent", 0.0),
-                "india_vix": 15.0, # Target: Pulse Restoration later
+                "india_vix": round(vix_val, 2),
                 "timestamp": time.time()
             }
-        except: return {"status": "OPEN", "nifty_50": 0}
+        except: 
+            return {"status": "OPEN", "nifty_50": 0.0, "india_vix": 15.0}
 
     async def get_ohlc(self, symbol: str, period: str = "30d", interval: str = "1d", fast_fail: bool=False):
         proxy = await proxy_manager.get_proxy()
