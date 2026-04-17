@@ -396,9 +396,14 @@ class IntradayEngine:
             
             # --- L3: EXECUTION GATING ---
             # 1. Freshness Guard
+            # [V21.1 FIX] Only apply the 10-minute staleness check if the Indian market is actually open.
+            ist = pytz.timezone('Asia/Kolkata')
+            now_ist = datetime.now(ist)
+            is_market_open = (9 * 60 + 15 <= now_ist.hour * 60 + now_ist.minute <= 15 * 60 + 30) and (now_ist.weekday() < 5)
+            
             now = datetime.utcnow()
             last_candle_time = df_15m.index[-1].to_pydatetime().replace(tzinfo=None)
-            if (now - last_candle_time).total_seconds() > 600: # 10m limit
+            if is_market_open and (now - last_candle_time).total_seconds() > 600: # 10m limit
                 return {"symbol": sym, "skip_reason": "Stale Data (>10m)"}
             
             # 2. Volatility Kill-Switch
