@@ -121,7 +121,11 @@ class IntradayEngine:
                 if curr_adx < 20: 
                     strength = "CHOP"; weight = 0.85
                     
-            # 5. SYNC SYSTEM STATE
+            # Check specific sector momentum correlation
+            sector_momentum_stall = False
+            if len(nifty_df) >= 3:
+                sector_momentum_stall = float(nifty_df['high'].iloc[-1]) < float(nifty_df['high'].iloc[-3])
+
             self.system_state.update({
                 "regime": regime,
                 "regime_strength": strength,
@@ -130,7 +134,8 @@ class IntradayEngine:
                 "ad_ratio": ad_ratio,
                 "nifty_close": close,
                 "nifty_vwap": vwap,
-                "india_vix": india_vix
+                "india_vix": india_vix,
+                "sector_momentum_stall": sector_momentum_stall
             })
             
             return {
@@ -138,6 +143,8 @@ class IntradayEngine:
                 "india_vix": india_vix,
                 "regime": regime,
                 "regime_strength": strength,
+                "market_trend": "BULLISH" if day_ret > 0 else "BEARISH",
+                "sector_momentum_stall": sector_momentum_stall,
                 "regime_weight": weight,
                 "15m_returns": nifty_df['close'].pct_change().dropna(),
                 "vwap": vwap,
@@ -504,6 +511,11 @@ class IntradayEngine:
             else:
                 target = atr_target
             target = l2_data.get("dynamic_zones", {}).get("target") or target
+
+            # [V21] Liquidity Ceiling Compression
+            adv20_dollar = adv20 * real_price
+            if max_value > (adv20_dollar * 0.05):
+                target = round(real_price + ((target - real_price) * 0.75), 2)
             
             sl_dist = max(abs(real_price - stop_loss), 0.01)
             
@@ -593,6 +605,11 @@ class IntradayEngine:
         # Hardness Gate: Prevent library crashes (e.g. TA logic) on low data
         if len(df) < 20:
             return None
+            
+        # FIX V21: DataFrame NaN Contamination Protocol
+        df.replace(0, np.nan, inplace=True)
+        df.ffill(inplace=True)
+        df.bfill(inplace=True)
             
         price = df['close'].iloc[-1]
         
