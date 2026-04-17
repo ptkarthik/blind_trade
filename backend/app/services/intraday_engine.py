@@ -507,15 +507,19 @@ class IntradayEngine:
             
             sl_dist = max(abs(real_price - stop_loss), 0.01)
             
-            # [V19 APEX-G] CONVICTION-WEIGHTED POSITION SIZING
-            # Higher conviction = slightly more risk allocation (capped)
-            if base_score >= 85:
-                risk_pct = 0.015  # 1.5% risk for Pioneer Prime
-            elif base_score >= 75:
-                risk_pct = 0.012  # 1.2% for high conviction
-            else:
-                risk_pct = 0.01   # Standard 1%
-            risk_amount = 100000 * risk_pct  # ₹1L baseline capital
+            # [V20 VANGUARD] BETA-NORMALIZED RISK SIZING
+            # 1. Base conviction risk
+            if base_score >= 85: risk_pct = 0.015
+            elif base_score >= 75: risk_pct = 0.012
+            else: risk_pct = 0.01
+            
+            # 2. Normalize risk by the stock's volume/ATR relative to index baseline
+            stock_vol = (atr / max(real_price, 1))
+            index_vol = 0.005 # Baseline 0.5% 15m vol
+            beta_proxy = stock_vol / max(index_vol, 0.001)
+            beta_proxy = max(0.5, min(beta_proxy, 2.5)) # Cap between 0.5x and 2.5x
+            
+            risk_amount = (100000 * risk_pct) / beta_proxy  # ₹1L baseline capital
 
             return {
                 "symbol": sym,
@@ -791,6 +795,8 @@ class IntradayEngine:
                 indicators["ema_fan"] = ta_intraday.IntradayTechnicalAnalysis.check_ema_fan(df_15m)
                 indicators["poc_bounce"] = ta_intraday.IntradayTechnicalAnalysis.detect_poc_bounce(df_15m)
                 indicators["accumulation"] = ta_intraday.IntradayTechnicalAnalysis.detect_smart_money_accumulation(df_15m)
+                # [V20 VANGUARD] Fair Value Gap Check
+                indicators["fvg"] = ta_intraday.IntradayTechnicalAnalysis.detect_bullish_fvg(df_15m)
             except Exception:
                 pass
 
@@ -838,7 +844,16 @@ class IntradayEngine:
                             score += 10; reasons.append({"text": "Confluence: Stop-Hunt Trap (Liquidity Sweep)", "impact": 10})
                 except Exception:
                     pass
-            alpha_mode = "PULLBACK"; score += pb_score; reasons.append({"text": pb_reason, "impact": pb_score})
+            
+            # [V20 VANGUARD] Fair Value Gap (+20 pts)
+            fvg = indicators.get("fvg", {})
+            if fvg.get("is_tapping"):
+                pa_score = indicators.get("pa_score", 0)
+                if pa_score > 60: # Validates it's rejecting the FVG upwards
+                    pb_score += 20
+                    pb_reason += " + FVG Defense (SMART MONEY)"
+            
+            alpha_mode = "PULLBACK"; score += min(60, pb_score); reasons.append({"text": pb_reason, "impact": min(60, pb_score)})
             
         # 2C. Momentum Phase
         elif is_trending and distance_vwap > 1.2 and rvol > 1.5:

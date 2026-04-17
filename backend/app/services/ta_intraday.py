@@ -594,6 +594,39 @@ class IntradayTechnicalAnalysis:
             return {"is_trap": False}
 
     @staticmethod
+    def detect_bullish_fvg(df: pd.DataFrame) -> dict:
+        """[V20 Vanguard] Detects Fair Value Gap (FVG) and verifies if current price is tapping it."""
+        try:
+            if len(df) < 5: return {"has_fvg": False}
+            
+            fvg_zone_top = 0
+            fvg_zone_bottom = 0
+            has_fvg = False
+            
+            # Check last 5 candles (excluding the current incomplete one) for FVG
+            # Candle N-2 High < Candle N Low
+            for i in range(-5, -2):
+                c1_high = float(df['high'].iloc[i-2])
+                c3_low = float(df['low'].iloc[i])
+                
+                if c3_low > c1_high: # Bullish Imbalance
+                    fvg_zone_bottom = c1_high
+                    fvg_zone_top = c3_low
+                    has_fvg = True
+                    break
+                    
+            current_low = float(df['low'].iloc[-1])
+            is_tapping = has_fvg and (fvg_zone_bottom <= current_low <= fvg_zone_top)
+            
+            return {
+                "has_fvg": has_fvg, 
+                "is_tapping": is_tapping, 
+                "zone": (fvg_zone_bottom, fvg_zone_top)
+            }
+        except Exception:
+            return {"has_fvg": False}
+
+    @staticmethod
     def check_ema_fan(df: pd.DataFrame) -> dict:
         if df is None or df.empty: return {}
         for col in ['open', 'high', 'low', 'close', 'volume']:
