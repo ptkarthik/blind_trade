@@ -89,6 +89,11 @@ class YahooFast:
                 # Add tiny random jitter to avoid perfect robotic synchronization
                 await asyncio.sleep(random.uniform(0.1, 0.4))
                 df = await self.fetch_ohlc(sym, period=period, interval=interval)
+                # [V23 FIX #16] Single retry for individual symbol failures
+                # OLD: Failed symbols silently returned empty DF with no retry, losing ~5% per scan
+                if df.empty:
+                    await asyncio.sleep(random.uniform(0.5, 1.0))
+                    df = await self.fetch_ohlc(sym, period=period, interval=interval)
                 if not df.empty:
                     results[sym] = df
         

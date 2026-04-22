@@ -184,63 +184,6 @@ async def get_sector_signals(
         import traceback
         traceback.print_exc()
         return sanitize_json_data({"data": {}, "stats": {}})
-            
-        data = valid_job.result.get("data", [])
-        
-        stats = {
-            "started_at": "",
-            "finished_at": "",
-            "duration": "",
-            "status": valid_job.status
-        }
-        
-        if valid_job.created_at:
-             ist_start = valid_job.created_at + datetime.timedelta(hours=5, minutes=30)
-             stats["started_at"] = ist_start.strftime("%H:%M:%S")
-             
-        if valid_job.updated_at:
-             ist_end = valid_job.updated_at + datetime.timedelta(hours=5, minutes=30)
-             stats["finished_at"] = ist_end.strftime("%H:%M:%S")
-             
-             if valid_job.status in ["completed", "stopped"]:
-                 diff = valid_job.updated_at - valid_job.created_at
-                 mins, secs = divmod(int(diff.total_seconds()), 60)
-                 stats["duration"] = f"{mins}m {secs}s"
-             elif valid_job.status == "processing":
-                 stats["duration"] = "Scanning..."
-        
-        # Dynamic Aggregation
-        response = {}
-        for stock_data in data:
-            try:
-                sym = stock_data.get("symbol", "UNKNOWN")
-                sector = stock_data.get("sector")
-                
-                if not sector or sector == "Unknown":
-                    sector = market_service.get_sector_for_symbol(sym)
-                    stock_data["sector"] = sector
-                
-                if not sector: sector = "General"
-                
-                if sector not in response:
-                    response[sector] = {"buys": [], "sells": [], "holds": [], "last_updated": timestamp}
-                
-                signal = stock_data.get("signal")
-                if signal in ["BUY", "BUY_STRONG"]:
-                    response[sector]["buys"].append(stock_data)
-                elif signal in ["SELL", "SELL_STRONG"]:
-                    response[sector]["sells"].append(stock_data)
-                elif signal in ["NEUTRAL", "HOLD"]:
-                    response[sector]["holds"].append(stock_data)
-            except: continue
-            
-        return sanitize_json_data({
-            "data": response,
-            "stats": stats
-        })
-    except Exception as e:
-        print(f"Sector signals crash: {e}")
-        return {}
 
 @router.get("/quick_scan/{symbol}")
 @router.get("/analyze/{symbol}")

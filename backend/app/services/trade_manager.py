@@ -210,9 +210,9 @@ class TradeManager:
             
             profit = current_price - trade["entry"]
             
-            # Rule 1: Sideways Movement (14 Days)
-            if holding_days >= 14 and profit < (0.5 * R):
-                await self.close_trade(trade["symbol"], current_price, "TIME_STOP")
+            # Rule 1: Sideways Movement (7 Days)
+            if holding_days >= 7 and profit < (0.5 * R):
+                await self.close_trade(trade["symbol"], current_price, "TIME_STOP_7D")
                 return # Already closed
 
             # Rule 2: Max Strategic Duration reached (21 Days)

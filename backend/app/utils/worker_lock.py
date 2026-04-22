@@ -48,11 +48,18 @@ class WorkerLock:
             try:
                 import ctypes
                 PROCESS_QUERY_INFORMATION = 0x0400
-                process_handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
-                if process_handle:
-                    ctypes.windll.kernel32.CloseHandle(process_handle)
+                # OpenProcess returns 0 on failure
+                handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+                if handle == 0:
+                    error = ctypes.windll.kernel32.GetLastError()
+                    # ERROR_INVALID_PARAMETER (87) means the PID does not exist
+                    if error == 87:
+                        return False
+                    # Other errors (like ERROR_ACCESS_DENIED) mean it might be running
                     return True
-                return False
+                
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
             except:
                 return True # Fallback to assume running if check fails
         else:

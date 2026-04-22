@@ -65,6 +65,51 @@ class IntradayTechnicalAnalysis:
         missing = [f for f in required if indicators.get(f) is None]
         if missing or df is None or df.empty:
             return {"status": "safe_skip", "reason": f"Missing indicators: {missing}"}
+            
+        # [V23 FIX] Hardened Intra-Session Gap Detection
+        # V22 bug: A single partial-data day (e.g., Yahoo returning 6/25 candles for one date 
+        # with a 300-min gap) triggered this for EVERY stock. One bad historical day was
+        # killing the entire scan.
+        #
+        # V23 logic:
+        # 1. Only check the MOST RECENT trading day (stale gaps are irrelevant)
+        # 2. Use IST-aware date splitting (Yahoo returns UTC timestamps for NSE data)
+        # 3. Require SEVERE gaps (>120 min) OR multiple moderate gaps (>60 min)
+        #    to distinguish genuine halts from data artifacts
+        if hasattr(df.index, 'to_series') and len(df) > 10:
+            try:
+                idx_series = df.index.to_series()
+                
+                # Convert to IST for correct date splitting
+                # Yahoo timestamps are naive UTC — add 5:30 offset for IST date boundaries
+                if idx_series.dt.tz is None:
+                    ist_times = idx_series + pd.Timedelta(hours=5, minutes=30)
+                else:
+                    try:
+                        ist_times = idx_series.dt.tz_convert('Asia/Kolkata')
+                    except Exception:
+                        ist_times = idx_series
+                
+                # Only check the MOST RECENT trading day (today or last session)
+                latest_ist_date = ist_times.iloc[-1].date() if hasattr(ist_times.iloc[-1], 'date') else None
+                if latest_ist_date is not None:
+                    today_mask = ist_times.apply(lambda x: x.date() if hasattr(x, 'date') else None) == latest_ist_date
+                    today_diffs = idx_series[today_mask].diff().dt.total_seconds() / 60.0
+                    today_diffs = today_diffs.dropna()
+                    
+                    if len(today_diffs) > 0:
+                        # Genuine trading halt: single gap > 120 min (2 full hours missing)
+                        has_severe_gap = today_diffs.max() > 120.0
+                        # OR: multiple moderate gaps (3+ gaps > 60 min = systematic data failure)
+                        moderate_gap_count = (today_diffs > 60.0).sum()
+                        
+                        if has_severe_gap or moderate_gap_count >= 3:
+                            max_gap = today_diffs.max()
+                            return {"status": "safe_skip", 
+                                    "reason": f"Severe Data Gaps (Trading Halt) - {max_gap:.0f}min gap on {latest_ist_date}"}
+            except Exception:
+                pass  # If timezone/index issues, don't block the stock
+                
         return {"status": "valid"}
 
     @staticmethod
@@ -81,16 +126,22 @@ class IntradayTechnicalAnalysis:
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
                 df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
+        
+        # [V23 FIX #1] Robust TZ Handling — If localization fails, use interval-aware
+        # session estimation instead of naive tail(75) which mixes multi-day data.
+        tz_ok = False
         try:
             if df.index.tz is None:
                 df.index = df.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
             else:
                 df.index = df.index.tz_convert('Asia/Kolkata')
-        except:
-            pass
+            tz_ok = True
+        except Exception:
+            tz_ok = False
 
         try:
-            if isinstance(df.index, pd.DatetimeIndex):
+            if isinstance(df.index, pd.DatetimeIndex) and tz_ok:
+                # Primary path: TZ is known, filter by calendar date
                 current_date = df.index[-1].date()
                 today_df = df[df.index.date == current_date].copy()
                 
@@ -99,15 +150,24 @@ class IntradayTechnicalAnalysis:
                     start_time = start_time.tz_localize('Asia/Kolkata')
                 
                 today_df = today_df[today_df.index >= start_time]
+            elif isinstance(df.index, pd.DatetimeIndex) and len(df.index) >= 2:
+                # [V23 FIX #1] Fallback: TZ failed but we have timestamps.
+                # Infer interval from median of recent diffs (skip overnight gaps)
+                recent_diffs = df.index.to_series().diff().iloc[-10:].dt.total_seconds() / 60
+                valid_diffs = recent_diffs[(recent_diffs >= 1) & (recent_diffs <= 60)]
+                inferred_mins = float(valid_diffs.median()) if len(valid_diffs) > 0 else 15.0
+                session_candles = max(1, int(375 / inferred_mins))  # 375 min = NSE session
+                today_df = df.tail(min(session_candles, len(df))).copy()
             else:
-                today_df = df.tail(75).copy()
+                # Ultimate fallback: assume 15m interval = 25 candles per session
+                today_df = df.tail(25).copy()
             
             if today_df.empty: return pd.Series([df['close'].iloc[-1]] * len(df), index=df.index)
             
             tp = (today_df['high'] + today_df['low'] + today_df['close']) / 3
             vwap_calc = (tp * today_df['volume']).cumsum() / today_df['volume'].cumsum()
             return vwap_calc.reindex(df.index).ffill()
-        except:
+        except Exception:
             return pd.Series([df['close'].iloc[-1]] * len(df), index=df.index)
 
     @staticmethod
@@ -2053,19 +2113,25 @@ class IntradayTechnicalAnalysis:
             
             _cl = today_df['close']
             _op = today_df['open']
+            _hi = today_df['high']
+            _lo = today_df['low']
             _vl = today_df['volume']
             c_s = _cl.iloc[:, 0] if isinstance(_cl, pd.DataFrame) else _cl
             o_s = _op.iloc[:, 0] if isinstance(_op, pd.DataFrame) else _op
+            h_s = _hi.iloc[:, 0] if isinstance(_hi, pd.DataFrame) else _hi
+            l_s = _lo.iloc[:, 0] if isinstance(_lo, pd.DataFrame) else _lo
             v_s = _vl.iloc[:, 0] if isinstance(_vl, pd.DataFrame) else _vl
             
-            buy_vol = v_s[c_s > o_s].sum()
-            sell_vol = v_s[c_s < o_s].sum()
-            # FIX N3: Handle doji candles (close == open) properly
-            # OLD: doji volume was excluded from both buy and sell, skewing CVD on consolidating days
-            # NEW: split doji volume 50/50 as indecision volume (neutral)
-            doji_vol = v_s[c_s == o_s].sum()
-            buy_vol = buy_vol + (doji_vol * 0.5)
-            sell_vol = sell_vol + (doji_vol * 0.5)
+            # [V23 FIX #9] Proportional CVD — industry-standard candle delta approximation
+            # OLD: Binary classification (entire candle vol = buy if close > open) missed distribution
+            # NEW: Allocate volume proportionally based on close position within high-low range
+            ranges = h_s - l_s
+            ranges = ranges.replace(0, np.nan)  # Avoid div/0 on doji candles
+            buy_fraction = (c_s - l_s) / ranges  # 0 = closed at low, 1 = closed at high
+            buy_fraction = buy_fraction.fillna(0.5)  # Doji = 50/50 split
+            
+            buy_vol = (v_s * buy_fraction).sum()
+            sell_vol = (v_s * (1 - buy_fraction)).sum()
             
             cvd = buy_vol - sell_vol
             total_vol = buy_vol + sell_vol

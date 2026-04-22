@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.papertrade import PaperTrade, Account
 from app.services.market_data import market_service
+from app.services.intraday_engine import intraday_engine # [V24 FIX #8]
 
 logger = logging.getLogger(__name__)
 
@@ -98,19 +99,43 @@ class PaperMonitor:
                             reason = "EOD_RESET" # Purged as yesterday's leftover
                             logger.info(f"🧹 [PAPER] {trade.symbol} Stale Position (from {trade_ist_date}) purged at {current_price}")
 
-                        # 2. SL BREACH
-                        elif trade.stop_loss and current_price <= trade.stop_loss:
-                            close_it = True
-                            reason = "STOP_LOSS"
-                            logger.info(f"🚨 [PAPER] {trade.symbol} SL hit at {current_price} (SL: {trade.stop_loss})")
+                        # 2. ADVANCED EXIT EVALUATION (V24 FIX #8)
+                        # Instead of just basic SL/TP, use the engine's evaluate_exit for trailing stops, time decay, and structural breakdown
+                        elif not is_eod_time:
+                            # Fetch 15m data required for advanced evaluation
+                            try:
+                                df_15m = await asyncio.wait_for(market_service.get_ohlc(trade.symbol, period="2d", interval="15m"), timeout=5.0)
+                                exit_eval = await intraday_engine.evaluate_exit(
+                                    sym=trade.symbol,
+                                    entry_price=trade.buy_price,
+                                    stop_loss=trade.stop_loss,
+                                    target=trade.target,
+                                    df_15m=df_15m,
+                                    entry_time=trade.buy_time
+                                )
+                                
+                                if exit_eval["action"] in ["EXIT", "PARTIAL_EXIT"]:
+                                    close_it = True
+                                    reason = exit_eval.get("reason", "Advanced Exit Signal")
+                                    logger.info(f"🧠 [PAPER] {trade.symbol} Advanced Exit: {reason}")
+                                elif exit_eval["action"] == "TRAIL_STOP":
+                                    new_stop = exit_eval.get("new_stop")
+                                    if new_stop and new_stop > trade.stop_loss:
+                                        trade.stop_loss = new_stop
+                                        logger.info(f"🛡️ [PAPER] {trade.symbol} Trailing Stop updated to {new_stop}")
+                            except Exception as e:
+                                logger.error(f"Advanced Exit Eval Failed for {trade.symbol}: {e}")
+                                # Fallback to basic SL/TP if data fetch fails
+                                if trade.stop_loss and current_price <= trade.stop_loss:
+                                    close_it = True
+                                    reason = "STOP_LOSS"
+                                    logger.info(f"🚨 [PAPER] {trade.symbol} SL hit at {current_price} (SL: {trade.stop_loss})")
+                                elif trade.target and current_price >= trade.target:
+                                    close_it = True
+                                    reason = "TARGET"
+                                    logger.info(f"🎯 [PAPER] {trade.symbol} Target hit at {current_price} (Tgt: {trade.target})")
 
-                        # 3. TARGET BREACH
-                        elif trade.target and current_price >= trade.target:
-                            close_it = True
-                            reason = "TARGET"
-                            logger.info(f"🎯 [PAPER] {trade.symbol} Target hit at {current_price} (Tgt: {trade.target})")
-
-                        # 4. EOD EXIT (Late Afternoon)
+                        # 3. EOD EXIT (Late Afternoon)
                         elif is_eod_time and trade.product_type == "MIS":
                             close_it = True
                             reason = "EOD"

@@ -73,7 +73,8 @@ class MarketDataService:
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
         self.session = requests.Session()
-        self.session.verify = False # Bypass SSL errors for proxies
+        # [V21.2 FIX] Enforce strict SSL validation. If proxies fail SSL, they are unsafe.
+        self.session.verify = True 
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "Accept": "*/*",
@@ -172,11 +173,16 @@ class MarketDataService:
                                 if not td_df.empty:
                                     td_df.columns = [c.lower() for c in td_df.columns]
                                     batch_results[s] = td_df
-                            except: continue
+                            except Exception as e:
+                                print(f"⚠️ [TD FAILOVER] {s}: {e}")
+                                continue
                     
                     return batch_results
                 except Exception as e:
-                    print(f"❌ Batch Error: {str(e)}")
+                    print(f"❌ [API FAIL] Batch fetch failed. Error: {str(e)}")
+                    # V21.2 FIX: Don't just return {} silently. Log the failure explicitly.
+                    import traceback
+                    traceback.print_exc()
                     return {}
 
             # Fire batches in the current group concurrently (now limited to 1)
@@ -296,7 +302,8 @@ class MarketDataService:
                 "india_vix": round(vix_val, 2),
                 "timestamp": time.time()
             }
-        except: 
+        except Exception as e: 
+            print(f"⚠️ [MARKET_STATUS] Failed to fetch: {e}")
             return {"status": "OPEN", "nifty_50": 0.0, "india_vix": 15.0}
 
     async def get_ohlc(self, symbol: str, period: str = "30d", interval: str = "1d", fast_fail: bool=False):
@@ -308,7 +315,8 @@ class MarketDataService:
             if df is not None and not df.empty:
                 df.columns = [c.lower() for c in df.columns]
                 return df
-        except: pass
+        except Exception as e:
+            print(f"⚠️ [OHLC] Direct Yahoo fetch failed for {symbol}: {e}")
         
         # [V12.3 SINGLE FAILOVER] 🆘
         if self.td:
@@ -317,7 +325,8 @@ class MarketDataService:
                 if not td_df.empty:
                     td_df.columns = [c.lower() for c in td_df.columns]
                     return td_df
-            except: pass
+            except Exception as e:
+                print(f"⚠️ [OHLC] TwelveData failover also failed for {symbol}: {e}")
             
         return pd.DataFrame()
 

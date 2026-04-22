@@ -92,7 +92,8 @@ class IntradayEngine:
             
             # [V14] FETCH INDIA VIX
             market_status = await market_service.get_market_status()
-            india_vix = market_status.get("india_vix", 15.0)
+            # [V26 V6-FIX 1] Defensive Fail-Closed (15 to 25)
+            india_vix = market_status.get("india_vix", 25.0)
 
             # 2. ADX STABILITY (3-Candle Check)
             adx_series = ta_intraday.ADXIndicator(high=nifty_df['high'], low=nifty_df['low'], close=nifty_df['close']).adx()
@@ -334,6 +335,17 @@ class IntradayEngine:
             if df_15m is None or df_15m.empty or len(df_15m) < 20:
                 return {"symbol": sym, "skip_reason": "Data Failure"}
 
+            # [V24 FIX #3] Kite Tradability Gate — skip stocks blocked for intraday on Zerodha
+            # Prevents wasting scan capacity on CNC-only stocks that cannot be MIS traded
+            kite_status = kite_service.get_tradability(sym)
+            if kite_status.get("is_kite_restricted"):
+                return {"symbol": sym, "skip_reason": f"Kite Restricted ({kite_status.get('reason', 'CNC Only')})"}
+
+            # [V21.1 FIX] Minimum candle enforcement for indicator validity
+            MIN_CANDLES_15M = 100  # ~4 trading days (sufficient for EMA50 + RSI14)
+            if len(df_15m) < MIN_CANDLES_15M:
+                return {"symbol": sym, "skip_reason": f"Insufficient 15m Data ({len(df_15m)}/{MIN_CANDLES_15M} candles)"}
+
             # INDICATOR INTEGRITY GUARD
             indicators = self._get_indicators(df_15m, df_1h)
             # [V18 FIX #8] Null guard for indicators
@@ -360,10 +372,13 @@ class IntradayEngine:
             
             # [V19 APEX-A] MULTI-TIMEFRAME CONFLUENCE GATE
             mtf_bonus = 0
-            if indicators.get("ema_1h_trend_up"):
+            ema_1h_trend = indicators.get("ema_1h_trend_up")
+            if ema_1h_trend is True:
                 mtf_bonus += 5  # 1h trend supports 15m setup
-            else:
+            elif ema_1h_trend is False:
                 mtf_bonus -= 10  # Counter-trend penalty: 15m bullish but 1h bearish
+            # else: None means data missing -> neutral, no penalty
+            
             # Triple alignment bonus (15m + 1h + 1d all bullish)
             if indicators.get("ema_1h_trend_up") and indicators.get("is_1d_bullish"):
                 mtf_bonus += 5  # Full alignment = highest conviction
@@ -372,7 +387,9 @@ class IntradayEngine:
             sector_boost = 0
             sector = market_service.get_sector_for_symbol(sym)
             heat = 0.0
-            if sector_heat:
+            # [V23 FIX #2] Only apply sector gating for mapped sectors, not "General"
+            # OLD: 95% of stocks (mapped to "General") got 0 heat, giving structural disadvantage
+            if sector_heat and sector != "General":
                 heat = sector_heat.get(sector, 0.0)
                 # Hard rejection if sector is crashing
                 if heat < -0.005:
@@ -401,9 +418,17 @@ class IntradayEngine:
             now_ist = datetime.now(ist)
             is_market_open = (9 * 60 + 15 <= now_ist.hour * 60 + now_ist.minute <= 15 * 60 + 30) and (now_ist.weekday() < 5)
             
-            now = datetime.utcnow()
-            last_candle_time = df_15m.index[-1].to_pydatetime().replace(tzinfo=None)
-            if is_market_open and (now - last_candle_time).total_seconds() > 600: # 10m limit
+            # [V24 FIX #4] Use IST-consistent comparison for staleness check
+            # OLD: Compared datetime.utcnow() with potentially TZ-localized IST timestamps = 5.5h error
+            # NEW: Convert both sides to IST before comparison
+            last_candle_ts = df_15m.index[-1]
+            if hasattr(last_candle_ts, 'tz') and last_candle_ts.tz is not None:
+                last_candle_ist = last_candle_ts.to_pydatetime().astimezone(ist)
+            else:
+                # Naive timestamp — assume UTC (Yahoo default), convert to IST
+                last_candle_ist = pytz.utc.localize(last_candle_ts.to_pydatetime()).astimezone(ist)
+            staleness_seconds = (now_ist - last_candle_ist).total_seconds()
+            if is_market_open and staleness_seconds > 600: # 10m limit
                 return {"symbol": sym, "skip_reason": "Stale Data (>10m)"}
             
             # 2. Volatility Kill-Switch
@@ -411,20 +436,29 @@ class IntradayEngine:
             if atr_pct > 0.05: # Extreme volatility reject
                 return {"symbol": sym, "skip_reason": "Extreme Volatility (ATR > 5%)"}
             
+            # [V21.3 FIX] Macro Crash Guard (Nifty Intraday Trend)
+            # If the broader market is crashing (>1% down), only allow exceptional, high-relative-volume setups.
+            day_change_pct = global_index_ctx.get("day_change_pct", 0.0)
+            if day_change_pct <= -1.0 and indicators.get("rvol", 0) < 3.0:
+                return {"symbol": sym, "skip_reason": f"Macro Crash Guard (Nifty {day_change_pct}%, RVOL < 3.0)"}
+            
             # [V14] 3. Multi-Day Weekly Resistance Hard Filter
             # Automatically reject Longs if price is within 0.5% of 5-Day High
             df_1d = pulse_data.get(sym, {}).get("1d") if pulse_data else None
             if df_1d is not None and not df_1d.empty and len(df_1d) >= 5:
                 weekly_high = float(df_1d['high'].tail(5).max())
-                # If we are within 0.3% of the weekly high, the risk of a distribution trap is huge
-                if real_price >= weekly_high * 0.997 and real_price < weekly_high * 1.002:
+                # [V23 FIX #3] Breakout Bypass: Don't kill high-RVOL breakout candidates
+                # OLD: Hard rejected ALL stocks near 5D high, making BREAKOUT alpha mode dead
+                # NEW: Allow through if volume is institutional (RVOL > 2.0) AND structure is intact
+                is_potential_breakout = indicators.get("rvol", 0) > 2.0 and indicators.get("structure_ok", False)
+                if real_price >= weekly_high * 0.997 and real_price < weekly_high * 1.002 and not is_potential_breakout:
                     return {"symbol": sym, "skip_reason": "Multi-Day Resistance (Near 5D High)"}
                 
                 # [V17] 3b. Macro-Alignment Hard Gate (Daily EMA-20)
                 # Hard rejection if trading against primary daily trend
                 ema20_1d = EMAIndicator(close=df_1d['close'], window=20).ema_indicator().iloc[-1]
-                if real_price < ema20_1d:
-                    return {"symbol": sym, "skip_reason": "Against Macro Trend (Price < 1D EMA-20)"}
+                # [V21.1 FIX] Removed hard rejection. L3 already penalizes -25 for counter-trend.
+                # Hard gate was causing zero-signal scans during market corrections.
                 
                 # [V18 FIX #14] Inject is_1d_bullish from actual 1D data for L3 penalties
                 indicators["is_1d_bullish"] = real_price > ema20_1d
@@ -432,15 +466,27 @@ class IntradayEngine:
                 indicators["is_1d_bullish"] = True  # Default bullish if no daily data
                 
             # 4. ERS Terminal Gating
-            ers_score = indicators.get("ers_score", 100)
+            # [V24 FIX #2] ERS now uses Kite tradability data instead of phantom default-100
+            # OLD: indicators.get("ers_score", 100) → always 100, gate never fired
+            # NEW: Use kite multiplier as proxy for execution readiness
+            kite_mult = kite_status.get("multiplier", 1.0)
+            # Map multiplier to ERS: mult >= 5x = 100 (great), 2-5x = 80, 1-2x = 50, <1 = 0
+            ers_score = 100 if kite_mult >= 5.0 else (80 if kite_mult >= 2.0 else (50 if kite_mult > 1.0 else 0))
             ers_gates = self._get_adaptive_ers_threshold()
             if ers_score < ers_gates["reject"]:
                 return {"symbol": sym, "skip_reason": f"Adaptive ERS Reject ({ers_score} < {ers_gates['reject']})"}
             
-            # 4. VWAP Soft Penalty
+            # 4b. VWAP Anti-Chase Penalty
+            # [V24 FIX #6] Converted from multiplicative (0.8x) to additive with transparency
+            # OLD: base_score *= 0.8 — invisible 20% haircut that compounded with L3 penalties
+            # NEW: Additive deduction logged in L3 reasons for full transparency
             vwap_dist = abs(real_price - indicators['vwap_val']) / max(indicators['atr'], 1e-6)
             if vwap_dist > 1.5:
-                base_score *= 0.8 # Anti-chase penalty
+                chase_penalty = 15 if vwap_dist > 2.5 else 10
+                base_score = max(0, base_score - chase_penalty)
+                l3_data.setdefault("reasons", []).append(
+                    {"text": f"Penalty: VWAP Chase ({vwap_dist:.1f} ATR away)", "impact": -chase_penalty}
+                )
                 
             # 5. 9:30 Trap
             ist_now = datetime.now(pytz.timezone('Asia/Kolkata'))
@@ -489,7 +535,8 @@ class IntradayEngine:
             verdict = "PIONEER PRIME" if base_score >= 85 else "Standard"
 
             # [V19 APEX-H] STRUCTURAL RISK MANAGEMENT
-            india_vix = global_index_ctx.get("india_vix", 15)
+            # [V26 V6-FIX 1] Defensive Fail-Closed (15 to 25)
+            india_vix = global_index_ctx.get("india_vix", 25)
             atr = indicators.get("atr", 0)
             
             # Stop-Loss: Tighter of (ATR-based, Structural Swing Low)
@@ -537,6 +584,15 @@ class IntradayEngine:
             beta_proxy = max(0.5, min(beta_proxy, 2.5)) # Cap between 0.5x and 2.5x
             
             risk_amount = (100000 * risk_pct) / beta_proxy  # ₹1L baseline capital
+            
+            # [V24 V3-FIX 2] Execution Edge: Pin limit orders on defensive setups
+            alpha_mode = l2_data.get("mode", "NONE")
+            ideal_entry = real_price
+            if alpha_mode == "PULLBACK":
+                ema20 = indicators.get("ema20", real_price)
+                # Cap the limit order to a max of 0.2% above the EMA20
+                limit_pin = ema20 * 1.002
+                ideal_entry = min(real_price, limit_pin)
 
             return {
                 "symbol": sym,
@@ -559,10 +615,10 @@ class IntradayEngine:
                 "signal": signal,
                 "reasons": reasons,
                 "groups": groups,
-                "entry": round(real_price, 2),
+                "entry": round(ideal_entry, 2), # V3-FIX 2 applied here
                 "target": target,
                 "stop_loss": stop_loss,
-                "rr_ratio": round((target - real_price) / sl_dist, 2) if sl_dist > 0 else 0,
+                "rr_ratio": round((target - ideal_entry) / sl_dist, 2) if sl_dist > 0 else 0,
                 "position_size": min(
                     int(risk_amount / sl_dist),
                     int(100000 / max(real_price, 1)),
@@ -584,35 +640,50 @@ class IntradayEngine:
         ind_15m = self._compute_indicators(df_15m)
         if ind_15m is None: return None
         
-        try:
-            ema_1h_series = EMAIndicator(close=df_1h['close'], window=20).ema_indicator()
-            # Safety: Ensure at least two candles for trend comparison
-            if len(ema_1h_series) >= 2:
-                ema_1h = ema_1h_series.iloc[-1]
-                ema_1h_prev = ema_1h_series.iloc[-2]
-                ema_1h_trend_up = ema_1h > ema_1h_prev
-            else:
-                ema_1h_trend_up = False
-        except:
-            ema_1h_trend_up = False
+        # [V23 FIX #5] Proper df_1h null guard — bare except on None.attribute was hiding infra failures
+        ema_1h_trend_up = None
+        is_1h_momentum_bullish = True
+        if df_1h is not None and not df_1h.empty:
+            try:
+                ema_1h_series = EMAIndicator(close=df_1h['close'], window=20).ema_indicator()
+                if len(ema_1h_series) >= 2:
+                    ema_1h = ema_1h_series.iloc[-1]
+                    ema_1h_prev = ema_1h_series.iloc[-2]
+                    ema_1h_trend_up = ema_1h > ema_1h_prev
+                    
+                # [V24 V3-FIX 3] 1H MACD Momentum Matrix
+                macd_1ha = EMAIndicator(close=df_1h['close'], window=12).ema_indicator()
+                macd_1hb = EMAIndicator(close=df_1h['close'], window=26).ema_indicator()
+                macd_1h_line = macd_1ha - macd_1hb
+                macd_1h_signal = EMAIndicator(close=macd_1h_line, window=9).ema_indicator()
+                if len(macd_1h_line) >= 1 and len(macd_1h_signal) >= 1:
+                    is_1h_momentum_bullish = bool(macd_1h_line.iloc[-1] > macd_1h_signal.iloc[-1])
+            except Exception:
+                pass  # ema_1h_trend_up stays None
             
-        return {**ind_15m, "ema_1h_trend_up": ema_1h_trend_up}
+        return {**ind_15m, "ema_1h_trend_up": ema_1h_trend_up, "is_1h_momentum_bullish": is_1h_momentum_bullish}
 
     def _compute_indicators(self, df: pd.DataFrame):
         # R4-6 FIX: Capture symbol BEFORE copy/tail — .tail() may not preserve .attrs
         symbol = df.attrs.get("symbol", "")
         
-        # FIX M1: Increased tail from 100 to 210 to support EMA200 computation in check_ema_fan.
-        # EMA200 requires 200+ data points to be statistically valid.
-        # 100-candle trim was producing distorted/NaN EMA200 values.
-        df = df.copy().tail(210)
+        # [V24 V3-FIX 1] Memory Optimization: Zero-Copy DataFrame Slicing
+        # OLD: df = df.copy().tail(210) — heavy memory allocation per stock, fragmented heap
+        # NEW: use shallow iloc slice. Only copy if we actually need to mutate NaNs.
+        df = df.iloc[-210:]
+        if df.isnull().values.any() or (df == 0).values.any():
+            df = df.copy()
         
         # Hardness Gate: Prevent library crashes (e.g. TA logic) on low data
         if len(df) < 20:
             return None
             
         # FIX V21: DataFrame NaN Contamination Protocol
-        df.replace(0, np.nan, inplace=True)
+        # [V21.1 FIX] Only replace zeros in PRICE columns (O/H/L/C cannot be 0 for listed stocks).
+        # Volume CAN be legitimately 0 (circuit halt, pre-market). Replacing it would inflate RVOL.
+        for col in ['open', 'high', 'low', 'close']:
+            if col in df.columns:
+                df[col] = df[col].replace(0, np.nan)
         df.ffill(inplace=True)
         df.bfill(inplace=True)
             
@@ -626,10 +697,21 @@ class IntradayEngine:
         ema20 = ema20_series.iloc[-1]
         ema50 = EMAIndicator(close=df['close'], window=50).ema_indicator().iloc[-1]
         # FIX H1: Use raw single-candle diff for real-time slope (was rolling(3).mean() = 2-candle lag)
-        ema_slope = ema20_series.diff().iloc[-1]
+        # [V24 FIX #10] Normalize by price so slope is scale-independent
+        # OLD: raw diff — ₹0.1 is significant for ₹100 stock but noise for ₹5000 stock
+        # NEW: percentage-normalized slope works identically across all price ranges
+        raw_slope = ema20_series.diff().iloc[-1]
+        ema_slope = raw_slope / max(price, 1e-6)
         
         avg_vol = df['volume'].rolling(20).mean()
-        current_vol = df['volume'].iloc[-1]
+        # [V24 FIX #1] Use COMPLETED candle for RVOL — the last candle is still forming
+        # during live scans, accumulating only a fraction of its expected volume.
+        # This caused universal near-zero RVOL → false -15 to -25 L3 penalties on ALL stocks.
+        # Using iloc[-2] (last completed candle) gives accurate volume measurement.
+        if len(df) >= 3:
+            current_vol = df['volume'].iloc[-2]  # Last COMPLETED candle
+        else:
+            current_vol = df['volume'].iloc[-1]
         high, low = df['high'], df['low']
         
         # Clean RVOL logic: Benchmark against time-of-day if available, fallback to trailing avg
@@ -648,8 +730,15 @@ class IntradayEngine:
             # FIX #6: Dynamic RVOL Divisor (Timeframe-Aware) [V16.1 Hardened]
             # OLD: Assumed fixed 25 candles (15m). 
             # NEW: Infer interval and calculate session density.
+            # [V23 FIX #6] Use MEDIAN of recent diffs to avoid overnight gap contamination
+            # OLD: Used last two candles only — if they span overnight, inferred_mins = 1065
             if isinstance(df.index, pd.DatetimeIndex) and len(df.index) >= 2:
-                inferred_mins = (df.index[-1] - df.index[-2]).total_seconds() / 60
+                if len(df.index) >= 6:
+                    recent_diffs = df.index.to_series().diff().iloc[-5:].dt.total_seconds() / 60
+                    valid_diffs = recent_diffs[(recent_diffs >= 1) & (recent_diffs <= 60)]
+                    inferred_mins = float(valid_diffs.median()) if len(valid_diffs) > 0 else 15.0
+                else:
+                    inferred_mins = (df.index[-1] - df.index[-2]).total_seconds() / 60
                 if 1 <= inferred_mins <= 60:
                     candles_per_session = max(1, int(375 / inferred_mins))
                 else:
@@ -725,6 +814,23 @@ class IntradayEngine:
         close_relative = (price - last_candle['low']) / c_range if c_range > 0 else 0.5
         pa_score = 100 if close_relative > 0.8 and rvol > 1.2 else (80 if close_relative > 0.8 else (50 if close_relative > 0.5 else 0))
 
+        # [V23 FIX #13] Smart Gate Revival — was dead code (never populated).
+        # Fires when price is below EMA20 but showing strong reversal conviction signals.
+        # This enables the +15 L2 boost and reduced L3 penalty for high-conviction reclaims.
+        smart_gate_bypass = False
+        if price < ema20:
+            reclaim_candle = close_relative > 0.8 and price > df['close'].iloc[-2]
+            volume_conviction = rvol > 2.0
+            if reclaim_candle and volume_conviction:
+                smart_gate_bypass = True
+
+        # [V24 FIX #5 & #7] Compute ORB, Gap, and Pivots
+        # OLD: These were never computed here, but analyze_stock and L2 Scoring tried to read them,
+        # resulting in dead OPENING_DRIVE logic and dead target resistance logic.
+        orb_ctx = ta_intraday.IntradayTechnicalAnalysis.detect_orb(df)
+        gap_ctx = ta_intraday.IntradayTechnicalAnalysis.analyze_gap(df)
+        pivots = ta_intraday.IntradayTechnicalAnalysis.calculate_pivots(df)
+
         if pd.isna(price) or pd.isna(ema20) or pd.isna(vwap) or pd.isna(rvol):
             return None
             
@@ -743,7 +849,11 @@ class IntradayEngine:
             "is_pullback": is_pullback, 
             "is_exhausted": is_exhausted,
             "atr": atr,
-            "pa_score": pa_score  # FIX C2: pa_score now populated for Smart Gate
+            "pa_score": pa_score,  # FIX C2: pa_score now populated for Smart Gate
+            "smart_gate_bypass": smart_gate_bypass,  # [V23 FIX #13] Revived Smart Gate flag
+            "orb": orb_ctx,        # [V24 FIX #5]
+            "gap": gap_ctx,        # [V24 FIX #5]
+            "pivots": pivots       # [V24 FIX #7]
         }
 
     def _run_layer1(self, indicators):
@@ -758,13 +868,17 @@ class IntradayEngine:
             score += 10; reasons.append({"text": "EMA20 trending up", "impact": 10})
         
         # FIX M2: Corrected VWAP bias tracking (No absolute hacks that turn dropping stocks positive)
-        if 0 <= distance_vwap < 1.5: 
-            score += 10; reasons.append({"text": "Near VWAP (healthy trend)", "impact": 10})
-        elif distance_vwap >= 1.5: 
-            score += 5; reasons.append({"text": "Extended from VWAP", "impact": 5})
-        elif -1.5 < distance_vwap < 0:
+        # [V25 V5-FIX 1] Volatility-Normalized VWAP Extension Limit
+        atr_pct = (indicators.get("atr", 0) / max(price, 1)) * 100
+        vwap_limit = max(atr_pct * 1.5, 0.75)  # Floor at 0.75% to prevent ultra-tight chopping
+        
+        if 0 <= distance_vwap < vwap_limit: 
+            score += 10; reasons.append({"text": f"Near VWAP (< {vwap_limit:.1f}%)", "impact": 10})
+        elif distance_vwap >= vwap_limit: 
+            score += 5; reasons.append({"text": f"Extended from VWAP (> {vwap_limit:.1f}%)", "impact": 5})
+        elif -vwap_limit < distance_vwap < 0:
             score -= 2; reasons.append({"text": "Slightly below VWAP (chop risk)", "impact": -2})
-        elif distance_vwap <= -1.5:
+        elif distance_vwap <= -vwap_limit:
             score -= 5; reasons.append({"text": "Below VWAP (bearish bias)", "impact": -5})
         
         # P3 FIX: Added RVOL 0.8-1.2 tier — average volume is NORMAL, not bearish
@@ -834,6 +948,12 @@ class IntradayEngine:
             bk_score = bk_ctx.get("breakout_score", 0)
             bk_pts = 45 if bk_score >= 60 else 35
             alpha_mode = "BREAKOUT"; score += bk_pts; reasons.append({"text": f"BREAKOUT: {bk_ctx.get('breakout_intensity', 'Valid')} from tight zone", "impact": bk_pts})
+            
+            # [V23 FIX #4] BREAKOUT_RETEST: If breakout detected but also pulling back to level,
+            # overlay retest confidence — this is THE highest probability intraday setup
+            if is_pullback:
+                alpha_mode = "BREAKOUT_RETEST"
+                score += 5; reasons.append({"text": "RETEST: Pulling back to breakout level (highest probability)", "impact": 5})
 
         # 2B. Pullback Phase
         elif is_pullback:
@@ -878,31 +998,35 @@ class IntradayEngine:
             alpha_mode = "PULLBACK"; score += min(60, pb_score); reasons.append({"text": pb_reason, "impact": min(60, pb_score)})
             
         # 2C. Momentum Phase
-        elif is_trending and distance_vwap > 1.2 and rvol > 1.5:
+        elif is_trending and distance_vwap >= 1.0 and rvol > 1.5:
             alpha_mode = "MOMENTUM"; score += 40; reasons.append({"text": "MOMENTUM: Strong trend + volume", "impact": 40})
-            
-        # 2D. Early Phase Base (Catch-all for standard healthy setups that aren't explosive yet)
-        elif is_near_vwap and is_trending and structure_ok:
-            alpha_mode = "EARLY"; score += 45; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure", "impact": 45})
         
-        # [V19 APEX-C] OPENING DRIVE DETECTION (9:15-9:45)
-        # The most profitable intraday window — gap-and-go, ORB breakouts, institutional opening orders
-        if alpha_mode == "NONE" and df_15m is not None and isinstance(df_15m.index, pd.DatetimeIndex):
+        # [V23 FIX #15] OPENING DRIVE DETECTION (9:15-9:45) — Moved BEFORE EARLY mode
+        # OLD: Only fired when alpha_mode == "NONE", so gap-and-go setups were mislabeled as EARLY
+        # NEW: Check during opening window for ANY pre-EARLY state, overlaying the strongest label
+        if alpha_mode in ["NONE", "EARLY"] and df_15m is not None and isinstance(df_15m.index, pd.DatetimeIndex):
             try:
                 od_h, od_m = df_15m.index[-1].hour, df_15m.index[-1].minute
                 is_opening_window = (od_h == 9 and 15 <= od_m <= 45)
                 if is_opening_window:
                     orb = indicators.get("orb", {})
                     gap = indicators.get("gap", {})
-                    # Gap-and-Go: gap > 0.5% with strong volume
                     is_gap_go = gap.get("gap_percent", 0) > 0.5 and rvol > 2.0
-                    # ORB Breakout: above opening range high
                     is_orb = orb.get("breakout_type") == "bullish"
                     if is_gap_go or is_orb:
-                        alpha_mode = "OPENING_DRIVE"
-                        score += 42; reasons.append({"text": f"OPENING DRIVE: {'Gap-and-Go' if is_gap_go else 'ORB Breakout'}", "impact": 42})
+                        if alpha_mode == "EARLY":
+                            # Override EARLY with OPENING_DRIVE for proper labeling
+                            alpha_mode = "OPENING_DRIVE"
+                            reasons.append({"text": f"OPENING DRIVE: {'Gap-and-Go' if is_gap_go else 'ORB Breakout'} (upgraded from EARLY)", "impact": 0})
+                        else:
+                            alpha_mode = "OPENING_DRIVE"
+                            score += 42; reasons.append({"text": f"OPENING DRIVE: {'Gap-and-Go' if is_gap_go else 'ORB Breakout'}", "impact": 42})
             except Exception:
                 pass
+
+        # 2D. Early Phase Base (Catch-all for standard healthy setups that aren't explosive yet)
+        if alpha_mode == "NONE" and is_near_vwap and is_trending and structure_ok:
+            alpha_mode = "EARLY"; score += 45; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure", "impact": 45})
             
         if rvol > 2.5: score += 10; reasons.append({"text": "Booster: High RVOL", "impact": 10})
         if ema_1h_trend_up: score += 5; reasons.append({"text": "Booster: 1H Trend Up", "impact": 5})
@@ -1010,6 +1134,14 @@ class IntradayEngine:
         
         if rvol < 0.8: 
             penalty += 15; reasons.append({"text": "Penalty: Low RVOL (no institutional volume)", "impact": -15})
+            
+        # [V24 V4-FIX 2] Volume Climax / Absorption Trap
+        # High volume on a tiny candlestick body signifies institutional resistance, not momentum
+        last_candle_body = abs(df_15m.iloc[-1]['close'] - df_15m.iloc[-1]['open'])
+        last_candle_range = max(df_15m.iloc[-1]['high'] - df_15m.iloc[-1]['low'], 0.01)
+        is_doji = (last_candle_body / last_candle_range) < 0.25
+        if rvol > 3.0 and is_doji:
+            penalty += 30; reasons.append({"text": "Penalty: Volume Climax Absorption (Extreme Volume Doji Trap)", "impact": -30})
         
         # [V12.9] Liquidity Constraint
         if not liq:
@@ -1033,16 +1165,23 @@ class IntradayEngine:
         if candle_range > 0 and (high - close) / candle_range > 0.5 and close < last_candle['open']:
             penalty += 15; reasons.append({"text": "Penalty: Bearish upper wick (selling pressure)", "impact": -15})
             
-        # FIX H2: Use actual trade risk (entry - stop_loss) not EMA distance
-        # OLD: risk = abs(price - ema20) — this is EMA distance, not the trade's stop distance
-        # This made RR ratio meaningless (ATR reward / EMA distance risk = wrong units)
-        # NEW: use ATR-based stop distance (same as the engine's stop_loss calc in Fix #3)
-        actual_sl_distance = max(atr * 1.5, price * 0.005)  # Mirror of Fix #3 stop_loss formula
-        risk = actual_sl_distance if actual_sl_distance > 0 else (atr * 0.5)
-        # V14.6 FIX: Decouple baseline structural reward from volume velocity to prevent double penalization.
-        reward_mult = 3.0 if rvol > 2.5 else 2.0
-        reward = atr * reward_mult
-        rr_ratio = reward / risk if risk > 0 else 0
+        # [V23 FIX #12] RR Gate Revival — use actual L2 dynamic zones when available
+        # OLD: rr_ratio = (atr * reward_mult) / (atr * 1.5) = CONSTANT 1.33 or 2.0 — gate NEVER fired
+        # NEW: Use L2's target/stop_loss for real trade-level RR assessment
+        dynamic_target = l2_data.get("dynamic_zones", {}).get("target") if l2_data else None
+        dynamic_sl = l2_data.get("dynamic_zones", {}).get("stop_loss") if l2_data else None
+        
+        if dynamic_target and dynamic_sl and dynamic_sl < price and dynamic_target > price:
+            actual_reward = dynamic_target - price
+            actual_risk = price - dynamic_sl
+            rr_ratio = actual_reward / max(actual_risk, 1e-6)
+        else:
+            # Structural fallback: use nearest resistance vs ATR-based SL
+            actual_sl_distance = max(atr * 1.5, price * 0.005)
+            reward_mult = 3.0 if rvol > 2.5 else 2.0
+            nearest_reward = atr * reward_mult
+            rr_ratio = nearest_reward / max(actual_sl_distance, 1e-6)
+        
         if rr_ratio < 1.2: 
             penalty += 15; reasons.append({"text": f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})", "impact": -15})
         
@@ -1090,6 +1229,13 @@ class IntradayEngine:
                 penalty += 20; reasons.append({"text": "Penalty: Extreme Market Weakness (Nifty Bearish)", "impact": -20})
             elif is_sideways and rvol < 2.0:
                 penalty += 10; reasons.append({"text": "Penalty: Sideways Market (Low Momentum Filter)", "impact": -10})
+                
+            # [V21.3 FIX] Advance/Decline Ratio Penalty
+            # Covers the 98% of stocks that lack explicit Sector mapping.
+            ad_ratio = market_ctx.get("ad_ratio", 1.0)
+            if ad_ratio < 0.7:
+                pen = 15 if ad_ratio < 0.4 else 10
+                penalty += pen; reasons.append({"text": f"Penalty: Broad Market Weakness (A/D {ad_ratio:.2f})", "impact": -pen})
         
         # Safe Momentum Check (Requires at least 4 candles)
         if len(df_15m) >= 4:
@@ -1103,6 +1249,11 @@ class IntradayEngine:
         is_1d_bullish = indicators.get("is_1d_bullish", True)
         if not is_1d_bullish and alpha_mode in ["BREAKOUT", "PULLBACK", "EARLY", "MOMENTUM"]:
             penalty += 25; reasons.append({"text": "Penalty: Below Daily 20-EMA (Counter-Trend Risk)", "impact": -25})
+            
+        # [V24 V3-FIX 3] 1H MACD Momentum Bearish Penatly
+        # Even if price is above Daily 20-EMA, if 1H MACD crosses bearishly, momentum is actively dying
+        if not indicators.get("is_1h_momentum_bullish", True):
+            penalty += 15; reasons.append({"text": "Penalty: 1H MACD Momentum Bearish", "impact": -15})
         
         # P1/P10 FIX: Penalize Bearish RSI Divergence (reversal risk)
         # OLD: Only rewarded bullish divergence in L2, ignored bearish entirely
@@ -1123,12 +1274,21 @@ class IntradayEngine:
         
         # P9 FIX: Time-of-day awareness — opening noise filtering
         # V16 AUDIT FIX 2: Removed duplicate lunch penalty (was stacking -25 with V15 Time Decay at L637)
+        # [V23 FIX #7] Don't double-penalty stocks in OPENING_DRIVE mode
+        # If a stock proved conviction to bypass 9:30 trap guard, penalizing again is contradictory
         if isinstance(df_15m.index, pd.DatetimeIndex) and len(df_15m.index) > 0:
             hour = df_15m.index[-1].hour
             minute = df_15m.index[-1].minute
             current_mins = hour * 60 + minute
-            if current_mins < 570:  # Before 9:30 AM
+            if current_mins < 570 and alpha_mode != "OPENING_DRIVE":  # Before 9:30 AM
                 penalty += 10; reasons.append({"text": "Penalty: Opening volatility (pre-9:30 noise)", "impact": -10})
+        
+        # [V24 FIX #9] Cap total L3 penalty to prevent extreme over-suppression
+        # Even the worst context shouldn't deduct more than 60 points if L1+L2 found genuine alpha
+        MAX_L3_PENALTY = 60
+        if penalty > MAX_L3_PENALTY:
+            penalty = MAX_L3_PENALTY
+            reasons.append({"text": "System: L3 Penalty Capped at Maximum (-60 max)", "impact": 0})
         
         return penalty, {"penalty": penalty, "reasons": reasons}
 
@@ -1137,6 +1297,66 @@ class IntradayEngine:
         elif score >= 60: return "BUY"
         elif score >= 40: return "NEUTRAL"
         else: return "IGNORE"
+
+    async def evaluate_exit(self, sym: str, entry_price: float, stop_loss: float,
+                            target: float, df_15m: pd.DataFrame, entry_time: datetime = None) -> dict:
+        """[V23 FIX #10] Exit Signal Architecture — evaluates active positions for exit conditions.
+        
+        Returns action: HOLD | EXIT | PARTIAL_EXIT | TRAIL_STOP with reason and urgency.
+        """
+        try:
+            if df_15m is None or df_15m.empty or len(df_15m) < 5:
+                return {"action": "HOLD", "reason": "Insufficient data for exit evaluation"}
+            
+            current_price = float(df_15m['close'].iloc[-1])
+            atr = AverageTrueRange(high=df_15m['high'], low=df_15m['low'],
+                                   close=df_15m['close'], window=14).average_true_range().iloc[-1]
+            ema20 = EMAIndicator(close=df_15m['close'], window=20).ema_indicator().iloc[-1]
+            
+            # 1. HARD STOP HIT — Immediate exit
+            if current_price <= stop_loss:
+                return {"action": "EXIT", "reason": "Stop Loss Hit", "urgency": "IMMEDIATE",
+                        "exit_price": current_price}
+            
+            # 2. TARGET HIT — Partial exit + trail stop to breakeven
+            if current_price >= target:
+                new_stop = entry_price + (atr * 0.5)  # Trail to breakeven + 0.5 ATR buffer
+                return {"action": "PARTIAL_EXIT", "reason": "Target Reached — Book 50% + Trail",
+                        "urgency": "NEXT_CANDLE", "exit_price": current_price,
+                        "new_stop": round(new_stop, 2),
+                        "new_target": round(current_price + (atr * 2.0), 2)}
+            
+            # 3. STRUCTURAL EXIT — Price closes below EMA20 after being above
+            if current_price < ema20 and entry_price > ema20:
+                # Only exit if we're still in profit or at minimal loss
+                pnl_pct = (current_price - entry_price) / entry_price
+                if pnl_pct > -0.005:  # Still near breakeven
+                    return {"action": "EXIT", "reason": "EMA20 Structural Breakdown",
+                            "urgency": "NEXT_CANDLE", "exit_price": current_price}
+            
+            # 4. TIME-BASED EXIT — Held > 2 hours with < 0.5% gain
+            if entry_time:
+                now = datetime.utcnow()
+                hold_duration = (now - entry_time).total_seconds() / 3600
+                pnl_pct = (current_price - entry_price) / entry_price
+                if hold_duration > 2.0 and pnl_pct < 0.005:
+                    return {"action": "EXIT", "reason": f"Time Decay Exit ({hold_duration:.1f}h held, {pnl_pct*100:.2f}% gain)",
+                            "urgency": "NEXT_CANDLE", "exit_price": current_price}
+            
+            # 5. TRAILING STOP UPDATE — If in profit > 1 ATR, trail the stop up
+            unrealized_r = (current_price - entry_price) / max(atr, 1e-6)
+            if unrealized_r > 1.0:
+                new_stop = max(stop_loss, current_price - (atr * 1.2))
+                if new_stop > stop_loss:
+                    return {"action": "TRAIL_STOP", "reason": f"Trailing Stop Update ({unrealized_r:.1f}R profit)",
+                            "urgency": "UPDATE", "new_stop": round(new_stop, 2)}
+            
+            return {"action": "HOLD", "reason": "Setup intact",
+                    "unrealized_r": round(unrealized_r, 2),
+                    "distance_to_target_pct": round((target - current_price) / current_price * 100, 2),
+                    "distance_to_stop_pct": round((current_price - stop_loss) / current_price * 100, 2)}
+        except Exception as e:
+            return {"action": "HOLD", "reason": f"Exit eval error: {str(e)}"}
 
     async def run_scan(self, job_id: str, logger=None):
         """[V10 SPEED] Pulse-Fire Main Loop with [V11 TIMEOUT PROTECTION]."""
@@ -1153,12 +1373,15 @@ class IntradayEngine:
         
         # [V13.5] Bulk Bootstrap liquidity for all symbols in the current scan
         all_symstr = [s["symbol"] if isinstance(s, dict) else s for s in symbols]
-        asyncio.create_task(liquidity_service.bulk_bootstrap(all_symstr))
         
-        # [V17 Vanguard] Bootstrap Synchronization Guard
-        # Give the background task a few seconds to kick off and fetch the first few batches
-        # This prevents the initial batch of a scan from falling back to ADV25.
-        await asyncio.sleep(2)
+        # [V23 FIX #8] Liquidity Bootstrap Race Condition Fix
+        # OLD: Entire bootstrap was fire-and-forget with 2s sleep — first 20% of scan got false -20 penalty
+        # NEW: Synchronously bootstrap first 200 symbols, background the rest
+        first_batch = all_symstr[:200]
+        remaining_batch = all_symstr[200:]
+        await liquidity_service.bulk_bootstrap(first_batch)
+        if remaining_batch:
+            asyncio.create_task(liquidity_service.bulk_bootstrap(remaining_batch))
         
         self.job_states[job_id] = {"results": [], "failed_symbols": [], "progress": 0, "is_running": True, "pause_requested": False, "main_task": asyncio.current_task()}
         index_ctx = await self._get_index_context()
@@ -1210,6 +1433,14 @@ class IntradayEngine:
                     print(f"[TIMEOUT] Batch {i} hung. Force-skipping to maintain engine flow.")
                     self.job_states[job_id]["progress"] += len(chunk)
                     continue
+
+                # [V21.1 FIX] Data Quality Audit Per Batch
+                empty_count = sum(1 for s in chunk_syms if res_15m.get(s) is None or (hasattr(res_15m.get(s), 'empty') and res_15m[s].empty))
+                short_count = sum(1 for s in chunk_syms if res_15m.get(s) is not None and hasattr(res_15m.get(s), '__len__') and 0 < len(res_15m[s]) < 100)
+                if empty_count > len(chunk_syms) * 0.3:
+                    print(f"⚠️ [DATA QUALITY] Batch {i}: {empty_count}/{len(chunk_syms)} symbols returned EMPTY 15m data!")
+                if short_count > 0:
+                    print(f"⚠️ [DATA QUALITY] Batch {i}: {short_count} symbols have <100 15m candles (degraded indicators)")
 
                 batch_pulse = {}
                 for s in chunk_syms:
@@ -1295,10 +1526,22 @@ class IntradayEngine:
         else:
             dynamic_floor = self.CONFIG["score_floor"]  # Standard 65
         
+        # [V23 FIX #17] VIX-Based Capital Throttle — reduce exposure in volatile markets
+        # [V26 V6-FIX 1] Defensive Fail-Closed (15 to 25)
+        india_vix = self.system_state.get("india_vix", 25)
+        if india_vix > 25:
+            dynamic_floor = max(dynamic_floor, 75)  # Only highest conviction
+        elif india_vix > 20:
+            dynamic_floor = max(dynamic_floor, 70)
+        
         filtered = [r for r in raw_results if r.get("score", 0) >= dynamic_floor]
         
-        # 2. Top-N Selection (15% or Max 50)
-        top_n_target = min(self.CONFIG["top_n_cap"], max(5, int(len(filtered) * 0.15)))
+        # [V25 V5-FIX 2] Trade Density Matrix (Hard Top-15 correlation cap limit)
+        top_n_target = min(15, max(5, int(len(filtered) * 0.15)))
+        
+        # [V23 FIX #17] Halve signal count in extreme volatility
+        if india_vix > 25:
+            top_n_target = max(3, top_n_target // 2)
         
         # 3. Final Sorting (Priority DESC, Footprint Tie-Break)
         # We use a small epsilon for priority tie-breaking

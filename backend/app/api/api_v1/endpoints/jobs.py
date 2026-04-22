@@ -197,6 +197,9 @@ async def stop_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(g
     if job.type == "intraday":
         from app.services.intraday_engine import intraday_engine
         await intraday_engine.stop_job(job_id_str)
+    elif job.type == "swing_scan":
+        from app.services.swing_engine import swing_engine
+        await swing_engine.stop_job(job_id_str)
     else:
         # full_scan, sector_scan, etc.
         from app.services.scanner_engine import longterm_scanner_engine
@@ -229,6 +232,9 @@ async def pause_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(
     if job.type == "intraday":
         from app.services.intraday_engine import intraday_engine
         await intraday_engine.pause_job(job_id_str)
+    elif job.type == "swing_scan":
+        from app.services.swing_engine import swing_engine
+        await swing_engine.pause_job(job_id_str)
     else:
         from app.services.scanner_engine import longterm_scanner_engine
         await longterm_scanner_engine.pause_job(job_id_str)
@@ -260,6 +266,9 @@ async def resume_scan(job_type: Optional[str] = None, db: AsyncSession = Depends
     if job.type == "intraday":
         from app.services.intraday_engine import intraday_engine
         await intraday_engine.resume_job(job_id_str)
+    elif job.type == "swing_scan":
+        from app.services.swing_engine import swing_engine
+        await swing_engine.resume_job(job_id_str)
     else:
         from app.services.scanner_engine import longterm_scanner_engine
         await longterm_scanner_engine.resume_job(job_id_str)

@@ -102,8 +102,20 @@ async def manage_recurring_scans():
             # 1. Check if any job of this type is already pending or processing
             active_query = select(Job).where(Job.type == job_type, Job.status.in_(["pending", "processing"]))
             active_res = await session.execute(active_query)
-            if active_res.scalars().first():
-                continue # Already busy
+            active_job = active_res.scalars().first()
+            if active_job:
+                # [V27 V7-FIX 1] ZOMBIE JOB REAPER
+                # If the process hard-crashed mid-scan, the job stays 'processing' forever and locks the system.
+                # Max intraday scan time is ~15 mins. If job is older than 25 mins, it is dead.
+                elapsed = (datetime.utcnow() - active_job.updated_at).total_seconds() / 60.0
+                if elapsed > 25:
+                    log(f"💀 [REAPER] Reaping zombie job {active_job.id} ({job_type}) stuck in {active_job.status} for {elapsed:.1f}m")
+                    active_job.status = "failed"
+                    active_job.error_details = "System Error: Reaped by Zombie Process Monitor"
+                    session.add(active_job)
+                    await session.commit()
+                else:
+                    continue # Already busy
             
             # 2. Timing Logic
             should_trigger = False
@@ -137,17 +149,14 @@ async def manage_recurring_scans():
                         should_trigger = True
             
             if should_trigger:
-                # V16.1: Evasion Jitter (Random delay before trigger)
-                import random
-                jitter = random.randint(1, 15)  # V18 FIX #17: Reduced from 120s — 15s sufficient for de-correlation
-                log(f"⏰ [SCHEDULER] Auto-triggering {job_type} (Jitter: {jitter}s)")
-                await asyncio.sleep(jitter)
-                
+                # [V3-FIX 4] DB Connection Optimization
+                # Removed jitter from INSIDE the DB session context to prevent QueuePool exhaustion
                 # Phase 88: Auto-triggered scans are hidden from UI to avoid clutter
                 hidden = True if job_type == "intraday" else False
                 new_job = Job(type=job_type, status="pending", trigger_source="auto", is_hidden=hidden)
                 session.add(new_job)
                 await session.commit()
+                log(f"⏰ [SCHEDULER] Auto-triggered {job_type}")
 
 async def worker_loop():
     log(f"👷 Worker Process Started. PID: {os.getpid()}")

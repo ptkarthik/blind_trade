@@ -43,6 +43,29 @@ class MarketDiscoveryService:
                         "name": name,
                         "raw_symbol": symbol
                     })
+            # [V26 V6-FIX 2] KITE MARGIN FILTER (Scrub Intraday Blocked EQ Stocks)
+            try:
+                margin_res = session.get("https://api.kite.trade/margins/equity", timeout=5)
+                margin_res.raise_for_status()
+                kite_margins = margin_res.json()
+                
+                # Check for mis_multiplier > 0.0 or mis_margin < 100 which indicates MIS is allowed
+                mis_allowed = {
+                    item['tradingsymbol']: item 
+                    for item in kite_margins 
+                    if item.get('mis_multiplier', 0) > 0.0 or item.get('mis_margin', 100) < 100
+                }
+                
+                tradable_stocks = []
+                for stock in stocks:
+                    if stock['raw_symbol'] in mis_allowed:
+                        tradable_stocks.append(stock)
+                
+                if len(tradable_stocks) > 100:
+                    stocks = tradable_stocks
+            except Exception as e:
+                print(f"⚠️ MarketDiscovery: Kite MIS Sync Failed, proceeding with raw list: {e}")
+                
             return stocks
         except Exception as e:
             print(f"⚠️ MarketDiscovery: Fetch failed (Network/NSE): {e}")

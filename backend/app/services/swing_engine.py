@@ -59,8 +59,9 @@ class SwingEngine:
     async def refresh_market_context(self):
         """Fetch NIFTY 50 trend to set the global strategy bias."""
         try:
-            df_nifty = await market_service.get_ohlc("^NSEI", period="1y", interval="1d")
-            if not df_nifty.empty and len(df_nifty) > 50:
+            # V2 Evasion: Use NIFTYBEES.NS to bypass the ^NSEI Yahoo rate limits via jugaad_data
+            df_nifty = await self._fetch_swing_ohlc_with_evasion("NIFTYBEES.NS", period="1y", interval="1d")
+            if df_nifty is not None and not df_nifty.empty and len(df_nifty) > 50:
                 from ta.trend import SMAIndicator
                 sma50_series = SMAIndicator(close=df_nifty['close'], window=50).sma_indicator()
                 nifty_price = safe_scalar(df_nifty['close'].iloc[-1])
@@ -118,9 +119,45 @@ class SwingEngine:
 
         def _make_session(ua: str):
             s = requests.Session()
-            s.verify = False
+            s.verify = True
             s.headers.update({"User-Agent": ua, "Accept": "*/*", "Connection": "close"})
             return s
+
+        # Strategy 0: Direct NSE Fetch via jugaad-data (Bulletproof for Indian Equities)
+        if sym.endswith('.NS'):
+            try:
+                base_sym = sym.replace('.NS', '')
+                from jugaad_data.nse import stock_df
+                from datetime import date, timedelta
+                
+                days = 365
+                if period == '2y': days = 730
+                if period == '5y': days = 1825
+                
+                to_date = date.today()
+                from_date = to_date - timedelta(days=days)
+                
+                def _fetch_jugaad():
+                    return stock_df(symbol=base_sym, from_date=from_date, to_date=to_date, series="EQ")
+                    
+                df = await asyncio.to_thread(_fetch_jugaad)
+                if df is not None and not df.empty:
+                    df = df.rename(columns={
+                        "DATE": "date",
+                        "OPEN": "open",
+                        "HIGH": "high",
+                        "LOW": "low",
+                        "CLOSE": "close",
+                        "VOLUME": "volume"
+                    })
+                    df['date'] = pd.to_datetime(df['date'])
+                    df = df.set_index('date')
+                    df = df.sort_index()
+                    df = df[['open', 'high', 'low', 'close', 'volume']]
+                    logger.info(f"✅ Strategy 0 Success: {sym} via jugaad-data ({len(df)} candles)")
+                    return df
+            except Exception as e:
+                logger.warning(f"⚠️ Strategy 0 Failed for {sym} via jugaad-data: {e}")
 
         # Strategy 1: Try with proxy + rotated UA (2 attempts)
         from app.services.proxy_manager import proxy_manager
@@ -229,6 +266,11 @@ class SwingEngine:
                     bo_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.6) invalidates Breakout"
                     print(f"    🔻 {sym}: Breakout KILLED by A/D Ratio < 0.6", flush=True)
 
+            if pb_result.get("match") and self.market_context.get("ad_ratio", 1.0) < 0.5:
+                pb_result["match"] = False
+                pb_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.5) invalidates Pullback"
+                print(f"    🔻 {sym}: Pullback KILLED by A/D Ratio < 0.5", flush=True)
+
             # 3. Conflict Resolution & Selection
             selected = None
             is_nifty_bullish = self.market_context.get("nifty_bullish", False)
@@ -265,50 +307,155 @@ class SwingEngine:
             sl = selected.get("stop_loss", 0.0)
             target = selected.get("target", 0.0)
 
-            # 4. Refined Scoring (Base 50)
-            score = 50
-            score_breakdown = ["Base: 50"]
+            # ====================================================================
+            # 4. V3 CONVICTION-WEIGHTED SCORING MATRIX (100-Point Scale)
+            # ====================================================================
+            conviction = selected.get("conviction", 0)
+            if conviction < 5:
+                # Minimum viable product check: skip low quality setups entirely
+                return None
+                
+            # Components:
+            #   Conviction (from ta_swing)   : 0-25 pts
+            #   Volume Quality               : 0-15 pts
+            #   Relative Strength            : 0-10 pts
+            #   Market Context Alignment     : 0-15 pts (-10 penalty possible)
+            #   ADX Trend Strength           : 0-10 pts
+            #   Strategy-Specific Bonus      : 0-15 pts
+            #   MACD/OBV Institutional       : 0-10 pts
+            # ====================================================================
+            score = 0
+            score_breakdown = []
             
-            # Booster: Volume Surge (+20)
+            # --- Component 1: Conviction Score (max 25) ---
+            # This is pre-calculated by ta_swing based on pattern quality + indicator confluence
+            conviction = selected.get("conviction", 0)
+            max_conviction = 12 if selected["strategy"] == "BREAKOUT" else 10
+            conv_score = round((conviction / max(max_conviction, 1)) * 25)
+            score += conv_score
+            score_breakdown.append(f"Conviction: +{conv_score} ({conviction}/{max_conviction})")
+            
+            # --- Component 2: Volume Quality (max 15) ---
             vol_ratio = selected.get("vol_ratio", 1.0)
-            if vol_ratio > 1.8:
-                score += 20
-                score_breakdown.append(f"VolSurge: +20 (Ratio {round(vol_ratio, 2)})")
-            elif vol_ratio > 1.4:
-                score += 10
-                score_breakdown.append(f"VolSurge: +10 (Ratio {round(vol_ratio, 2)})")
+            if vol_ratio > 2.5:
+                vol_score = 15
+            elif vol_ratio > 2.0:
+                vol_score = 12
+            elif vol_ratio > 1.5:
+                vol_score = 8
+            elif vol_ratio > 1.2:
+                vol_score = 5
+            else:
+                vol_score = 0
+            score += vol_score
+            score_breakdown.append(f"Vol: +{vol_score} ({round(vol_ratio, 1)}x)")
             
-            # Booster: SMA 50 Support (+15)
-            if selected.get("strategy") == "PULLBACK":
+            # --- Component 3: Relative Strength vs Nifty (max 10) ---
+            stock_ret = selected.get("stock_20d_return", 0)
+            nifty_ret = self.market_context.get("nifty_20d_return", 0)
+            rs_spread = stock_ret - nifty_ret
+            if rs_spread > 10:
+                rs_score = 10
+            elif rs_spread > 5:
+                rs_score = 7
+            elif rs_spread > 2:
+                rs_score = 4
+            else:
+                rs_score = 1
+            score += rs_score
+            score_breakdown.append(f"RS: +{rs_score} (+{round(rs_spread, 1)}%)")
+            
+            # --- Component 4: Market Context Alignment (max 15, can penalize) ---
+            mkt_score = 0
+            nifty_rsi = self.market_context.get("nifty_rsi", 50)
+            ad_ratio = self.market_context.get("ad_ratio", 1.0)
+            
+            # Nifty trend alignment
+            if is_nifty_bullish:
+                mkt_score += 5
+            
+            # Breadth support
+            if ad_ratio >= 1.2:
+                mkt_score += 5
+            elif ad_ratio >= 0.8:
+                mkt_score += 2
+            
+            # Sector tailwind
+            if sector_return > 2.0:
+                mkt_score += 5
+            elif sector_return > 0:
+                mkt_score += 2
+                
+            # Penalty: Exhausted market for breakouts
+            if is_market_exhausted and selected["strategy"] == "BREAKOUT":
+                mkt_score -= 10
+                score_breakdown.append("Exhaustion Penalty: -10")
+            
+            score += max(-10, mkt_score)
+            score_breakdown.append(f"Mkt: +{max(-10, mkt_score)}")
+            
+            # --- Component 5: ADX Trend Strength (max 10) ---
+            adx_val = selected.get("adx", 0)
+            if adx_val >= 35:
+                adx_score = 10
+            elif adx_val >= 30:
+                adx_score = 7
+            elif adx_val >= 25:
+                adx_score = 4
+            else:
+                adx_score = 0
+            score += adx_score
+            score_breakdown.append(f"ADX: +{adx_score} ({round(adx_val, 1)})")
+            
+            # --- Component 6: Strategy-Specific Bonuses (max 15) ---
+            strat_bonus = 0
+            if selected["strategy"] == "PULLBACK":
+                # SMA50 bounce is higher quality than EMA20
                 zone_val = next((r["value"] for r in selected.get("reasons", []) if r["label"] == "ZONE"), "")
                 if "SMA 50" in zone_val:
-                    score += 15
-                    score_breakdown.append("SMA50 Bounce: +15")
+                    strat_bonus += 10
+                    score_breakdown.append("SMA50 Bounce: +10")
+                else:
+                    strat_bonus += 5
+                # Reversal pullback (RSI < 40) is higher conviction
+                if selected.get("setup_type") == "REVERSAL_PULLBACK":
+                    strat_bonus += 5
+                    score_breakdown.append("Reversal: +5")
+            elif selected["strategy"] == "BREAKOUT":
+                # Near 20D high
+                if is_near_high:
+                    strat_bonus += 5
+                    score_breakdown.append("NearHigh: +5")
+                # Squeeze breakout (Bollinger)
+                if selected.get("is_squeeze_breakout"):
+                    strat_bonus += 10
+                    score_breakdown.append("Squeeze: +10")
+                else:
+                    strat_bonus += 3
+            score += min(15, strat_bonus)
             
-            # Booster: Near High (+10)
-            if is_near_high:
-                score += 10
-                score_breakdown.append("NearHigh: +10")
+            # --- Component 7: MACD/OBV Institutional Signals (max 10) ---
+            inst_score = 0
+            if selected.get("macd_bullish"):
+                inst_score += 3
+            if selected.get("macd_expanding") or selected.get("macd_recovering"):
+                inst_score += 3
+            if selected.get("obv_rising"):
+                inst_score += 4
+            score += inst_score
+            score_breakdown.append(f"Inst: +{inst_score}")
             
-            # Strategy Priority Score (Dynamic Weighting)
-            if is_nifty_bullish:
-                bo_weight, pb_weight = 1.2, 1.0
-            else:
-                bo_weight, pb_weight = 0.7, 1.2
+            # --- Final Score Normalization ---
+            final_score = round(min(100, max(0, score)), 1)
             
-            strategy_weight = bo_weight if selected["strategy"] == "BREAKOUT" else pb_weight
-            priority_score = score * strategy_weight
-            
-            final_score = round(min(100, priority_score), 1)
-            
-            # Confidence Level
+            # Confidence Level (tighter thresholds for V3)
             confidence = "LOW"
-            if final_score >= 85: confidence = "HIGH"
-            elif final_score >= 70: confidence = "MEDIUM"
+            if final_score >= 80: confidence = "HIGH"
+            elif final_score >= 60: confidence = "MEDIUM"
 
             # --- HIGH VISIBILITY MATCH LOG ---
             icon = "🚀 BREAKOUT" if strategy_name == "BREAKOUT" else "📥 PULLBACK"
-            print(f"  ✅ {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) | {' → '.join(score_breakdown)} | x{round(strategy_weight, 1)} = {final_score}", flush=True)
+            print(f"  ✅ {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) | {' | '.join(score_breakdown)}", flush=True)
             print(f"     Entry: ₹{real_price} | SL: ₹{sl} | Target: ₹{target} | Risk/Share: ₹{round(abs(real_price - sl), 2)}", flush=True)
 
             # 5. Metadata & Advisory
@@ -357,7 +504,7 @@ class SwingEngine:
                 "target": target,
                 "is_hybrid": selected.get("is_hybrid_exit", False),
                 "hold_duration": "2 to 21 Days",
-                "priority": priority_score,
+                "priority": final_score,
                 "reasons": selected.get("reasons", []),
                 # --- Position Sizing & Portfolio Metadata ---
                 "risk_per_trade_pct": portfolio_engine.risk_per_trade_pct, 
@@ -591,7 +738,8 @@ class SwingEngine:
                         job_obj.result = sanitize_data(current_result)
                         flag_modified(job_obj, "result")
                         await session.commit()
-            except: pass
+            except Exception as e:
+                logger.error(f"⚠️ [SWING PROGRESS] DB write error: {e}")
             await asyncio.sleep(3.0)
 
     async def stop_job(self, job_id: str):

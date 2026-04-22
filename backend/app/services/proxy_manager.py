@@ -130,11 +130,17 @@ class ProxyManager:
         valid_proxies = []
         
         def validate_sync(proxy):
-            # [V18 FIX #12] Validate against Yahoo Finance, not Google
-            # A proxy passing Google may still be 429'd by Yahoo
-            target_url = "https://query2.finance.yahoo.com/v8/finance/chart/RELIANCE.NS?range=1d&interval=1d" 
+            # [V23 FIX #11] Rotate validation targets to avoid single-point-of-failure
+            # OLD: Always used RELIANCE.NS — if that endpoint/symbol was blocked, ALL proxies failed
+            import random as rng
+            targets = [
+                "https://query2.finance.yahoo.com/v8/finance/chart/RELIANCE.NS?range=1d&interval=1d",
+                "https://query1.finance.yahoo.com/v8/finance/chart/TCS.NS?range=1d&interval=1d",
+                "https://query2.finance.yahoo.com/v8/finance/chart/INFY.NS?range=1d&interval=1d",
+            ]
+            target_url = rng.choice(targets)
             try:
-                resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=5, verify=False)
+                resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=5, verify=True)
                 if resp.status_code == 200:
                     return proxy
             except:
