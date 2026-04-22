@@ -159,7 +159,7 @@ class IntradayEngine:
     def _get_adaptive_ers_threshold(self) -> dict:
         """[V14] Dynamic ERS Gating based on VIX and Regime."""
         regime = self.system_state.get("regime", "Mixed")
-        vix = self.system_state.get("india_vix", 15.0)
+        vix = self.system_state.get("india_vix", 25.0)  # V6 Fail-Closed
         
         # Volatility Multiplier: As VIX rises, we tighten the gate (high slippage risk)
         # Base VIX assumed at 15.0. 
@@ -548,8 +548,20 @@ class IntradayEngine:
                 stop_loss = atr_sl
             stop_loss = l2_data.get("dynamic_zones", {}).get("stop_loss") or stop_loss
             
-            # Target: Nearest resistance level, capped by ATR extension
-            atr_target = round(real_price + max(atr * (3.0 if india_vix > 20 else 2.0), real_price * 0.01), 2)
+            # [V28 V8-FIX] Time-Weighted Edge Decay (Target Scaling)
+            # Market runs 09:15 to 15:30. Decay linearly from 1.0 (morning) to 0.4 (15:00)
+            try:
+                now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
+                current_hour = now_ist.hour + (now_ist.minute / 60.0)
+                time_decay_factor = 1.0
+                if current_hour > 10.0:
+                    time_decay_factor = max(0.4, 1.0 - ((current_hour - 10.0) * 0.12))
+            except Exception as e:
+                print(f"⚠️ Time decay fallback error: {e}")
+                time_decay_factor = 1.0
+
+            # Target: Nearest resistance level, capped by ATR extension (Time-Weighted)
+            atr_target = round(real_price + max((atr * time_decay_factor) * (3.0 if india_vix > 20 else 2.0), real_price * 0.01), 2)
             # Use pivot data if available for realistic resistance targeting
             pivot_data = indicators.get("pivots", {})
             valid_res = [v for v in pivot_data.values() if isinstance(v, (int, float)) and v > real_price * 1.002]
@@ -569,7 +581,17 @@ class IntradayEngine:
             if max_value > (adv20_dollar * 0.05):
                 target = round(real_price + ((target - real_price) * 0.75), 2)
             
-            sl_dist = max(abs(real_price - stop_loss), 0.01)
+            # [V24 V3-FIX 2] Execution Edge: Pin limit orders on defensive setups
+            alpha_mode = l2_data.get("mode", "NONE")
+            ideal_entry = real_price
+            if alpha_mode == "PULLBACK":
+                ema20 = indicators.get("ema20", real_price)
+                # Cap the limit order to a max of 0.2% above the EMA20
+                limit_pin = ema20 * 1.002
+                ideal_entry = min(real_price, limit_pin)
+
+            # [V29 V9-FIX 1] sl_dist now uses ideal_entry instead of real_price to correctly represent limit risk
+            sl_dist = max(abs(ideal_entry - stop_loss), 0.01)
             
             # [V20 VANGUARD] BETA-NORMALIZED RISK SIZING
             # 1. Base conviction risk
@@ -583,16 +605,9 @@ class IntradayEngine:
             beta_proxy = stock_vol / max(index_vol, 0.001)
             beta_proxy = max(0.5, min(beta_proxy, 2.5)) # Cap between 0.5x and 2.5x
             
-            risk_amount = (100000 * risk_pct) / beta_proxy  # ₹1L baseline capital
-            
-            # [V24 V3-FIX 2] Execution Edge: Pin limit orders on defensive setups
-            alpha_mode = l2_data.get("mode", "NONE")
-            ideal_entry = real_price
-            if alpha_mode == "PULLBACK":
-                ema20 = indicators.get("ema20", real_price)
-                # Cap the limit order to a max of 0.2% above the EMA20
-                limit_pin = ema20 * 1.002
-                ideal_entry = min(real_price, limit_pin)
+            # [V28 V8-FIX 2] Scale Down Capital heavily late in the day.
+            risk_amount = ((100000 * risk_pct) / beta_proxy) * time_decay_factor  # ₹1L baseline capital
+
 
             return {
                 "symbol": sym,
@@ -1028,14 +1043,15 @@ class IntradayEngine:
         if alpha_mode == "NONE" and is_near_vwap and is_trending and structure_ok:
             alpha_mode = "EARLY"; score += 45; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure", "impact": 45})
             
-        if rvol > 2.5: score += 10; reasons.append({"text": "Booster: High RVOL", "impact": 10})
-        if ema_1h_trend_up: score += 5; reasons.append({"text": "Booster: 1H Trend Up", "impact": 5})
-        
         # R5-3 FIX: Signal Confluence Boosters
         # These only fire when a valid alpha mode has been detected (EARLY/PULLBACK/MOMENTUM).
         # They CONFIRM the setup quality — they don't create phantom signals.
         # Without confluence, PULLBACK max=50 and MOMENTUM max=45, never reaching 60.
         if alpha_mode != "NONE":
+            # [V29 V9-FIX 2] Move unconditional boosters inside alpha mode guard
+            if rvol > 2.5: score += 10; reasons.append({"text": "Booster: High RVOL", "impact": 10})
+            if ema_1h_trend_up: score += 5; reasons.append({"text": "Booster: 1H Trend Up", "impact": 5})
+
             # 1. Bullish RSI Divergence: Price Lower Low but RSI Higher Low → reversal confirmation
             rsi_div = indicators.get("rsi_divergence", {})
             if rsi_div.get("type") == "Bullish":
@@ -1561,6 +1577,15 @@ class IntradayEngine:
             self.persistence_cache[sym].append({"score": res["score"], "time": datetime.utcnow()})
             # Keep only last 5 scans
             if len(self.persistence_cache[sym]) > 5: self.persistence_cache[sym].pop(0)
+
+        # [V29 V9-FIX 3] Unbounded Memory Growth (Persistence Eviction)
+        current_symbols = {res["symbol"] for res in results}
+        stale_keys = [k for k in self.persistence_cache if k not in current_symbols]
+        for k in stale_keys:
+            # Only evict if the last entry is older than 30 minutes
+            last_entry = self.persistence_cache[k][-1] if self.persistence_cache[k] else None
+            if last_entry and (datetime.utcnow() - last_entry["time"]).total_seconds() > 1800:
+                del self.persistence_cache[k]
 
         return sanitize_data({
             "total": total, 
