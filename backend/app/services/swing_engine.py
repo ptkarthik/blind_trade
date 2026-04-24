@@ -11,6 +11,7 @@ from app.services.market_discovery import market_discovery
 from app.services.ta_swing import ta_swing, safe_scalar
 from app.services.portfolio_engine import portfolio_engine
 from app.services.trade_manager import trade_manager
+from app.services.earnings_service import earnings_service
 from app.services.utils import sanitize_data
 
 logger = logging.getLogger(__name__)
@@ -242,8 +243,11 @@ class SwingEngine:
             
             ctx = ta_swing.compute_context(df_1d)
             
-            pb_result = await asyncio.to_thread(ta_swing.analyze_pullback, df_1d, nifty_20d_ret, ctx)
-            bo_result = await asyncio.to_thread(ta_swing.analyze_breakout, df_1d, nifty_20d_ret, ctx)
+            # V1.1 Swing Hardening: Query offline cache to prevent binary gap traps
+            earnings_risk = earnings_service.is_in_earnings_window(sym)
+            
+            pb_result = await asyncio.to_thread(ta_swing.analyze_pullback, df_1d, nifty_20d_ret, ctx, earnings_risk)
+            bo_result = await asyncio.to_thread(ta_swing.analyze_breakout, df_1d, nifty_20d_ret, ctx, earnings_risk)
 
             # --- Diagnostic Log: Strategy Results ---
             pb_status = "✅ MATCH" if pb_result.get("match") else f"❌ {pb_result.get('reason', 'No Match')}"
@@ -266,10 +270,10 @@ class SwingEngine:
                     bo_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.6) invalidates Breakout"
                     print(f"    🔻 {sym}: Breakout KILLED by A/D Ratio < 0.6", flush=True)
 
-            if pb_result.get("match") and self.market_context.get("ad_ratio", 1.0) < 0.5:
+            if pb_result.get("match") and self.market_context.get("ad_ratio", 1.0) < 0.35:
                 pb_result["match"] = False
-                pb_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.5) invalidates Pullback"
-                print(f"    🔻 {sym}: Pullback KILLED by A/D Ratio < 0.5", flush=True)
+                pb_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.35) invalidates Pullback"
+                print(f"    🔻 {sym}: Pullback KILLED by A/D Ratio < 0.35", flush=True)
 
             # 3. Conflict Resolution & Selection
             selected = None
@@ -311,7 +315,7 @@ class SwingEngine:
             # 4. V3 CONVICTION-WEIGHTED SCORING MATRIX (100-Point Scale)
             # ====================================================================
             conviction = selected.get("conviction", 0)
-            if conviction < 5:
+            if conviction < 3:
                 # Minimum viable product check: skip low quality setups entirely
                 return None
                 
@@ -658,15 +662,21 @@ class SwingEngine:
                 
                 # Fetch EMA 9/20 for Trailing Stops
                 from ta.trend import EMAIndicator
-                ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
-                ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
+                ema_9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
+                ema_20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
+                
+                # V1.1 Swing Hardening: Anchor trailing stops to T-1 (yesterday) to prevent intraday wicks from killing trades
+                ema_9_prev = ema_9_series.iloc[-2] if len(ema_9_series) >= 2 else ema_9_series.iloc[-1]
+                ema_20_prev = ema_20_series.iloc[-2] if len(ema_20_series) >= 2 else ema_20_series.iloc[-1]
                 
                 market_stats[sym] = {
                     "close": safe_scalar(df['close'].iloc[-1]),
                     "high": safe_scalar(df['high'].iloc[-1]),
                     "low": safe_scalar(df['low'].iloc[-1]),
-                    "ema_9": safe_scalar(ema_9),
-                    "ema_20": safe_scalar(ema_20)
+                    "ema_9": safe_scalar(ema_9_series.iloc[-1]),
+                    "ema_20": safe_scalar(ema_20_series.iloc[-1]),
+                    "ema_9_prev": safe_scalar(ema_9_prev),
+                    "ema_20_prev": safe_scalar(ema_20_prev)
                 }
             except Exception as e:
                 logger.error(f"Failed to fetch update data for {sym}: {e}")

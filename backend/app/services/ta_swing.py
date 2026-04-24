@@ -81,10 +81,13 @@ class SwingTechnicalAnalysis:
         return ctx
 
     @staticmethod
-    def analyze_pullback(df: pd.DataFrame, nifty_20d_ret: float = 0, ctx: dict = None) -> dict:
+    def analyze_pullback(df: pd.DataFrame, nifty_20d_ret: float = 0, ctx: dict = None, earnings_risk: bool = False) -> dict:
         """
         Refined Pullback Strategy: Capturing bounces at supports with flexible confirmation.
         """
+        if earnings_risk:
+             return {"match": False, "reason": "Binary Earnings Gap Risk (Within 3 days)", "gap_filter_passed": False}
+             
         if ctx is None:
             ctx = SwingTechnicalAnalysis.compute_context(df)
         if df.empty or len(df) < 60:
@@ -94,8 +97,9 @@ class SwingTechnicalAnalysis:
         prev = df.iloc[-2]
         
         # --- Corporate Action / Gap Risk Filter ---
-        gap_pct = ((safe_scalar(latest['open']) - safe_scalar(prev['close'])) / safe_scalar(prev['close'])) * 100
-        if gap_pct > 3 or gap_pct < -10:
+        gap_pct = ((safe_scalar(latest['open']) - safe_scalar(prev['close'])) / max(safe_scalar(prev['close']), 0.01)) * 100
+        # V1.1 Swing Hardening: Raised gap tolerance to 5% for pullbacks (allow strong reversals)
+        if gap_pct > 5 or gap_pct < -10:
              return {"match": False, "reason": f"Gap Risk / Corp Action ({round(gap_pct, 1)}%)", "gap_filter_passed": False}
         
         _close = latest['close']
@@ -105,7 +109,8 @@ class SwingTechnicalAnalysis:
         stock_20d_price = safe_scalar(df['close'].iloc[-21] if len(df) >= 21 else df['close'].iloc[0])
         stock_20d_ret = ((close / stock_20d_price) - 1) * 100 if stock_20d_price > 0 else 0
         
-        if stock_20d_ret <= nifty_20d_ret:
+        # V1.1 Swing Hardening: Allowed -5.0% buffer for VCP / base building during index rallies
+        if stock_20d_ret <= (nifty_20d_ret - 5.0):
              return {"match": False, "reason": f"Underperforming Nifty ({round(stock_20d_ret, 1)}% vs {round(nifty_20d_ret, 1)}%)", "relative_strength": "UNDERPERFORM"}
 
         # --- Pullback Quality Constraint (Drawdown < 12%) ---
@@ -115,14 +120,19 @@ class SwingTechnicalAnalysis:
         if drawdown_pct > 12:
              return {"match": False, "reason": f"Deep Correction ({round(drawdown_pct, 1)}% > 12%)", "pullback_quality": "DEEP"}
 
-        # --- V3.2: MTF Weekly Structure Gate ---
+        # --- V3.2: MTF Weekly Structure Gate (Softened to Conviction Modifier) ---
+        mtf_penalty = False
         if ctx.get('mtf_enabled'):
             w_ema_20_series = ctx.get('w_ema_20')
             if w_ema_20_series is not None and not w_ema_20_series.dropna().empty:
                 w_ema_20 = safe_scalar(w_ema_20_series.dropna().iloc[-1])
-                # Reject pullback if Daily close is below the Weekly EMA 20 (Weekly structure broken)
                 if w_ema_20 > 0 and close < w_ema_20:
-                    return {"match": False, "reason": f"MTF Rejection: Weekly Structure Broken (Close {close} < W-EMA20 {round(w_ema_20,1)})"}
+                    # Hard reject only if > 5% below weekly EMA (structural collapse)
+                    gap_from_weekly = ((w_ema_20 - close) / w_ema_20) * 100
+                    if gap_from_weekly > 5.0:
+                        return {"match": False, "reason": f"MTF Rejection: Weekly Structure Broken ({round(gap_from_weekly,1)}% below W-EMA20)"}
+                    # 0-5% below: Soft penalty (conviction deduction)
+                    mtf_penalty = True
 
         reasons = []
 
@@ -132,7 +142,7 @@ class SwingTechnicalAnalysis:
         _sma_200_series = ctx['sma_200']
         
         sma_50 = safe_scalar(_sma_50_series.iloc[-1])
-        sma_50_prev = safe_scalar(_sma_50_series.iloc[-2])
+        sma_50_prev = safe_scalar(_sma_50_series.iloc[-6]) if len(_sma_50_series) >= 6 else safe_scalar(_sma_50_series.iloc[-2])
         
         # SMA 200 is optional — if data is truncated (< 200 candles), skip the SMA 200 check
         _sma_200_series = ctx['sma_200']
@@ -151,15 +161,30 @@ class SwingTechnicalAnalysis:
             
         reasons.append({"text": "Strong Uptrend (SMA 50 Slope +)", "type": "positive", "label": "TREND", "value": "BULLISH"})
 
-        # 2. Adaptive Support Zones (Wider: EMA20 ±3.5%, SMA50 ±5.0%)
+        # 2. Adaptive Support Zones (V1.1: strict pierce and close-hold logic)
         _ema_20 = ctx['ema_20'].iloc[-1]
         ema_20 = safe_scalar(_ema_20)
         
-        ema_20_bounce = (ema_20 * 0.965) <= close <= (ema_20 * 1.035)
-        sma_50_bounce = (sma_50 * 0.95) <= close <= (sma_50 * 1.05)
+        # 3-Day Lookback for Support Touch
+        ema_20_touched = False
+        sma_50_touched = False
+        if len(df) >= 3:
+            for i in range(-3, 0):
+                l_low = safe_scalar(df['low'].iloc[i])
+                ema_20_i = safe_scalar(ctx['ema_20'].iloc[i])
+                sma_50_i = safe_scalar(ctx['sma_50'].iloc[i])
+                if l_low <= (ema_20_i * 1.03): ema_20_touched = True
+                if l_low <= (sma_50_i * 1.035): sma_50_touched = True
+        else:
+            c_l = safe_scalar(latest['low'])
+            ema_20_touched = (c_l <= (ema_20 * 1.03))
+            sma_50_touched = (c_l <= (sma_50 * 1.035))
+        
+        ema_20_bounce = ema_20_touched and (close >= (ema_20 * 0.99))
+        sma_50_bounce = sma_50_touched and (close >= (sma_50 * 0.99))
         
         if not (ema_20_bounce or sma_50_bounce):
-            return {"match": False, "reason": "Outside Support Zones (EMA20 3.5% / SMA50 5%)"}
+            return {"match": False, "reason": "Did not touch/hold Support Zone cleanly in last 3 days"}
             
         bounce_target = "EMA 20" if ema_20_bounce else "SMA 50"
         reasons.append({"text": f"Support Bounce ({bounce_target})", "type": "positive", "label": "ZONE", "value": bounce_target})
@@ -174,7 +199,7 @@ class SwingTechnicalAnalysis:
         c_range = c_h - c_l
         if c_range > 0:
             close_pos = (c_c - c_l) / c_range
-            if close_pos < 0.7: # Not in top 30%
+            if close_pos < 0.5: # Not in top 50%
                 return {"match": False, "reason": f"Weak Close ({round(close_pos*100)}% of range)"}
         
         # Pattern Detection
@@ -219,10 +244,9 @@ class SwingTechnicalAnalysis:
         # Rule 2: Structural Pivot — today's high must pierce yesterday's high
         prev_high = safe_scalar(prev['high'])
         is_pivot = c_h > prev_high
-        if not is_pivot:
-            return {"match": False, "reason": f"No Structural Pivot (H:{round(c_h,1)} <= PrevH:{round(prev_high,1)})"}
         
-        reasons.append({"text": "Turnaround Confirmed (Green + Pivot)", "type": "positive", "label": "TURNAROUND", "value": "CONFIRMED"})
+        reasons.append({"text": "Turnaround Confirmed (Green)", "type": "positive", "label": "TURNAROUND", "value": "CONFIRMED"})
+        if is_pivot: reasons.append({"text": "Structural Pivot (+)", "type": "positive", "label": "PIVOT", "value": "Yes"})
         reasons.append({"text": f"Patterns: {', '.join(patterns[:2])}", "type": "positive", "label": "CANDLE", "value": "Confirmed"})
 
         # 4. RSI Setup Mapping (30-70)
@@ -299,7 +323,11 @@ class SwingTechnicalAnalysis:
         if adx >= 25: conviction += 1
         if is_pin or is_engulfing: conviction += 2
         if is_inside_break: conviction += 1
-        # Range: 0-10
+        if is_pivot: conviction += 1
+        # MTF penalty: deduct 2 points if weekly structure is broken but within tolerance
+        if mtf_penalty: conviction -= 2
+        conviction = max(0, conviction)
+        # Range: 0-11
         
         return {
             "match": True,
@@ -326,10 +354,13 @@ class SwingTechnicalAnalysis:
         }
 
     @staticmethod
-    def analyze_breakout(df: pd.DataFrame, nifty_20d_ret: float = 0, ctx: dict = None) -> dict:
+    def analyze_breakout(df: pd.DataFrame, nifty_20d_ret: float = 0, ctx: dict = None, earnings_risk: bool = False) -> dict:
         """
         Momentum Breakout Strategy: Capturing clear breaches of 20-day highs in bullish trends.
         """
+        if earnings_risk:
+             return {"match": False, "reason": "Binary Earnings Gap Risk (Within 3 days)", "gap_filter_passed": False}
+
         if ctx is None:
             ctx = SwingTechnicalAnalysis.compute_context(df)
         if df.empty or len(df) < 50:
@@ -339,8 +370,9 @@ class SwingTechnicalAnalysis:
         prev = df.iloc[-2]
         
         # --- Corporate Action / Gap Risk Filter ---
-        gap_pct = ((safe_scalar(latest['open']) - safe_scalar(prev['close'])) / safe_scalar(prev['close'])) * 100
-        if gap_pct > 3 or gap_pct < -10:
+        gap_pct = ((safe_scalar(latest['open']) - safe_scalar(prev['close'])) / max(safe_scalar(prev['close']), 0.01)) * 100
+        # V1.1 Swing Hardening: Raised breakout gap filter from 3% to 8% to catch professional breakaway gaps
+        if gap_pct > 8 or gap_pct < -10:
              return {"match": False, "reason": f"Gap Risk / Corp Action ({round(gap_pct, 1)}%)", "gap_filter_passed": False}
              
         c_c = safe_scalar(latest['close'])
@@ -349,15 +381,28 @@ class SwingTechnicalAnalysis:
         stock_20d_price = safe_scalar(df['close'].iloc[-21] if len(df) >= 21 else df['close'].iloc[0])
         stock_20d_ret = ((c_c / stock_20d_price) - 1) * 100 if stock_20d_price > 0 else 0
         
-        if stock_20d_ret <= nifty_20d_ret:
+        # V1.1 Swing Hardening: Allow -5.0% buffer for VCP flat-base breakouts
+        if stock_20d_ret <= (nifty_20d_ret - 5.0):
              return {"match": False, "reason": f"Underperforming Nifty ({round(stock_20d_ret, 1)}% vs {round(nifty_20d_ret, 1)}%)", "relative_strength": "UNDERPERFORM"}
 
-        # 1. Price Confirmation: Breakout of 20-day high
-        high_20 = safe_scalar(df['high'].iloc[-21:-1].max())
-        is_breakout = c_c > high_20
+        # 1. Price Confirmation: Breakout of 20-day high (3-day lookback)
+        is_breakout = False
+        high_20_val = 0.0
+        if len(df) >= 21:
+            # Check last 3 days (including today) for a breakout
+            for i in range(-3, 0):
+                end_idx = len(df) + i
+                start_idx = end_idx - 20
+                if start_idx < 0: start_idx = 0
+                past_high_20 = safe_scalar(df['high'].iloc[start_idx:end_idx].max())
+                past_close = safe_scalar(df['close'].iloc[i])
+                if past_close > past_high_20 and c_c > past_high_20:
+                    is_breakout = True
+                    high_20_val = past_high_20
+                    break
         
         if not is_breakout:
-            return {"match": False, "reason": f"Close ({c_c}) below 20D High ({high_20})"}
+            return {"match": False, "reason": f"Close ({c_c}) did not hold above recent 20D High"}
             
         reasons = [{"text": "Fresh 20-Day Breakout", "type": "positive", "label": "BREAKOUT", "value": "CONFIRMED"}]
 
@@ -367,7 +412,7 @@ class SwingTechnicalAnalysis:
         
         _sma50_s = ctx['sma_50']
         sma50 = safe_scalar(_sma50_s.iloc[-1])
-        sma50_prev = safe_scalar(_sma50_s.iloc[-2])
+        sma50_prev = safe_scalar(_sma50_s.iloc[-6]) if len(_sma50_s) >= 6 else safe_scalar(_sma50_s.iloc[-2])
         
         if rsi < 60:
             return {"match": False, "reason": f"Insufficient RSI Momentum ({round(rsi,1)} < 60)"}
@@ -381,14 +426,17 @@ class SwingTechnicalAnalysis:
             if sma150 > 0 and c_c < sma150:
                 return {"match": False, "reason": "Counter Macro-Trend (Below SMA 150 Proxy)"}
 
-        # --- V3.2: MTF Weekly Structure Gate (Breakout) ---
+        # --- V3.2: MTF Weekly Structure Gate (Softened to Conviction Modifier for Breakout) ---
+        bo_mtf_penalty = False
         if ctx.get('mtf_enabled'):
             w_sma_50_series = ctx.get('w_sma_50')
             if w_sma_50_series is not None and not w_sma_50_series.dropna().empty:
                 w_sma_50 = safe_scalar(w_sma_50_series.dropna().iloc[-1])
-                # Reject breakout if Daily close is below the Weekly SMA 50
                 if w_sma_50 > 0 and c_c < w_sma_50:
-                    return {"match": False, "reason": f"MTF Rejection: Counter Weekly Trend (Close {c_c} < W-SMA50 {round(w_sma_50,1)})"}
+                    gap_from_weekly = ((w_sma_50 - c_c) / w_sma_50) * 100
+                    if gap_from_weekly > 5.0:
+                        return {"match": False, "reason": f"MTF Rejection: Counter Weekly Trend ({round(gap_from_weekly,1)}% below W-SMA50)"}
+                    bo_mtf_penalty = True
 
             
         # --- Volatility Contraction Pattern (VCP) Squeeze Filter ---
@@ -413,18 +461,19 @@ class SwingTechnicalAnalysis:
 
         reasons.append({"text": "Bullish Momentum Supported", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
-        # 3. Volume Spike (Extremely strict: >2.5x volume required to prevent false breakouts)
+        # 3. Volume Spike 
+        # V1.1 Swing Hardening: Dropped highly restrictive >2.5x req to >1.8x to allow large/mid-cap institutional flow
         vol_s = ctx['vol_s']
         vol_ma = ctx['vol_ma'].iloc[-1]
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
         
-        if vol_ratio < 2.5:
-             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 2.5x min)"}
+        if vol_ratio < 1.8:
+             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.8x min)"}
 
         # --- Round 2: ADX Trending Market Check ---
         adx = safe_scalar(ctx['adx'].iloc[-1])
-        if adx < 25:
-             return {"match": False, "reason": f"Low Trend Momentum (ADX {round(adx,1)} < 25)"}
+        if adx < 20:
+             return {"match": False, "reason": f"Low Trend Momentum (ADX {round(adx,1)} < 20)"}
              
         # --- Round 2: On-Balance Volume (OBV) Accumulation Check ---
         obv_s = ctx['obv']
@@ -453,12 +502,12 @@ class SwingTechnicalAnalysis:
         
         reasons.append({"text": f"MACD Bullish{' (Expanding)' if macd_expanding else ''}", "type": "positive", "label": "MACD", "value": "CONFIRMED"})
 
-        # 4. Candle Strength (Top 30%)
+        # 4. Candle Strength (Top 50%)
         c_h = safe_scalar(latest['high'])
         c_l = safe_scalar(latest['low'])
         c_range = c_h - c_l
         close_pos = (c_c - c_l) / c_range if c_range > 0 else 1.0
-        if close_pos < 0.7:
+        if close_pos < 0.5:
             return {"match": False, "reason": "Weak Breakout Close (Profit taking in wicks)"}
 
         # --- V3: Adaptive ATR Stop & Target ---
@@ -484,11 +533,15 @@ class SwingTechnicalAnalysis:
         if macd_bullish: conviction += 2
         if macd_expanding: conviction += 1
         if obv_rising: conviction += 2
-        if vol_ratio > 2.0: conviction += 2
-        elif vol_ratio > 1.5: conviction += 1
+        # V1.1 Score mapping adjusted for new volume floor
+        if vol_ratio >= 2.5: conviction += 2
+        elif vol_ratio >= 1.8: conviction += 1
         if adx >= 30: conviction += 1
         if is_squeeze_breakout: conviction += 2
         if close_pos > 0.85: conviction += 1  # Very strong close
+        # MTF penalty for breakout
+        if bo_mtf_penalty: conviction -= 2
+        conviction = max(0, conviction)
         # Range: 0-12
         
         # Determine setup quality
