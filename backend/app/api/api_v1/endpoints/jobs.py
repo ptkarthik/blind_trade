@@ -289,3 +289,21 @@ async def get_job_results(job_id: str, db: AsyncSession = Depends(get_db)):
         return job.result["data"]
     
     return job.result
+
+@router.post("/sync_earnings_calendar")
+async def sync_earnings_calendar(background_tasks: BackgroundTasks):
+    """
+    Manually triggers a background sync of the Earnings Calendar.
+    """
+    from app.services.market_data import market_data
+    from app.services.earnings_service import earnings_service
+
+    if not market_data.stock_master:
+        await market_data.initialize()
+        
+    symbols = [item["symbol"] for item in market_data.stock_master]
+    
+    background_tasks.add_task(earnings_service.update_cache, symbols)
+    
+    return {"status": "Earnings sync started in background", "symbols_queued": len(symbols)}
+

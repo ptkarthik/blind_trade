@@ -266,11 +266,11 @@ class TradeManager:
                         f"Sold 50%. New Qty: {new_qty}. SL protected at {trade['stop_loss']}.")
 
         # 3. Dynamic Trailing Stop (Post-Partial Exit)
-        # If we have reached our first target, we trail with EMA 9 to capture the 'run'
+        # V1.1 Swing Hardening: Anchor to T-1 (ema_9_prev) to avoid intraday whipsaws during volatility
         if trade.get("partial_exit_done"):
-            ema_9 = latest_ohlc.get("ema_9")
-            if ema_9:
-                self.update_trailing_stop(trade, ema_9)
+            ema_9_prev = latest_ohlc.get("ema_9_prev")
+            if ema_9_prev:
+                self.update_trailing_stop(trade, ema_9_prev)
 
     def update_trailing_stop(self, trade: Dict[str, Any], ema_value: float):
         """
@@ -421,6 +421,13 @@ class TradeManager:
 
         self.trade_history.append(trade)
         self.active_trades = [t for t in self.active_trades if t["symbol"] != symbol]
+        
+        # V1.1 Swing Hardening: Sync realized PnL back to Portfolio Engine NAV
+        try:
+            from app.services.portfolio_engine import portfolio_engine
+            portfolio_engine.add_realized_pnl(pnl)
+        except Exception as e:
+            logger.error(f"Failed to sync NAV after closing {symbol}: {e}")
         
         logger.info(f"📉 Trade Manager: Closed {symbol} at {exit_price}. Reason: {reason}. "
                     f"P&L: {trade['pnl_percentage']}% | R-Multiple: {trade['r_multiple']}")

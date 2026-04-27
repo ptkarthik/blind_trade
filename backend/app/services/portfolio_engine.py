@@ -210,6 +210,14 @@ class PortfolioEngine:
         else:
             logger.warning(f"⚠️ Position in {symbol} already exists in portfolio.")
 
+    def add_realized_pnl(self, realized_amount: float):
+        """
+        Dynamically updates the base capital from closed trades (compounding NAV).
+        """
+        old_capital = self.total_capital
+        self.total_capital += realized_amount
+        logger.info(f"🔄 Portfolio Engine NAV Update: PnL {round(realized_amount, 2)} applied. New Total Capital: {round(self.total_capital, 2)} (was {round(old_capital, 2)}).")
+
     def sync_active_positions(self, active_trades: List[Dict[str, Any]]):
         """
         Syncs internal tracking with the TradeManager's active list (usually on startup).
