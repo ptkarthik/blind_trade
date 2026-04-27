@@ -77,13 +77,12 @@ async def get_todays_signals(
         if job_id:
             valid_job = await db.get(Job, job_id)
         else:
-            # SMARTER PICK: Favor processing jobs first, then the most recently updated
+            # SMARTER PICK: Only pick 'completed' jobs by default to avoid UI wiping while background scans are running.
             query = select(Job).where(
                 Job.type == job_type, 
-                Job.status.in_(["completed", "processing", "stopped"]),
+                Job.status == "completed",
                 Job.created_at >= since
             ).order_by(
-                desc(Job.status == "processing"),
                 Job.updated_at.desc()
             ).limit(1)
             res = await db.execute(query)
@@ -138,11 +137,10 @@ async def get_sector_signals(
         else:
             query = select(Job).where(
                 Job.type == job_type, 
-                Job.status.in_(["completed", "processing", "stopped"]),
+                Job.status == "completed",
                 Job.created_at >= (datetime.utcnow() - timedelta(hours=24))
             ).order_by(
-                desc(Job.status == "processing"),
-                Job.created_at.desc()
+                Job.updated_at.desc()
             ).limit(1)
             res = await db.execute(query)
             valid_job = res.scalars().first()
