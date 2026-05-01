@@ -58,6 +58,56 @@ class LiquidityService:
     def get_benchmark_vol(self, symbol: str, time_bucket: str) -> float:
         return self.benchmarks.get(symbol, {}).get(time_bucket, 0)
 
+    def build_time_benchmarks_from_15m(self, batch_15m_data: dict):
+        """[V31 GAP#1 FIX] Build per-time-bucket volume benchmarks from 15m batch data.
+        
+        This is called during intraday scan with the already-fetched 15m OHLCV.
+        Groups volume by HH:MM time bucket to give accurate time-of-day baselines.
+        Without this, RVOL fallback divides ADV20/candles_per_session which doesn't
+        account for opening surge (9:15-9:30 vol is 3-5x midday volume).
+        """
+        if not batch_15m_data:
+            return
+        
+        built_count = 0
+        for symbol, df in batch_15m_data.items():
+            if df is None or not hasattr(df, 'index') or df.empty:
+                continue
+            # Skip if already has benchmarks (avoid overwriting with partial data)
+            if symbol in self.benchmarks and len(self.benchmarks[symbol]) >= 10:
+                continue
+            try:
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    continue
+                
+                # Convert to IST for correct time bucketing
+                idx = df.index
+                if idx.tz is None:
+                    ist_times = idx + pd.Timedelta(hours=5, minutes=30)
+                else:
+                    try:
+                        ist_times = idx.tz_convert('Asia/Kolkata')
+                    except Exception:
+                        ist_times = idx
+                
+                time_buckets = ist_times.strftime('%H:%M')
+                vol_series = df['volume']
+                if isinstance(vol_series, pd.DataFrame):
+                    vol_series = vol_series.iloc[:, 0]
+                
+                # Group by time bucket and take median
+                bucket_df = pd.DataFrame({'bucket': time_buckets, 'volume': vol_series.values})
+                benchmarks = bucket_df.groupby('bucket')['volume'].median().to_dict()
+                
+                if benchmarks:
+                    self.benchmarks[symbol] = {k: round(float(v), 0) for k, v in benchmarks.items()}
+                    built_count += 1
+            except Exception:
+                continue
+        
+        if built_count > 0:
+            self._save_cache()
+
     def classify_liquidity(self, adv, price=0.0, turnover_3d=0.0):
         # FIX #4/V17: Multi-Day Persistence Liquidity (Turnover in Crores)
         # Turnover Persistence: We use the minimum of (ADV20 x Price) and 3-day avg Turnover

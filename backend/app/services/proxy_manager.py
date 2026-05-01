@@ -142,7 +142,12 @@ class ProxyManager:
             try:
                 resp = requests.get(target_url, proxies={"http": proxy, "https": proxy}, timeout=5, verify=True)
                 if resp.status_code == 200:
-                    return proxy
+                    try:
+                        body = resp.json()
+                        if body.get("chart", {}).get("result") and body["chart"]["result"][0].get("timestamp"):
+                            return proxy
+                    except Exception:
+                        pass
             except:
                 pass
             return None

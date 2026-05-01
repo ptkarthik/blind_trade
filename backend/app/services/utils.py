@@ -19,8 +19,8 @@ def sanitize_data(data):
         # Deep Sanitization: SQLite and JSON serialisers fail on inf/nan
         if math.isnan(data) or math.isinf(data):
             return 0.0
-        # Round to 2 decimals for significant space saving in large JSON results
-        return round(float(data), 2)
+        # Use 4 decimals for small values, 2 for large
+        return round(float(data), 4 if abs(data) < 1.0 else 2)
     return data
 
 # NSE 500 / Full Market List (Placeholder for now - intended to be dynamic)

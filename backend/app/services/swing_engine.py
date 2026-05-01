@@ -169,7 +169,7 @@ class SwingEngine:
                 session = _make_session(ua)
                 try:
                     def _fetch_proxy():
-                        return yf.Ticker(sym, session=session, proxy=proxy).history(period=period, interval=interval)
+                        return yf.Ticker(sym).history(period=period, interval=interval, proxy=proxy)
                     df = await asyncio.to_thread(_fetch_proxy)
                     if df is not None and not df.empty:
                         df.columns = [c.lower() for c in df.columns]
@@ -184,7 +184,7 @@ class SwingEngine:
             session = _make_session(ua)
             try:
                 def _fetch_direct():
-                    return yf.Ticker(sym, session=session).history(period=period, interval=interval)
+                    return yf.Ticker(sym).history(period=period, interval=interval)
                 df = await asyncio.to_thread(_fetch_direct)
                 if df is not None and not df.empty:
                     df.columns = [c.lower() for c in df.columns]

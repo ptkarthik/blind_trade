@@ -14,17 +14,34 @@ class WorkerLock:
         """
         Attempts to acquire a lock by writing the current PID to a file.
         Returns True if successful, False if another process is already running.
+        [V30 FIX] Hardened against PID reuse race condition on Windows.
         """
         if os.path.exists(self.lock_file):
             try:
                 with open(self.lock_file, "r") as f:
-                    old_pid = int(f.read().strip())
-                
-                # Check if the process is actually running
-                if self._is_pid_running(old_pid):
-                    return False
+                    content = f.read().strip()
+                    if not content:
+                        # Empty lock file = stale, force acquire
+                        pass
+                    else:
+                        old_pid = int(content)
+                        
+                        # [V30] Skip check if the old PID is our OWN PID (restart scenario)
+                        if old_pid == os.getpid():
+                            pass
+                        elif self._is_pid_running(old_pid) and self._is_python_process(old_pid):
+                            # Only block if the old PID is BOTH alive AND a Python process
+                            # This prevents false positives from Windows PID reuse where
+                            # the new backend API inherits the old worker's PID
+                            return False
             except (ValueError, OSError):
                 # File corrupted or something else, treat as no lock
+                pass
+            
+            # If we reach here, the old lock is stale — remove it
+            try:
+                os.remove(self.lock_file)
+            except OSError:
                 pass
 
         # Acquire lock
@@ -69,3 +86,27 @@ class WorkerLock:
                 return True
             except OSError:
                 return False
+
+    def _is_python_process(self, pid):
+        """[V30] Verify the process at this PID is actually a Python process.
+        Prevents false-positive lock blocking from PID reuse by other programs."""
+        if pid <= 0: return False
+        if sys.platform == "win32":
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['tasklist', '/FI', f'PID eq {pid}', '/FO', 'CSV', '/NH'],
+                    capture_output=True, text=True, timeout=3
+                )
+                output = result.stdout.lower()
+                return 'python' in output
+            except Exception:
+                # If we can't verify, assume it IS python (safe fallback)
+                return True
+        else:
+            try:
+                with open(f'/proc/{pid}/cmdline', 'r') as f:
+                    cmdline = f.read().lower()
+                    return 'python' in cmdline
+            except Exception:
+                return True

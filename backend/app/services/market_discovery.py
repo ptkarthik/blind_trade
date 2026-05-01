@@ -41,7 +41,8 @@ class MarketDiscoveryService:
                     stocks.append({
                         "symbol": f"{symbol}.NS",
                         "name": name,
-                        "raw_symbol": symbol
+                        "raw_symbol": symbol,
+                        "industry": str(row.get(' INDUSTRY', 'General')).strip()
                     })
             # [V26 V6-FIX 2] KITE MARGIN FILTER (Scrub Intraday Blocked EQ Stocks)
             try:
@@ -83,7 +84,9 @@ class MarketDiscoveryService:
             if (time.time() - mtime) < self.CACHE_DURATION:
                 try:
                     with open(self.cache_file, "r") as f:
-                        return json.load(f)
+                        cached = json.load(f)
+                    # [V31 GAP#14] Apply dead stock filter even on cached list
+                    return self._filter_dead_stocks(cached)
                 except: pass
         
         # 2. Fetch Fresh
@@ -98,8 +101,62 @@ class MarketDiscoveryService:
                     json.dump(stocks, f, indent=4)
             except Exception as e:
                 print(f"MarketDiscovery: Cache save failed: {e}")
-            return stocks
+            
+            # [V31 GAP#14] Filter dead stocks before returning
+            return self._filter_dead_stocks(stocks)
             
         return []
+    
+    def _filter_dead_stocks(self, stocks: List[Dict]) -> List[Dict]:
+        """[V31 GAP#14] Remove suspended/dead stocks using liquidity cache.
+        
+        Stocks that returned zero ADV20 in prior scans are almost certainly
+        suspended, delisted, or under ASM/GSM restrictions. Scanning them
+        wastes ~10s each (timeout) and never produces signals.
+        """
+        try:
+            # Load liquidity cache to check for known dead stocks
+            liq_cache_path = os.path.join(self.cache_dir, "liquidity_master.json")
+            if not os.path.exists(liq_cache_path):
+                return stocks  # No prior data, can't filter
+            
+            import json
+            with open(liq_cache_path, "r") as f:
+                liq_data = json.load(f)
+            
+            if not liq_data:
+                return stocks
+            
+            original_count = len(stocks)
+            filtered = []
+            removed_count = 0
+            
+            for stock in stocks:
+                sym = stock.get("symbol", "")
+                liq = liq_data.get(sym, {})
+                adv20 = liq.get("adv20", -1)  # -1 means never scanned (keep it)
+                
+                # Remove only stocks that were scanned AND returned zero volume
+                # adv20 == 0 means Yahoo returned data but volume was 0 = suspended
+                if adv20 == 0:
+                    removed_count += 1
+                    continue
+                
+                # Also remove stocks with extremely low turnover (< ₹10L daily)
+                # These can't be traded intraday without major slippage
+                level = liq.get("level", "Unknown")
+                if level == "Very Low" and adv20 > 0:
+                    removed_count += 1
+                    continue
+                
+                filtered.append(stock)
+            
+            if removed_count > 0:
+                print(f"🧹 [GAP#14] Filtered {removed_count} dead/illiquid stocks ({original_count} → {len(filtered)})")
+            
+            return filtered
+        except Exception as e:
+            print(f"⚠️ MarketDiscovery: Dead stock filter failed: {e}")
+            return stocks  # Fail-open: return all stocks if filter crashes
 
 market_discovery = MarketDiscoveryService()

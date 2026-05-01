@@ -100,9 +100,11 @@ class PaperMonitor:
                             logger.info(f"🧹 [PAPER] {trade.symbol} Stale Position (from {trade_ist_date}) purged at {current_price}")
 
                         # 2. ADVANCED EXIT EVALUATION (V24 FIX #8)
-                        # Instead of just basic SL/TP, use the engine's evaluate_exit for trailing stops, time decay, and structural breakdown
+                        # Instead of just basic SL/TP, use the engine's evaluate_exit
                         elif not is_eod_time:
-                            # Fetch 15m data required for advanced evaluation
+                            # Dynamic inference of Short constraints
+                            is_short_pos = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+                            
                             try:
                                 df_15m = await asyncio.wait_for(market_service.get_ohlc(trade.symbol, period="2d", interval="15m"), timeout=5.0)
                                 exit_eval = await intraday_engine.evaluate_exit(
@@ -111,7 +113,8 @@ class PaperMonitor:
                                     stop_loss=trade.stop_loss,
                                     target=trade.target,
                                     df_15m=df_15m,
-                                    entry_time=trade.buy_time
+                                    entry_time=trade.buy_time,
+                                    is_short=is_short_pos
                                 )
                                 
                                 if exit_eval["action"] in ["EXIT", "PARTIAL_EXIT"]:
@@ -120,20 +123,27 @@ class PaperMonitor:
                                     logger.info(f"🧠 [PAPER] {trade.symbol} Advanced Exit: {reason}")
                                 elif exit_eval["action"] == "TRAIL_STOP":
                                     new_stop = exit_eval.get("new_stop")
-                                    if new_stop and new_stop > trade.stop_loss:
-                                        trade.stop_loss = new_stop
-                                        logger.info(f"🛡️ [PAPER] {trade.symbol} Trailing Stop updated to {new_stop}")
+                                    if new_stop:
+                                        # Protect trail update validity based on direction
+                                        valid_trail = (new_stop < trade.stop_loss) if is_short_pos else (new_stop > trade.stop_loss)
+                                        if valid_trail:
+                                            trade.stop_loss = new_stop
+                                            logger.info(f"🛡️ [PAPER] {trade.symbol} Trailing Stop updated to {new_stop}")
                             except Exception as e:
                                 logger.error(f"Advanced Exit Eval Failed for {trade.symbol}: {e}")
                                 # Fallback to basic SL/TP if data fetch fails
-                                if trade.stop_loss and current_price <= trade.stop_loss:
-                                    close_it = True
-                                    reason = "STOP_LOSS"
-                                    logger.info(f"🚨 [PAPER] {trade.symbol} SL hit at {current_price} (SL: {trade.stop_loss})")
-                                elif trade.target and current_price >= trade.target:
-                                    close_it = True
-                                    reason = "TARGET"
-                                    logger.info(f"🎯 [PAPER] {trade.symbol} Target hit at {current_price} (Tgt: {trade.target})")
+                                if trade.stop_loss:
+                                    sl_hit = current_price >= trade.stop_loss if is_short_pos else current_price <= trade.stop_loss
+                                    if sl_hit:
+                                        close_it = True
+                                        reason = "STOP_LOSS"
+                                        logger.info(f"🚨 [PAPER] {trade.symbol} SL hit at {current_price} (SL: {trade.stop_loss})")
+                                if not close_it and trade.target:
+                                    tgt_hit = current_price <= trade.target if is_short_pos else current_price >= trade.target
+                                    if tgt_hit:
+                                        close_it = True
+                                        reason = "TARGET"
+                                        logger.info(f"🎯 [PAPER] {trade.symbol} Target hit at {current_price} (Tgt: {trade.target})")
 
                         # 3. EOD EXIT (Late Afternoon)
                         elif is_eod_time and trade.product_type == "MIS":
@@ -166,9 +176,14 @@ class PaperMonitor:
         account = acc_res.scalars().first()
         
         if account:
-            # We assume long positions for now as per PaperTrade model triggers
-            proceeds = trade.qty * price
-            pnl = proceeds - (trade.qty * trade.buy_price)
+            is_short_log = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+            
+            if is_short_log:
+                pnl = (trade.buy_price - price) * trade.qty
+                proceeds = (trade.buy_price * trade.qty) + pnl
+            else:
+                proceeds = trade.qty * price
+                pnl = proceeds - (trade.qty * trade.buy_price)
             
             account.balance += proceeds
             account.total_pnl += pnl

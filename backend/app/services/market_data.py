@@ -94,6 +94,22 @@ class MarketDataService:
             "PHAR": "Pharma", "SUNPHARMA": "Pharma", "DRREDDY": "Pharma", "CIPLA": "Pharma",
             "METAL": "Metal", "TATASTEEL": "Metal", "JSWSTEEL": "Metal", "HINDALCO": "Metal"
         }
+        
+        # Load dynamic industry data from cache if available
+        import json, os
+        cache_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "nse_market_list.json")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path) as f:
+                    stocks = json.load(f)
+                for s in stocks:
+                    raw = s.get("raw_symbol", "").upper()
+                    industry = s.get("industry", "General")
+                    if raw and industry != "General":
+                        self.SECTOR_MAP[raw] = industry
+            except Exception:
+                pass
+
         self.INDEX_MAP = {
             "Banking": "^NSEBANK", "IT": "^CNXIT", "Auto": "^CNXAUTO", "Energy": "^CNXENERGY",
             "FMCG": "^CNXFMCG", "Infrastructure": "^CNXINFRA", "Pharma": "^CNXPHARMA", "Metal": "^CNXMETAL"
@@ -274,8 +290,8 @@ class MarketDataService:
         if not proxy: return {"price": 0, "source": "Failed"}
         try:
             def _try():
-                t = yf.Ticker(symbol, proxy=proxy)
-                h = t.history(period="1d")
+                t = yf.Ticker(symbol)
+                h = t.history(period="1d", proxy=proxy)
                 return h['Close'].iloc[-1]
             p = await asyncio.to_thread(_try)
             return {"symbol": symbol, "price": p, "source": "Yahoo Proxy"}
@@ -294,7 +310,9 @@ class MarketDataService:
             # [V18 FIX #10] Use IST timezone, not server local time
             import pytz
             ist_now = datetime.now(pytz.timezone('Asia/Kolkata'))
-            status = "OPEN" if ist_now.strftime("%H:%M") < "15:35" else "CLOSED"
+            is_weekday = ist_now.weekday() < 5
+            current_time = ist_now.strftime("%H:%M")
+            status = "OPEN" if is_weekday and "09:15" <= current_time <= "15:30" else "CLOSED"
             return {
                 "status": status,
                 "nifty_50": ctx.get("price", 0.0),
@@ -310,7 +328,7 @@ class MarketDataService:
         proxy = await proxy_manager.get_proxy()
         try:
             def _fetch(): 
-                return yf.Ticker(symbol, proxy=proxy, session=self.session).history(period=period, interval=interval)
+                return yf.Ticker(symbol).history(period=period, interval=interval, proxy=proxy)
             df = await asyncio.to_thread(_fetch)
             if df is not None and not df.empty:
                 df.columns = [c.lower() for c in df.columns]

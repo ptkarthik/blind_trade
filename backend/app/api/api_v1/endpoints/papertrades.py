@@ -158,8 +158,14 @@ async def close_paper_trade(trade_id: str, close_data: dict = Body(None), db: As
     
     # Update account balance and P&L
     account = await get_or_create_account(db)
-    proceeds = trade.qty * current_val
-    pnl = proceeds - (trade.qty * trade.buy_price)
+    
+    is_short_log = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+    if is_short_log:
+        pnl = (trade.buy_price - current_val) * trade.qty
+        proceeds = (trade.buy_price * trade.qty) + pnl
+    else:
+        proceeds = trade.qty * current_val
+        pnl = proceeds - (trade.qty * trade.buy_price)
     
     account.balance += proceeds
     account.total_pnl += pnl
@@ -185,8 +191,14 @@ async def get_daily_history(db: AsyncSession = Depends(get_db)):
         if date_str not in daily_stats:
             daily_stats[date_str] = {"pnl": 0.0, "trades_count": 0, "symbols": []}
         
-        trade_pnl = (t.sell_price - t.buy_price) * t.qty
-        pnl_percent = ((t.sell_price - t.buy_price) / t.buy_price) * 100 if t.buy_price else 0
+        is_short_log = True if (t.stop_loss and t.buy_price and t.stop_loss > t.buy_price) else False
+        
+        if is_short_log:
+            trade_pnl = (t.buy_price - t.sell_price) * t.qty
+            pnl_percent = ((t.buy_price - t.sell_price) / t.buy_price) * 100 if t.buy_price else 0
+        else:
+            trade_pnl = (t.sell_price - t.buy_price) * t.qty
+            pnl_percent = ((t.sell_price - t.buy_price) / t.buy_price) * 100 if t.buy_price else 0
         
         daily_stats[date_str]["pnl"] += trade_pnl
         daily_stats[date_str]["trades_count"] += 1

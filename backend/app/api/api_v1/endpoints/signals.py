@@ -77,10 +77,15 @@ async def get_todays_signals(
         if job_id:
             valid_job = await db.get(Job, job_id)
         else:
-            # SMARTER PICK: Only pick 'completed' jobs by default to avoid UI wiping while background scans are running.
+            # [V30 FIX] ONLY show non-hidden jobs when no specific job_id is requested.
+            # OLD: No is_hidden filter → hidden auto-restart jobs would overwrite manual scan results.
+            # Auto-restart scans (is_hidden=True) complete with potentially fewer/no results, 
+            # causing the "vanishing stocks" UI bug where manual scan results disappear 
+            # when the newer auto-scan finishes with empty data.
             query = select(Job).where(
                 Job.type == job_type, 
                 Job.status == "completed",
+                Job.is_hidden == False,
                 Job.created_at >= since
             ).order_by(
                 Job.updated_at.desc()
@@ -135,9 +140,11 @@ async def get_sector_signals(
         if job_id:
             valid_job = await db.get(Job, job_id)
         else:
+            # [V30 FIX] Filter hidden auto-restart jobs (same fix as /today)
             query = select(Job).where(
                 Job.type == job_type, 
                 Job.status == "completed",
+                Job.is_hidden == False,
                 Job.created_at >= (datetime.utcnow() - timedelta(hours=24))
             ).order_by(
                 Job.updated_at.desc()
