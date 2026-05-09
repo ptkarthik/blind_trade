@@ -56,6 +56,17 @@ class PaperMonitor:
                     live_prices = await asyncio.wait_for(market_service.get_batch_prices(symbols), timeout=10.0)
                 except Exception as e:
                     logger.error(f"Failed to batch fetch for monitor: {e}")
+                    
+                # 3.5 Concurrent Fetch for OHLC Data (Fix Execution Latency)
+                async def fetch_ohlc(sym):
+                    try:
+                        return sym, await asyncio.wait_for(market_service.get_ohlc(sym, period="2d", interval="15m"), timeout=5.0)
+                    except Exception:
+                        return sym, None
+                
+                ohlc_tasks = [fetch_ohlc(sym) for sym in symbols]
+                ohlc_results = await asyncio.gather(*ohlc_tasks)
+                ohlc_data = {sym: df for sym, df in ohlc_results if df is not None}
 
                 for trade in open_trades:
                     try:
@@ -106,7 +117,10 @@ class PaperMonitor:
                             is_short_pos = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
                             
                             try:
-                                df_15m = await asyncio.wait_for(market_service.get_ohlc(trade.symbol, period="2d", interval="15m"), timeout=5.0)
+                                df_15m = ohlc_data.get(trade.symbol)
+                                if df_15m is None:
+                                    raise ValueError(f"Failed to fetch 15m OHLC for {trade.symbol}")
+                                    
                                 exit_eval = await intraday_engine.evaluate_exit(
                                     sym=trade.symbol,
                                     entry_price=trade.buy_price,
@@ -117,10 +131,27 @@ class PaperMonitor:
                                     is_short=is_short_pos
                                 )
                                 
-                                if exit_eval["action"] in ["EXIT", "PARTIAL_EXIT"]:
+                                if exit_eval["action"] == "EXIT":
                                     close_it = True
                                     reason = exit_eval.get("reason", "Advanced Exit Signal")
                                     logger.info(f"🧠 [PAPER] {trade.symbol} Advanced Exit: {reason}")
+                                elif exit_eval["action"] == "PARTIAL_EXIT":
+                                    # [V40 GAP#6 FIX] Book 50% profit, trail remainder to breakeven
+                                    exit_qty = max(1, trade.qty // 2)
+                                    remaining_qty = trade.qty - exit_qty
+                                    if remaining_qty > 0:
+                                        await self._partial_close(session, trade, current_price, exit_qty, exit_eval.get("reason", "Partial Target"))
+                                        trade.qty = remaining_qty
+                                        new_stop = exit_eval.get("new_stop", trade.buy_price)
+                                        if new_stop:
+                                            trade.stop_loss = new_stop
+                                        new_target = exit_eval.get("new_target")
+                                        if new_target:
+                                            trade.target = new_target
+                                        logger.info(f"📊 [PAPER] {trade.symbol} Partial: {exit_qty} sold, {remaining_qty} remain, SL→{trade.stop_loss}")
+                                    else:
+                                        close_it = True
+                                        reason = exit_eval.get("reason", "Partial (full close)")
                                 elif exit_eval["action"] == "TRAIL_STOP":
                                     new_stop = exit_eval.get("new_stop")
                                     if new_stop:
@@ -161,12 +192,39 @@ class PaperMonitor:
             except Exception as e:
                 logger.error(f"Monitor Loop Error: {e}")
 
+    async def _partial_close(self, session, trade, price, exit_qty, reason):
+        """
+        [V40 GAP#6] Books profit on partial quantity without closing the full trade.
+        Applies slippage and updates account P&L for the partial exit.
+        """
+        is_short = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+        _exit_slip = price * 0.0012  # Same slippage as full close
+        exit_price = round(price + _exit_slip if is_short else price - _exit_slip, 2)
+        
+        if is_short:
+            pnl = (trade.buy_price - exit_price) * exit_qty
+        else:
+            pnl = (exit_price - trade.buy_price) * exit_qty
+        
+        # Update account P&L for partial
+        acc_res = await session.execute(select(Account).limit(1))
+        account = acc_res.scalars().first()
+        if account:
+            partial_proceeds = exit_qty * exit_price if not is_short else (exit_qty * trade.buy_price + pnl)
+            account.balance += partial_proceeds
+            account.total_pnl += pnl
+        
+        logger.info(f"✅ [PAPER] {trade.symbol} Partial Close ({reason}): {exit_qty} units at {exit_price}, P&L: {round(pnl, 2)}")
+
     async def _close_trade(self, session, trade, price, reason):
         """
         Internal helper to execute the paper trade closure.
         """
-        # 1. Update Trade
-        trade.sell_price = price
+        # 1. Update Trade (with realistic exit slippage)
+        # [V40 GAP#5 FIX] Apply 0.12% adverse slippage on exits (NSE mid-cap calibrated)
+        is_short_pos = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+        _exit_slip = price * 0.0012
+        trade.sell_price = round(price + _exit_slip if is_short_pos else price - _exit_slip, 2)
         trade.sell_time = datetime.utcnow() # Internal DB storage remains UTC for generic compatibility
         trade.status = "CLOSED"
         trade.close_reason = reason

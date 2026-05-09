@@ -76,7 +76,7 @@ class TradeManager:
             return
 
         # Enrich trade with lifecycle metadata for DB
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         trade_entry = {
             "symbol": symbol,
             "strategy": trade.get("strategy_type", trade.get("strategy", "UNKNOWN")),
@@ -175,7 +175,7 @@ class TradeManager:
             # 3. Time-Based Stops (Global)
             # Ensure capital isn't stuck in sideways trades
             from datetime import datetime
-            current_date = datetime.now()
+            current_date = datetime.utcnow()
             await self.enforce_time_stop(trade, current_date, latest_price)
             
             # 4. Sync Trailing Stop / Partial Exit to DB
@@ -304,7 +304,7 @@ class TradeManager:
         (Note: In future, this could query the DB for a wider time range).
         """
         from datetime import datetime
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
         
         today_trades = [t for t in self.trade_history if t.get("exit_date", "").startswith(today_str)]
         return sum(t.get("pnl_amount", 0.0) for t in today_trades)
@@ -381,7 +381,7 @@ class TradeManager:
         r_multiple = (exit_price - trade["entry"]) / R_unit if R_unit > 0 else 0
         
         from datetime import datetime
-        exit_date_obj = datetime.now()
+        exit_date_obj = datetime.utcnow()
         entry_date_obj = datetime.strptime(trade["entry_date"], "%Y-%m-%d %H:%M:%S")
         holding_days = (exit_date_obj - entry_date_obj).days
         

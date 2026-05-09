@@ -166,7 +166,6 @@ class SwingEngine:
             proxy = await proxy_manager.get_proxy()
             if proxy:  # Only use proxy if one actually exists — never pass None
                 ua = random.choice(USER_AGENTS)
-                session = _make_session(ua)
                 try:
                     def _fetch_proxy():
                         return yf.Ticker(sym).history(period=period, interval=interval, proxy=proxy)
@@ -180,8 +179,6 @@ class SwingEngine:
 
         # Strategy 2: Direct fetch with rotated UA only (no proxy — guaranteed to attempt)
         for attempt in range(2):
-            ua = random.choice(USER_AGENTS)
-            session = _make_session(ua)
             try:
                 def _fetch_direct():
                     return yf.Ticker(sym).history(period=period, interval=interval)
@@ -254,26 +251,25 @@ class SwingEngine:
             bo_status = "✅ MATCH" if bo_result.get("match") else f"❌ {bo_result.get('reason', 'No Match')}"
             print(f"  📊 {sym} | ₹{real_price} | {candle_count}D | PB: {pb_status} | BO: {bo_status}", flush=True)
 
-            # --- Phase 3: Sector Dominance Filtering ---
+            # --- [V44] Sector Dominance — converted from hard kills to score penalties ---
+            # These now feed into the scoring matrix instead of zeroing out matches
             sector = market_service.get_sector_for_symbol(sym)
             sector_perf = self.market_context.get("sector_performance", {})
             sector_return = sector_perf.get(sector, 0.0)
+            ad_penalty = 0
+            sector_penalty = 0
             
-            # Apply conditional Sector Strength filtering for breakouts
             if bo_result.get("match"):
                 if sector_return < 0.0:
-                    bo_result["match"] = False
-                    bo_result["reason"] = f"Sector Weakness ({round(sector_return, 2)}%) invalidates Breakout"
-                    print(f"    🔻 {sym}: Breakout KILLED by Sector Weakness ({sector}: {round(sector_return, 2)}%)", flush=True)
-                elif self.market_context.get("ad_ratio", 1.0) < 0.6:
-                    bo_result["match"] = False
-                    bo_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.6) invalidates Breakout"
-                    print(f"    🔻 {sym}: Breakout KILLED by A/D Ratio < 0.6", flush=True)
+                    sector_penalty = 15
+                    print(f"    ⚠️ {sym}: Breakout sector penalty −15 ({sector}: {round(sector_return, 2)}%)", flush=True)
+                if self.market_context.get("ad_ratio", 1.0) < 0.6:
+                    ad_penalty = 10
+                    print(f"    ⚠️ {sym}: Breakout A/D penalty −10 (A/D < 0.6)", flush=True)
 
             if pb_result.get("match") and self.market_context.get("ad_ratio", 1.0) < 0.35:
-                pb_result["match"] = False
-                pb_result["reason"] = f"Heavy Market Selling Pressure (A/D < 0.35) invalidates Pullback"
-                print(f"    🔻 {sym}: Pullback KILLED by A/D Ratio < 0.35", flush=True)
+                ad_penalty = max(ad_penalty, 10)
+                print(f"    ⚠️ {sym}: Pullback A/D penalty −10 (A/D < 0.35)", flush=True)
 
             # 3. Conflict Resolution & Selection
             selected = None
@@ -317,6 +313,7 @@ class SwingEngine:
             conviction = selected.get("conviction", 0)
             if conviction < 3:
                 # Minimum viable product check: skip low quality setups entirely
+                print(f"    ⏭️ {sym}: Conviction too low ({conviction}/12) — skipping", flush=True)
                 return None
                 
             # Components:
@@ -450,32 +447,37 @@ class SwingEngine:
             score_breakdown.append(f"Inst: +{inst_score}")
             
             # --- Final Score Normalization ---
+            # [V44] Apply A/D and sector penalties from soft filters
+            score -= (ad_penalty + sector_penalty)
             final_score = round(min(100, max(0, score)), 1)
+            if ad_penalty > 0 or sector_penalty > 0:
+                score_breakdown.append(f"Mkt Penalty: -{ad_penalty + sector_penalty}")
             
             # Confidence Level (tighter thresholds for V3)
             confidence = "LOW"
             if final_score >= 80: confidence = "HIGH"
             elif final_score >= 60: confidence = "MEDIUM"
 
+            # [V43] Conviction-based signal classification
+            if final_score >= 75:
+                signal_type = "BUY_STRONG"
+            elif final_score >= 50:
+                signal_type = "BUY"
+            else:
+                signal_type = "HOLD"  # Low-conviction: surface but don't recommend action
+
             # --- HIGH VISIBILITY MATCH LOG ---
             icon = "🚀 BREAKOUT" if strategy_name == "BREAKOUT" else "📥 PULLBACK"
-            print(f"  ✅ {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) | {' | '.join(score_breakdown)}", flush=True)
+            print(f"  ✅ {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) [{signal_type}] | {' | '.join(score_breakdown)}", flush=True)
             print(f"     Entry: ₹{real_price} | SL: ₹{sl} | Target: ₹{target} | Risk/Share: ₹{round(abs(real_price - sl), 2)}", flush=True)
 
             # 5. Metadata & Advisory
-            try:
-                def _get_info():
-                    import yfinance as yf
-                    return yf.Ticker(sym).info or {}
-                company_data = await asyncio.to_thread(_get_info)
-            except Exception:
-                company_data = {}
-            name = company_data.get("shortName", sym)
-            # Sector already fetched above
+            # [V43] Use market_service for name instead of slow yfinance .info call
+            name = market_service.get_name_for_symbol(sym) or sym.replace('.NS', '').replace('.BO', '')
 
             from app.services.advisor_engine import advisor_engine
             advisory = advisor_engine.generate_advice(
-                sym, real_price, company_data, {}, {}, {}, None, mode="swing"
+                sym, real_price, {}, selected, {}, {}, None, mode="swing"
             )
 
             # 6. Portfolio & Risk Management Integration
@@ -500,7 +502,7 @@ class SwingEngine:
                 "confidence": confidence,
                 "strategy": selected["strategy"],
                 "setup_type": selected["setup_type"],
-                "signal": "BUY",
+                "signal": signal_type,
                 "verdict": verdict,
                 "strategic_summary": advisory.get('entry_analysis', {}).get('rationale', 'Confirmed structure.'),
                 "entry": round(real_price, 2),
@@ -561,12 +563,11 @@ class SwingEngine:
             state = self.job_states.get(job_id)
             if not state:
                 logger.error(f"Job state not found for {job_id}")
-                return {"status": "error"}
+                return {"status": "error", "data": []}
             
             # [V12.2] Link main task for immediate cancellation
             state["main_task"] = asyncio.current_task()
             state["total_steps"] = total_stocks
-                
             sync_task = asyncio.create_task(self._progress_loop(job_id, total_stocks))
 
             concurrency_limit = 15 # Increased for faster scanning
@@ -599,7 +600,8 @@ class SwingEngine:
                     
                     res = await self.analyze_stock(sym, job_id)
                     if res: self.add_job_result(job_id, res)
-                    else: self.add_failed_symbol(job_id, {"symbol": sym})
+                    # [V43] Don't add normal strategy rejections to failed_symbols
+                    # Only actual data/fetch failures should be tracked
 
             tasks = [sem_task(sym, i) for i, sym in enumerate(symbols)]
             await asyncio.gather(*tasks)

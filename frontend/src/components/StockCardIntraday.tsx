@@ -10,7 +10,7 @@ interface StockCardIntradayProps {
 }
 
 export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayProps) {
-    const isBuy = signal.intraday_signal?.includes("BUY") || signal.signal === "BUY";
+    const isBuy = signal.intraday_signal?.includes("BUY") || signal.signal?.includes("BUY");
     const isHighConviction = signal.score >= 80;
 
     // Specialist Tag Parser
@@ -200,10 +200,17 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
                         <span className="text-[8px] font-black uppercase text-primary/50 tracking-widest group-hover:text-primary transition-colors">CLICK TO ANALYZE</span>
                         {onBuy && (
                             <button 
-                                onClick={onBuy}
-                                className="text-[8px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 hover:bg-emerald-500 hover:text-white transition-all z-20"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onBuy(e);
+                                }}
+                                className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all z-20 ${
+                                    isBuy 
+                                    ? "text-emerald-600 bg-emerald-50 border-emerald-100 hover:bg-emerald-500 hover:text-white" 
+                                    : "text-red-600 bg-red-50 border-red-100 hover:bg-red-500 hover:text-white"
+                                }`}
                             >
-                                BUY (PAPER)
+                                {isBuy ? "BUY (PAPER)" : "SHORT (PAPER)"}
                             </button>
                         )}
                     </div>

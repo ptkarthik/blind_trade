@@ -148,28 +148,34 @@ class SwingTechnicalAnalysis:
         _sma_200_series = ctx['sma_200']
         sma_200 = safe_scalar(_sma_200_series.iloc[-1]) if len(_sma_200_series.dropna()) > 0 else 0.0
         
-        # Rule: Price > SMA 50 AND SMA 50 must be trending up (slope > 0)
-        # SMA 200 is a bonus confirmation, not a hard gate
+        # Rule: Price > SMA 50 is hard gate. SMA 200 is bonus confirmation.
+        # [V44] SMA 50 slope is now a conviction modifier, not a hard gate
         is_above_sma50 = close > sma_50
         is_above_sma200 = (close > sma_200) if sma_200 > 0 else True  # Skip if unavailable
         is_macro_bullish = is_above_sma50 and is_above_sma200
         is_slope_up = sma_50 > sma_50_prev
         
-        if not (is_macro_bullish and is_slope_up):
-            reason = "Below SMAs" if not is_macro_bullish else "SMA 50 Slope Down"
-            return {"match": False, "reason": f"Fails Trend Filter ({reason})"}
-            
-        reasons.append({"text": "Strong Uptrend (SMA 50 Slope +)", "type": "positive", "label": "TREND", "value": "BULLISH"})
+        if not is_macro_bullish:
+            return {"match": False, "reason": f"Fails Trend Filter (Below SMAs)"}
+        
+        # Slope down = conviction penalty, not hard reject
+        slope_penalty = False
+        if not is_slope_up:
+            slope_penalty = True
+            reasons.append({"text": "Caution: SMA 50 Slope Flat/Down", "type": "caution", "label": "TREND", "value": "CAUTIOUS"})
+        else:
+            reasons.append({"text": "Strong Uptrend (SMA 50 Slope +)", "type": "positive", "label": "TREND", "value": "BULLISH"})
 
         # 2. Adaptive Support Zones (V1.1: strict pierce and close-hold logic)
         _ema_20 = ctx['ema_20'].iloc[-1]
         ema_20 = safe_scalar(_ema_20)
         
-        # 3-Day Lookback for Support Touch
+        # [V44] 5-Day Lookback for Support Touch (was 3 — too narrow)
         ema_20_touched = False
         sma_50_touched = False
-        if len(df) >= 3:
-            for i in range(-3, 0):
+        lookback = min(5, len(df) - 1)
+        if lookback >= 1:
+            for i in range(-lookback, 0):
                 l_low = safe_scalar(df['low'].iloc[i])
                 ema_20_i = safe_scalar(ctx['ema_20'].iloc[i])
                 sma_50_i = safe_scalar(ctx['sma_50'].iloc[i])
@@ -184,7 +190,7 @@ class SwingTechnicalAnalysis:
         sma_50_bounce = sma_50_touched and (close >= (sma_50 * 0.99))
         
         if not (ema_20_bounce or sma_50_bounce):
-            return {"match": False, "reason": "Did not touch/hold Support Zone cleanly in last 3 days"}
+            return {"match": False, "reason": "Did not touch/hold Support Zone cleanly in last 5 days"}
             
         bounce_target = "EMA 20" if ema_20_bounce else "SMA 50"
         reasons.append({"text": f"Support Bounce ({bounce_target})", "type": "positive", "label": "ZONE", "value": bounce_target})
@@ -236,24 +242,26 @@ class SwingTechnicalAnalysis:
             return {"match": False, "reason": "No Bullish Candle Signal"}
 
         # --- V3.1: TURNAROUND GATE (Anti-Knife-Catching) ---
-        # Rule 1: Must be a GREEN candle (close > open) — no buying on red days
+        # [V44] Allow pin bars on red candles — long lower wicks ARE valid reversal signals
         is_green = c_c > c_o
-        if not is_green:
-            return {"match": False, "reason": "Red Candle — No Turnaround Confirmed"}
+        if not is_green and not is_pin:
+            return {"match": False, "reason": "Red Candle — No Turnaround Confirmed (no pin bar)"}
         
         # Rule 2: Structural Pivot — today's high must pierce yesterday's high
         prev_high = safe_scalar(prev['high'])
         is_pivot = c_h > prev_high
         
-        reasons.append({"text": "Turnaround Confirmed (Green)", "type": "positive", "label": "TURNAROUND", "value": "CONFIRMED"})
+        turnaround_label = "Turnaround (Green)" if is_green else "Pin Bar Reversal (Red)"
+        reasons.append({"text": turnaround_label, "type": "positive", "label": "TURNAROUND", "value": "CONFIRMED"})
         if is_pivot: reasons.append({"text": "Structural Pivot (+)", "type": "positive", "label": "PIVOT", "value": "Yes"})
         reasons.append({"text": f"Patterns: {', '.join(patterns[:2])}", "type": "positive", "label": "CANDLE", "value": "Confirmed"})
 
         # 4. RSI Setup Mapping (30-70)
         _rsi = ctx['rsi'].iloc[-1]
         rsi = safe_scalar(_rsi)
-        if not (30 <= rsi <= 70):
-            return {"match": False, "reason": f"RSI ({round(rsi,1)}) out of 30-70 range"}
+        # [V44] Raised RSI ceiling from 70 to 75 — strong uptrends often have RSI 70-75
+        if not (30 <= rsi <= 75):
+            return {"match": False, "reason": f"RSI ({round(rsi,1)}) out of 30-75 range"}
             
         setup_type = "REVERSAL_PULLBACK" if rsi < 40 else "STANDARD_PULLBACK"
         reasons.append({"text": f"Setup: {setup_type}", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
@@ -326,6 +334,10 @@ class SwingTechnicalAnalysis:
         if is_pivot: conviction += 1
         # MTF penalty: deduct 2 points if weekly structure is broken but within tolerance
         if mtf_penalty: conviction -= 2
+        # [V44] Slope penalty: deduct 2 points if SMA50 slope is flat/down
+        if slope_penalty: conviction -= 2
+        # [V44] Red pin bar: deduct 1 point (less confident than green candle)
+        if not is_green and is_pin: conviction -= 1
         conviction = max(0, conviction)
         # Range: 0-11
         
@@ -414,17 +426,24 @@ class SwingTechnicalAnalysis:
         sma50 = safe_scalar(_sma50_s.iloc[-1])
         sma50_prev = safe_scalar(_sma50_s.iloc[-6]) if len(_sma50_s) >= 6 else safe_scalar(_sma50_s.iloc[-2])
         
-        if rsi < 60:
-            return {"match": False, "reason": f"Insufficient RSI Momentum ({round(rsi,1)} < 60)"}
-        if c_c < sma50 or sma50 <= sma50_prev:
-            return {"match": False, "reason": "Trend not supportive (Below SMA50 or Negative Slope)"}
+        # [V44] RSI lowered from 60 to 55 — many valid breakouts start at RSI 55-60
+        if rsi < 55:
+            return {"match": False, "reason": f"Insufficient RSI Momentum ({round(rsi,1)} < 55)"}
+        
+        # [V44] SMA50 slope is now a conviction penalty, not a hard gate
+        bo_slope_penalty = False
+        if c_c < sma50:
+            return {"match": False, "reason": "Below SMA50 — No Breakout"}
+        if sma50 <= sma50_prev:
+            bo_slope_penalty = True  # Penalize in conviction, don't reject
 
-        # --- Weekly Macro Trend Proxy (150-Day SMA / 30-Week) ---
+        # --- [V44] Weekly Macro Trend Proxy (150-Day SMA / 30-Week) --- converted to conviction penalty
+        bo_macro_penalty = False
         if len(df) >= 150:
             _sma150_s = ctx['sma_150']
             sma150 = safe_scalar(_sma150_s.iloc[-1])
             if sma150 > 0 and c_c < sma150:
-                return {"match": False, "reason": "Counter Macro-Trend (Below SMA 150 Proxy)"}
+                bo_macro_penalty = True  # Don't hard reject, penalize conviction
 
         # --- V3.2: MTF Weekly Structure Gate (Softened to Conviction Modifier for Breakout) ---
         bo_mtf_penalty = False
@@ -439,13 +458,10 @@ class SwingTechnicalAnalysis:
                     bo_mtf_penalty = True
 
             
-        # --- Volatility Contraction Pattern (VCP) Squeeze Filter ---
+        # --- [V44] Volatility Contraction Pattern (VCP) --- converted from hard gate to conviction bonus
         current_range = safe_scalar(latest['high']) - safe_scalar(latest['low'])
         avg_range_10d = (df['high'] - df['low']).iloc[-11:-1].mean()
-        
-        # The breakout candle MUST be explosive compared to the tight consolidation
-        if current_range < (avg_range_10d * 1.3):
-             return {"match": False, "reason": f"Missing VCP Squeeze (Range {round(current_range, 1)} < 1.3x Avg {round(avg_range_10d, 1)})", "breakout_strength": "WEAK"}
+        vcp_explosive = current_range >= (avg_range_10d * 1.3)  # Used as conviction bonus below
 
         # --- V3: Bollinger Band Squeeze Confirmation ---
         bb_width = ctx['bb_width']
@@ -461,29 +477,27 @@ class SwingTechnicalAnalysis:
 
         reasons.append({"text": "Bullish Momentum Supported", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
-        # 3. Volume Spike 
-        # V1.1 Swing Hardening: Dropped highly restrictive >2.5x req to >1.8x to allow large/mid-cap institutional flow
+        # [V44] Volume lowered from 1.8x to 1.5x — large-cap institutional flow is quieter
         vol_s = ctx['vol_s']
         vol_ma = ctx['vol_ma'].iloc[-1]
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
         
-        if vol_ratio < 1.8:
-             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.8x min)"}
+        if vol_ratio < 1.5:
+             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.5x min)"}
 
         # --- Round 2: ADX Trending Market Check ---
         adx = safe_scalar(ctx['adx'].iloc[-1])
         if adx < 20:
              return {"match": False, "reason": f"Low Trend Momentum (ADX {round(adx,1)} < 20)"}
              
-        # --- Round 2: On-Balance Volume (OBV) Accumulation Check ---
+        # --- [V44] OBV: conviction modifier instead of hard gate ---
         obv_s = ctx['obv']
         obv_rising = False
         if len(obv_s) >= 10:
             obv_current = safe_scalar(obv_s.iloc[-1])
             obv_10d_ago = safe_scalar(obv_s.iloc[-10])
             obv_rising = obv_current > obv_10d_ago
-            if not obv_rising:
-                 return {"match": False, "reason": "OBV Divergence (Institutional Distribution detected)"}
+            # No longer a hard gate — conviction handles it
 
         reasons.append({"text": "Volume Surge Verified", "type": "positive", "label": "VOLUME", "value": f"{round(vol_ratio, 1)}x"})
 
@@ -533,16 +547,20 @@ class SwingTechnicalAnalysis:
         if macd_bullish: conviction += 2
         if macd_expanding: conviction += 1
         if obv_rising: conviction += 2
-        # V1.1 Score mapping adjusted for new volume floor
+        # [V44] Volume scoring adjusted for new 1.5x floor
         if vol_ratio >= 2.5: conviction += 2
         elif vol_ratio >= 1.8: conviction += 1
         if adx >= 30: conviction += 1
         if is_squeeze_breakout: conviction += 2
+        if vcp_explosive: conviction += 1  # [V44] VCP is now a bonus, not a gate
         if close_pos > 0.85: conviction += 1  # Very strong close
         # MTF penalty for breakout
         if bo_mtf_penalty: conviction -= 2
+        # [V44] Soft penalties for slope/macro
+        if bo_slope_penalty: conviction -= 2
+        if bo_macro_penalty: conviction -= 2
         conviction = max(0, conviction)
-        # Range: 0-12
+        # Range: 0-13
         
         # Determine setup quality
         setup_type = "SQUEEZE_BREAKOUT" if is_squeeze_breakout else "MOMENTUM_BREAKOUT"

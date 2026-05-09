@@ -15,6 +15,14 @@ taskkill /F /IM uvicorn.exe /T >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Blind Trade*" /IM cmd.exe >nul 2>&1
 echo   - Success.
 
+:: [V30 FIX] Clean up stale Worker Lock Files
+:: After taskkill, the old worker PID files survive on disk.
+:: Windows can reuse the old PID for the new backend process,
+:: causing the new worker to think its predecessor is still alive and exit.
+echo   - Cleaning stale worker lock files...
+del /F /Q "backend\logs\worker_*.pid" >nul 2>&1
+echo   - Lock files cleaned.
+
 :: New: Clean Database Ghosts
 echo.
 echo [0.5/4] Cleaning Database Ghosts...

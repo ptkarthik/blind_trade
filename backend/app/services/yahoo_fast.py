@@ -31,10 +31,8 @@ class YahooFast:
             )
         return self.session
 
-    async def fetch_ohlc(self, symbol: str, period: str = "7d", interval: str = "15m") -> pd.DataFrame:
-        """Fetches OHLC data directly from Yahoo Chart API with Browser Mimicry."""
-        # Convert period/interval to Yahoo format if needed
-        # Yahoo Chart API uses 'range' and 'interval'
+    async def fetch_ohlc(self, symbol: str, period: str = "7d", interval: str = "15m", proxy: str = None) -> pd.DataFrame:
+        """Fetches OHLC data directly from Yahoo Chart API with Browser Mimicry and optional proxy."""
         params = {
             "range": period,
             "interval": interval,
@@ -45,9 +43,13 @@ class YahooFast:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         session = await self._get_session()
         
+        req_kwargs = {"params": params, "timeout": 10}
+        if proxy:
+            req_kwargs["proxies"] = {"http": proxy, "https": proxy}
+        
         try:
             # Mimic a real browser request
-            resp = await session.get(url, params=params, timeout=10)
+            resp = await session.get(url, **req_kwargs)
             if resp.status_code != 200:
                 return pd.DataFrame()
             
@@ -76,11 +78,13 @@ class YahooFast:
             return df
             
         except Exception as e:
-            print(f"❌ YahooFast Error [{symbol}]: {str(e)}")
+            # print(f"❌ YahooFast Error [{symbol}]: {str(e)}") # reduced noise
             return pd.DataFrame()
 
     async def fetch_batch(self, symbols: List[str], interval: str = "15m", period: str = "7d", concurrency: int = 25) -> Dict[str, pd.DataFrame]:
-        """Fetches a batch of symbols at high speed using parallel ribbons."""
+        """Fetches a batch of symbols at high speed using parallel ribbons with proxy rotation."""
+        from app.services.proxy_manager import proxy_manager
+        
         results = {}
         semaphore = asyncio.Semaphore(concurrency)
         
@@ -88,12 +92,22 @@ class YahooFast:
             async with semaphore:
                 # Add tiny random jitter to avoid perfect robotic synchronization
                 await asyncio.sleep(random.uniform(0.1, 0.4))
-                df = await self.fetch_ohlc(sym, period=period, interval=interval)
-                # [V23 FIX #16] Single retry for individual symbol failures
-                # OLD: Failed symbols silently returned empty DF with no retry, losing ~5% per scan
+                
+                proxy = await proxy_manager.get_proxy()
+                df = await self.fetch_ohlc(sym, period=period, interval=interval, proxy=proxy)
+                
+                # [V23 FIX #16] Single retry with proxy rotation for individual symbol failures
                 if df.empty:
+                    if proxy: 
+                        proxy_manager.blacklist(proxy)
                     await asyncio.sleep(random.uniform(0.5, 1.0))
-                    df = await self.fetch_ohlc(sym, period=period, interval=interval)
+                    
+                    new_proxy = await proxy_manager.get_proxy()
+                    df = await self.fetch_ohlc(sym, period=period, interval=interval, proxy=new_proxy)
+                    
+                    if df.empty and new_proxy:
+                        proxy_manager.blacklist(new_proxy)
+                        
                 if not df.empty:
                     results[sym] = df
         

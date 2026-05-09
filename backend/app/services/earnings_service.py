@@ -49,8 +49,8 @@ class EarningsService:
             if not earnings_ts:
                 return False
 
-            earnings_date = datetime.fromtimestamp(earnings_ts)
-            now = datetime.now()
+            earnings_date = datetime.utcfromtimestamp(earnings_ts)
+            now = datetime.utcnow()
 
             # Danger window: 3 days before, 1 day after
             # This protects against buying before the binary event, 
@@ -92,7 +92,7 @@ class EarningsService:
                     self.cache[sym] = {
                         "timestamp": ts,
                         "date_str": datetime.fromtimestamp(ts).strftime("%Y-%m-%d"),
-                        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        "last_updated": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     return True
             except asyncio.TimeoutError:

@@ -285,6 +285,22 @@ class MarketDataService:
         clean = symbol.split(".")[0].upper()
         return self.SECTOR_MAP.get(clean, "General")
 
+    def get_name_for_symbol(self, symbol: str) -> str:
+        """Returns a human-readable company name from the cached NSE market list.
+        Falls back to cleaned symbol if not found. Never makes a network call."""
+        import os, json
+        try:
+            cache_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "nse_market_list.json")
+            if os.path.exists(cache_path):
+                with open(cache_path, "r") as f:
+                    stocks = json.load(f)
+                for stock in stocks:
+                    if stock.get("symbol") == symbol:
+                        return stock.get("name", symbol.split(".")[0])
+        except Exception:
+            pass
+        return symbol.split(".")[0]
+
     async def _fetch_live_with_proxy(self, symbol: str) -> Dict[str, Any]:
         proxy = await proxy_manager.get_proxy()
         if not proxy: return {"price": 0, "source": "Failed"}
@@ -334,7 +350,7 @@ class MarketDataService:
                 df.columns = [c.lower() for c in df.columns]
                 return df
         except Exception as e:
-            print(f"⚠️ [OHLC] Direct Yahoo fetch failed for {symbol}: {e}")
+            print(f"[OHLC] Direct Yahoo fetch failed for {symbol}: {e}")
         
         # [V12.3 SINGLE FAILOVER] 🆘
         if self.td:

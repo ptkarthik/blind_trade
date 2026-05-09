@@ -22,6 +22,8 @@ class AdvisorEngine:
 
         if mode == "intraday":
             return self._generate_intraday_advice(sym, current_price, ta_data, risk_data, sector_data)
+        elif mode == "swing":
+            return self._generate_swing_advice(sym, current_price, ta_data, risk_data, sector_data)
         else:
             return self._generate_longterm_advice(sym, current_price, metrics, ta_data, risk_data, sector_data, portfolio_context)
 
@@ -265,6 +267,59 @@ class AdvisorEngine:
             "confidence": "High" if ta.get("mom_score", 0) > 60 else "Medium",
             "fair_value": vwap,
             "strategy_tag": "[INTRADAY STRATEGY]"
+        }
+
+    # =========================================================================
+    # 🔵 SWING STRATEGY ENGINE (Positional Income)
+    # Focus: 2-21 Day holds, ATR-based targets, Support/Breakout entries
+    # =========================================================================
+    def _generate_swing_advice(self, sym, price, ta, risk, sector):
+        """Generates advisory text specifically for swing (2-21 day) trades."""
+        
+        atr = ta.get("atr", price * 0.02)
+        strategy = ta.get("strategy", "PULLBACK")
+        setup_type = ta.get("setup_type", "Standard")
+        
+        if strategy == "BREAKOUT":
+            setup_label = "Momentum Breakout"
+            rationale = f"Fresh 20-day high breakout with volume confirmation. Ride momentum with EMA 9 trailing stop."
+        else:
+            setup_label = "Pullback to Support"
+            rationale = f"Price bounced off key support with bullish candle confirmation. Conservative target at 2R."
+
+        entry_analysis = {
+            "entry_price": round(price, 2),
+            "entry_type": "Market" if strategy == "BREAKOUT" else "Limit @ Support",
+            "rationale": rationale,
+            "confluence": 1
+        }
+
+        return {
+            "holding_period": {
+                "years": 0.05,  # ~2-3 weeks
+                "period_display": "2 to 21 Days",
+                "label": f"Swing ({setup_label})",
+                "play_type": setup_type,
+                "driver": "Momentum" if strategy == "BREAKOUT" else "Mean Reversion"
+            },
+            "entry_analysis": entry_analysis,
+            "targets": {
+                "3_year_target": round(ta.get("target", price * 1.05), 2),
+                "projected_cagr": 0,
+                "absolute_return": round(((ta.get("target", price * 1.05) - price) / price) * 100, 1),
+                "blend_logic": f"ATR-Based {setup_type} Target"
+            },
+            "stop_loss": {
+                "stop_price": round(ta.get("stop_loss", price - atr * 2), 2),
+                "type": "ATR Structural Stop",
+                "risk_pct": round(((price - ta.get("stop_loss", price - atr * 2)) / price) * 100, 2)
+            },
+            "scenarios": [],
+            "trend_status": {"slope": setup_label, "action": "Hold to Target or Trail"},
+            "review_cycle": "Daily",
+            "confidence": ta.get("confidence", "MEDIUM"),
+            "fair_value": price,
+            "strategy_tag": "[SWING STRATEGY]"
         }
 
     # =========================================================================

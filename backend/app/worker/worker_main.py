@@ -158,6 +158,25 @@ async def manage_recurring_scans():
                 await session.commit()
                 log(f"⏰ [SCHEDULER] Auto-triggered {job_type}")
 
+async def update_market_context():
+    """Background task to keep index_context up-to-date every 30 seconds."""
+    from app.services.market_data import market_service
+    from app.services.index_context import index_ctx
+    while True:
+        try:
+            status = await market_service.get_market_status()
+            index_ctx["nifty_50"] = status.get("nifty_50", 0.0)
+            index_ctx["nifty_change"] = status.get("nifty_change", 0.0)
+            index_ctx["india_vix"] = status.get("india_vix", 15.0)
+            index_ctx["market_status"] = status.get("status", "CLOSED")
+            
+            if index_ctx["nifty_change"] > 1.0: index_ctx["market_regime"] = "Bullish"
+            elif index_ctx["nifty_change"] < -1.0: index_ctx["market_regime"] = "Bearish"
+            else: index_ctx["market_regime"] = "Mixed"
+        except Exception as e:
+            pass
+        await asyncio.sleep(30)
+
 async def worker_loop():
     log(f"👷 Worker Process Started. PID: {os.getpid()}")
     
@@ -191,6 +210,9 @@ async def worker_loop():
             log(f"Startup Cleanup Error: {e}")
 
         log("👷 Worker Ready. Waiting for Jobs...")
+        
+        # Start the market context background refresher
+        asyncio.create_task(update_market_context())
         
         active_tasks = set()
         MAX_CONCURRENT_JOBS = 6 # Increased from 3 to allow concurrent scans

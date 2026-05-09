@@ -445,11 +445,42 @@ class IntradayEngine:
                 indicators["is_1d_bullish"] = real_price > ema20_1d
             else:
                 indicators["is_1d_bullish"] = None
+            
+            # [V42] Daily Consolidation Breakout Detection
+            # Stocks stuck in a tight range for 20 days that break out today = explosive 5%+ runners
+            indicators["daily_breakout"] = {}
+            if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
+                try:
+                    daily_high_20 = float(df_1d['high'].tail(20).max())
+                    daily_low_20 = float(df_1d['low'].tail(20).min())
+                    range_pct = (daily_high_20 - daily_low_20) / max(daily_low_20, 1e-6)
+                    is_tight_range = range_pct < 0.15
+                    is_breaking_out = real_price > daily_high_20 * 1.002
+                    indicators["daily_breakout"] = {
+                        "is_consolidation_breakout": is_tight_range and is_breaking_out,
+                        "range_pct": round(range_pct * 100, 1),
+                        "breakout_distance": round((real_price / max(daily_high_20, 1e-6) - 1) * 100, 2)
+                    }
+                except Exception:
+                    pass
                 
             # [V18 FIX #7] L3: PENALTY ENGINE — re-integrated into scoring
             liq = liquidity_service.get_liquidity(sym)
             l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data, liq)
             base_score = max(0, min(100, base_score - l3_penalty))
+            
+            # [V42] Mega-Cap Pioneer Prime Suppression
+            # Stocks priced above ₹2,000 cannot physically deliver 5%+ intraday moves
+            # due to institutional depth. Cap them below Pioneer Prime threshold.
+            if real_price > 2000 and base_score > 78:
+                base_score = 78
+            
+            # [V42] RVOL Gate for Pioneer Prime
+            # Pioneer Prime (85+) requires institutional-grade volume confirmation
+            # RVOL 1.5 = above average (fine for BUY), RVOL 2.5+ = institutional aggression (required for PRIME)
+            _rvol_for_gate = indicators.get("rvol", 0)
+            if base_score >= 85 and _rvol_for_gate < 2.5:
+                base_score = min(base_score, 82)
             
             # --- L3: EXECUTION GATING ---
             # 1. Freshness Guard
@@ -607,13 +638,18 @@ class IntradayEngine:
                 current_hour = now_ist.hour + (now_ist.minute / 60.0)
                 time_decay_factor = 1.0
                 if current_hour > 10.0:
-                    time_decay_factor = max(0.4, 1.0 - ((current_hour - 10.0) * 0.12))
+                    # [V40 GAP#2 FIX] Slower decay (0.10/hr vs 0.12/hr), higher floor (0.5 vs 0.4)
+                    # Old rate created sub-1.0 RR targets after 12:30 PM → negative expectancy
+                    time_decay_factor = max(0.5, 1.0 - ((current_hour - 10.0) * 0.10))
             except Exception as e:
                 print(f"⚠️ Time decay fallback error: {e}")
                 time_decay_factor = 1.0
 
             # Target: Nearest resistance/support level, capped by ATR extension
             atr_target_dist = max((atr * time_decay_factor) * (3.0 if india_vix > 20 else 2.0), real_price * 0.01)
+            # [V40 GAP#2 FIX] Enforce minimum 1.3 RR floor — no trade should enter with negative expectancy
+            _min_rr_target = atr_sl_dist * 1.3
+            atr_target_dist = max(atr_target_dist, _min_rr_target)
             atr_target = round(real_price - atr_target_dist if is_short else real_price + atr_target_dist, 2)
             
             pivot_data = indicators.get("pivots", {})
@@ -642,6 +678,13 @@ class IntradayEngine:
                 target = round(real_price + ((target - real_price) * 0.75), 2)
             
             # [V24 V3-FIX 2] Execution Edge: Pin limit orders on defensive setups
+            # [V40 GAP#1 FIX] Realistic slippage model calibrated from NSE microstructure
+            # PULLBACK/SHORT_PULLBACK: Limit order pinning → near-zero slippage (existing logic)
+            # MOMENTUM/BREAKOUT/OPENING_DRIVE: Market order chase → adverse slippage by liquidity tier
+            # High (>₹50Cr): 0.05%, Moderate (₹10-50Cr): 0.12%, Low (<₹10Cr): 0.25%
+            _SLIPPAGE_MAP = {"High": 0.0005, "Moderate": 0.0012, "Low": 0.0025, "Very Low": 0.0035, "Unknown": 0.0015}
+            _slip_pct = _SLIPPAGE_MAP.get(liq_level, 0.0015)
+            
             ideal_entry = real_price
             if alpha_mode == "PULLBACK":
                 limit_pin = indicators.get("ema20", real_price) * 1.002
@@ -649,12 +692,26 @@ class IntradayEngine:
             elif alpha_mode == "SHORT_PULLBACK":
                 limit_pin = indicators.get("ema20", real_price) * 0.998
                 ideal_entry = max(real_price, limit_pin)
+            else:
+                # Market order entry: apply adverse slippage (buy higher, short lower)
+                if is_short:
+                    ideal_entry = round(real_price * (1 - _slip_pct), 2)
+                else:
+                    ideal_entry = round(real_price * (1 + _slip_pct), 2)
 
             # [V29 V9-FIX 1] sl_dist now uses ideal_entry instead of real_price to correctly represent limit risk
             # [V31 GAP#5 FIX] Enforce minimum 0.3% or 0.5 ATR stop distance to prevent infinite position sizes
             # OLD: max(..., 0.01) — for a ₹100 stock, 0.01 = 0.01% → position_size = risk_amount / 0.01 = absurd
             min_sl_dist = max(real_price * 0.003, atr * 0.5)
-            sl_dist = max(abs(ideal_entry - stop_loss), min_sl_dist)
+            
+            # [V42 FIX] Re-anchor Stop Loss to Ideal Entry
+            # Prevents limit pins from placing Entry *inside* the stop loss zone (SL > Entry for longs)
+            if is_short:
+                stop_loss = max(stop_loss, ideal_entry + min_sl_dist)
+            else:
+                stop_loss = min(stop_loss, ideal_entry - min_sl_dist)
+                
+            sl_dist = abs(ideal_entry - stop_loss)
             
             # [V20 VANGUARD] BETA-NORMALIZED RISK SIZING
             # 1. Base conviction risk
@@ -705,7 +762,8 @@ class IntradayEngine:
                 "entry": round(ideal_entry, 2), # V3-FIX 2 applied here
                 "target": target,
                 "stop_loss": stop_loss,
-                "rr_ratio": round((target - ideal_entry) / sl_dist, 2) if sl_dist > 0 else 0,
+                # [V40 GAP#12 FIX] Deduct round-trip execution costs (brokerage+STT+stamps ≈ 0.08%)
+                "rr_ratio": round(((target - ideal_entry) - (ideal_entry * 0.0008)) / sl_dist, 2) if sl_dist > 0 else 0,
                 # [V33 GAP#4 FIX] Increased ADV20 stealth from 1% to 2% — institutional standard for liquid stocks
                 "position_size": min(
                     int(risk_amount / sl_dist),
@@ -877,13 +935,15 @@ class IntradayEngine:
         # FIX H3: Strengthen structure_ok with proper HH/HL check
         # OLD: price > recent_lows.min() was almost always True, letting downtrending stocks pass EARLY mode
         # NEW: require the last candle low to be HIGHER THAN the low 3 candles ago (Higher Low confirmation)
-        if len(df) >= 5:
-            recent_highs = df['high'].tail(5)
-            recent_lows = df['low'].tail(5)
-            # Higher Low: current low > low from 3 bars ago (upward structure)
-            hl_confirmed = df['low'].iloc[-1] > df['low'].iloc[-4]
-            # Not making Lower Highs: last high >= second-to-last high
-            no_lower_high = df['high'].iloc[-1] >= df['high'].iloc[-2] * 0.998  # 0.2% tolerance
+        # [V40 GAP#8 FIX] Use completed candles only (exclude forming candle at -1) to prevent
+        # approving breakout structures on candles that haven't closed yet
+        if len(df) >= 6:
+            recent_highs = df['high'].iloc[-6:-1]
+            recent_lows = df['low'].iloc[-6:-1]
+            # Higher Low: completed candle low > low from 4 bars ago (upward structure)
+            hl_confirmed = df['low'].iloc[-2] > df['low'].iloc[-5]
+            # Not making Lower Highs: completed high >= prior high
+            no_lower_high = df['high'].iloc[-2] >= df['high'].iloc[-3] * 0.998  # 0.2% tolerance
             structure_ok = hl_confirmed and no_lower_high and price > recent_lows.min()
         else:
             structure_ok = price >= low.iloc[-2] if len(low) >= 2 else True
@@ -1139,6 +1199,20 @@ class IntradayEngine:
         distance_vwap_abs = abs(distance_vwap)
         is_near_vwap, is_trending = distance_vwap_abs < 1.2, price > ema20
         
+        # [V41 FIX] Global pre-9:30 AM flag for opening noise suppression
+        is_pre_930 = False
+        if df_15m is not None and isinstance(df_15m.index, pd.DatetimeIndex) and len(df_15m) > 0:
+            last_ts = df_15m.index[-1]
+            # Convert Yahoo's tz-naive UTC timestamps to IST for accurate time checking
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.tz_localize('UTC').tz_convert('Asia/Kolkata')
+            else:
+                last_ts = last_ts.tz_convert('Asia/Kolkata')
+            
+            _h, _m = last_ts.hour, last_ts.minute
+            if _h == 9 and _m <= 30: 
+                is_pre_930 = True
+        
         # 2. Alpha Mode Sequence Gate (Total Target: 60)
         # Sequence Priority: 1. Breakout -> 2. Pullback -> 3. Momentum -> 4. Early Base
         
@@ -1199,7 +1273,8 @@ class IntradayEngine:
             alpha_mode = "PULLBACK"; score += min(60, pb_score); reasons.append({"text": pb_reason, "impact": min(60, pb_score)})
             
         # 2C. Momentum Phase
-        elif is_trending and distance_vwap >= 1.0 and rvol > 1.5:
+        # [V41 FIX] Block MOMENTUM pre-9:30 AM (it's fake momentum, just 1 candle deep)
+        elif is_trending and distance_vwap >= 1.0 and rvol > 1.5 and not is_pre_930:
             alpha_mode = "MOMENTUM"; score += 40; reasons.append({"text": "MOMENTUM: Strong trend + volume", "impact": 40})
         
         # [V23 FIX #15] OPENING DRIVE DETECTION (9:15-9:45) — Moved BEFORE EARLY mode
@@ -1240,10 +1315,10 @@ class IntradayEngine:
         # 2D. Early Phase Base (Catch-all for standard healthy setups that aren't explosive yet)
         # [V32 P1 FIX] Reduced from 45 to 30 — EARLY is lowest conviction, shouldn't outscore PULLBACK
         if alpha_mode == "NONE" and is_near_vwap and is_trending and structure_ok:
-            alpha_mode = "EARLY"; score += 30; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure", "impact": 30})
+            alpha_mode = "EARLY"; score += 20; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure (low conviction)", "impact": 20})
             
         # 2E. SHORT Phase (Bearish setups)
-        if alpha_mode == "NONE" and not is_trending and distance_vwap < -1.0 and rvol > 1.5:
+        if alpha_mode == "NONE" and not is_trending and distance_vwap < -1.0 and rvol > 1.5 and not is_pre_930:
             # Market structure must confirm: Lower Highs + Lower Lows
             if indicators.get("trend_direction") == "BEARISH_TREND":
                 alpha_mode = "SHORT_MOMENTUM"
@@ -1294,8 +1369,11 @@ class IntradayEngine:
         if alpha_mode != "NONE":
             is_short_alpha = "SHORT" in alpha_mode
             
-            # [V29 V9-FIX 2] Move unconditional boosters inside alpha mode guard
-            if rvol > 2.5: score += 10; reasons.append({"text": "Booster: High RVOL", "impact": 10})
+            # [V40 GAP#7] Snapshot score before boosters for diminishing returns calculation
+            l2_data_base_score = score
+            
+            # [V43 AUDIT FIX #5] Removed L2 RVOL booster — RVOL already scored in L1 (+10) and L3 (-15)
+            # OLD: if rvol > 2.5: score += 10 — caused triple-counting of volume across all 3 layers
             
             if is_short_alpha:
                 if not ema_1h_trend_up: score += 5; reasons.append({"text": "Booster: 1H Trend Down", "impact": 5})
@@ -1341,14 +1419,46 @@ class IntradayEngine:
                 if cvd.get("score", 50) >= 75:
                     score += 5; reasons.append({"text": f"Confluence: Institutional Accumulation (CVD {cvd.get('cvd_ratio', 0):+.0%})", "impact": 5})
             
-            # 4. EMA Fan Alignment
+            # 4 & 8. Multi-Collinear Momentum Group (EMA Fan + MACD)
             ema_fan = indicators.get("ema_fan", {})
+            macd = indicators.get("macd_15m", {})
+            
+            ema_bonus, macd_bonus, macd_penalty = 0, 0, 0
+            ema_reason, macd_reason, macd_warn_reason = "", "", ""
+
             if is_short_alpha:
                 if ema_fan.get("status") == "Bearish Fan":
-                    score += 5; reasons.append({"text": "Confluence: Bearish EMA Fan (9<20<50<200)", "impact": 5})
+                    ema_bonus = 5; ema_reason = "Confluence: Bearish EMA Fan (9<20<50<200)"
+                
+                if macd.get("zero_cross_bearish"):
+                    macd_bonus = 8; macd_reason = "Confluence: MACD Zero-Cross Bearish (trend reversal)"
+                elif macd.get("histogram_falling"):
+                    macd_bonus = 5; macd_reason = "Confluence: 15m MACD Histogram Falling"
+                elif macd.get("histogram_rising") and alpha_mode not in ["SHORT_PULLBACK"]:
+                    macd_penalty = 5; macd_warn_reason = "Warning: 15m MACD Momentum Rising"
             else:
                 if ema_fan.get("status") == "Bullish Fan":
-                    score += 5; reasons.append({"text": "Confluence: Bullish EMA Fan (9>20>50>200)", "impact": 5})
+                    ema_bonus = 5; ema_reason = "Confluence: Bullish EMA Fan (9>20>50>200)"
+                
+                if macd.get("zero_cross_bullish"):
+                    macd_bonus = 8; macd_reason = "Confluence: MACD Zero-Cross Bullish (trend reversal)"
+                elif macd.get("histogram_rising"):
+                    macd_bonus = 5; macd_reason = "Confluence: 15m MACD Histogram Rising"
+                elif macd.get("histogram_falling") and alpha_mode not in ["PULLBACK", "BREAKOUT_RETEST"]:
+                    macd_penalty = 5; macd_warn_reason = "Warning: 15m MACD Momentum Fading"
+
+            # Apply Max Momentum Bonus to prevent Collinearity Bias
+            if ema_bonus > 0 or macd_bonus > 0:
+                best_bonus = max(ema_bonus, macd_bonus)
+                score += best_bonus
+                if best_bonus == macd_bonus and macd_bonus > 0:
+                    reasons.append({"text": macd_reason, "impact": macd_bonus})
+                elif ema_bonus > 0:
+                    reasons.append({"text": ema_reason, "impact": ema_bonus})
+                    
+            if macd_penalty > 0:
+                score -= macd_penalty
+                reasons.append({"text": macd_warn_reason, "impact": -macd_penalty})
                 
             # 5. Value Area integration
             poc_bounce = indicators.get("poc_bounce", {})
@@ -1392,22 +1502,7 @@ class IntradayEngine:
                 except Exception:
                     pass
             
-            # 8. MACD
-            macd = indicators.get("macd_15m", {})
-            if is_short_alpha:
-                if macd.get("zero_cross_bearish"):
-                    score += 8; reasons.append({"text": "Confluence: MACD Zero-Cross Bearish (trend reversal)", "impact": 8})
-                elif macd.get("histogram_falling"):
-                    score += 5; reasons.append({"text": "Confluence: 15m MACD Histogram Falling", "impact": 5})
-                elif macd.get("histogram_rising") and alpha_mode not in ["SHORT_PULLBACK"]:
-                    score -= 5; reasons.append({"text": "Warning: 15m MACD Momentum Rising", "impact": -5})
-            else:
-                if macd.get("zero_cross_bullish"):
-                    score += 8; reasons.append({"text": "Confluence: MACD Zero-Cross Bullish (trend reversal)", "impact": 8})
-                elif macd.get("histogram_rising"):
-                    score += 5; reasons.append({"text": "Confluence: 15m MACD Histogram Rising", "impact": 5})
-                elif macd.get("histogram_falling") and alpha_mode not in ["PULLBACK", "BREAKOUT_RETEST"]:
-                    score -= 5; reasons.append({"text": "Warning: 15m MACD Momentum Fading", "impact": -5})
+            # 8. MACD (Moved to combined Momentum Group above to fix multi-collinearity)
             
             # 9. VWAP Breakdown/Reclaim
             if is_short_alpha:
@@ -1465,6 +1560,35 @@ class IntradayEngine:
         if indicators.get("smart_gate_bypass", False):
             score += 15; reasons.append({"text": "Confluence: Conviction Reversal (Smart Gate Bypass)", "impact": 15})
         
+        # [V40 GAP#7 FIX] Confluence Booster Diminishing Returns
+        # Problem: 10+ weak signals stack additively to create false 85+ conviction scores.
+        # Fix: Apply retroactive decay curve on total booster contribution.
+        # First 25 pts: 100% (genuine strong confluences like VPOC bounce, RSI div)
+        # Next 15 pts (25-40): 60% (moderate confluences contribute less)
+        # Above 40 pts: 30% (marginal signals severely discounted)
+        # Example: Raw boost 55 → 25 + (15×0.6) + (15×0.3) = 25 + 9 + 4.5 = 38.5
+        _base_mode_score = l2_data_base_score if 'l2_data_base_score' in locals() else 0
+        _total_boost = score - _base_mode_score  # Isolate booster contribution
+        if _total_boost > 25:
+            _tier1 = 25  # Full value
+            _tier2 = min(_total_boost - 25, 15) * 0.6
+            _tier3 = max(_total_boost - 40, 0) * 0.3
+            _decayed_boost = int(_tier1 + _tier2 + _tier3)
+            _clipped = _total_boost - _decayed_boost
+            if _clipped > 0:
+                score = _base_mode_score + _decayed_boost
+                reasons.append({"text": f"Diminishing Returns: Booster overflow clipped by {_clipped} pts", "impact": -_clipped})
+        
+        # [V42] Daily Squeeze Release Booster
+        # Multi-day consolidation breakout + intraday momentum confirmation = explosive 5%+ runners
+        daily_bo = indicators.get("daily_breakout", {})
+        if daily_bo.get("is_consolidation_breakout") and alpha_mode in ["BREAKOUT", "MOMENTUM", "OPENING_DRIVE", "BREAKOUT_RETEST"]:
+            score += 10
+            reasons.append({
+                "text": f"EXPLOSIVE: {daily_bo.get('range_pct', 0)}% Daily Squeeze Breakout (multi-day compression release)",
+                "impact": 10
+            })
+        
         # FIX C4 & V14.6: Hard Alpha Lock - Guard against phantom conviction from booster-only scores
         if alpha_mode == "NONE":
             # Boosters alone are not enough — no directional edge identified
@@ -1496,12 +1620,12 @@ class IntradayEngine:
             reasons.append({"text": f"Penalty: Tape Contradiction (Longing a {day_change_pct}% bear tape)", "impact": -25})
             
         # V14.1 FIX: Smart L3 EMA Penalty (Synced with Step 1 Smart Gate)
-        # We use the smart_gate_bypass flag to acknowledge high-conviction recoveries.
+        # [V43 AUDIT FIX #4] Only penalize Longs below EMA20 — Shorts WANT to be below EMA20
         is_below_ema = price < ema20
         has_conviction = indicators.get("smart_gate_bypass", False)
-        if is_below_ema and not has_conviction:
+        if is_below_ema and not has_conviction and not is_trade_short:
             penalty += 25; reasons.append({"text": "Penalty: Below EMA20 (no conviction reclaim)", "impact": -25})
-        elif is_below_ema and has_conviction:
+        elif is_below_ema and has_conviction and not is_trade_short:
             penalty += 10; reasons.append({"text": "Caution: Below EMA20 (smart gate recovery in progress)", "impact": -10})
         
         distance_ema = abs((price - ema20) / ema20) * 100
@@ -1546,8 +1670,8 @@ class IntradayEngine:
         # FIX C3: Align threshold with Fix #4 turnover bands
         # OLD: threshold was ₹5Cr (50M) — inconsistent with new 'Very Low' = <₹1Cr
         # NEW: penalty at < ₹2Cr, which is the institutional minimum for safe intraday participation
-        if daily_turnover < 20_000_000 and adv20 > 0:  # ₹2 Crore minimum
-            penalty += 20; reasons.append({"text": "Penalty: Low Daily Turnover (< ₹2 Cr)", "impact": -20})
+        if daily_turnover < 500_000_000 and adv20 > 0:  # ₹50 Crore minimum
+            penalty += 100; reasons.append({"text": "HARD REJECT: Insufficient institutional liquidity (< ₹50 Cr)", "impact": -100})
         # R4-9 FIX: Unknown liquidity (adv20 == 0) should get FULL penalty, not a pass
         elif adv20 == 0:
             penalty += 20; reasons.append({"text": "Penalty: Unknown Liquidity (no ADV20 data)", "impact": -20})
@@ -1596,9 +1720,15 @@ class IntradayEngine:
             pass
         
         # V15 Pioneer Fix: Time Decay Matrix
+        # [V43 AUDIT FIX #6] Convert Yahoo UTC timestamps to IST before time checks
         try:
             if df_15m is not None and not df_15m.empty:
                 current_time = df_15m.index[-1]
+                # Convert to IST — Yahoo returns UTC timestamps
+                if hasattr(current_time, 'tzinfo') and current_time.tzinfo is None:
+                    current_time = current_time.tz_localize('UTC').tz_convert('Asia/Kolkata')
+                elif hasattr(current_time, 'tz_convert'):
+                    current_time = current_time.tz_convert('Asia/Kolkata')
                 if hasattr(current_time, 'hour'):
                     h, m = current_time.hour, current_time.minute
                     
@@ -1654,46 +1784,78 @@ class IntradayEngine:
                     penalty += pen; reasons.append({"text": f"Penalty: Broad Market Weakness (A/D {ad_ratio:.2f})", "impact": -pen})
         
         # Safe Momentum Check (Requires at least 4 candles)
-        if len(df_15m) >= 4:
+        # [V43 AUDIT FIX #8] Only penalize Longs for stale highs — for Shorts, declining highs = confirmation
+        if len(df_15m) >= 4 and not is_trade_short:
             recent_highs, prev_high = df_15m['high'].iloc[-3:], df_15m['high'].iloc[-4]
             if recent_highs.max() <= prev_high: 
                 penalty += 5; reasons.append({"text": "Penalty: No momentum (stale move)", "impact": -5})
 
         # V16 AUDIT FIX 4: Daily (1D) Macro Trend Penalty
-        # If stock is below its Daily 20-EMA, trend-following setups have dramatically lower probability.
-        # [V33 GAP#5 FIX] None = unknown data → reduced penalty instead of free pass
+        # [V43 AUDIT FIX #9] Now symmetric: Longs penalized below 1D EMA, Shorts penalized above 1D EMA
         is_1d_bullish = indicators.get("is_1d_bullish", None)
-        if is_1d_bullish is False and alpha_mode in ["BREAKOUT", "PULLBACK", "EARLY", "MOMENTUM"]:
-            penalty += 25; reasons.append({"text": "Penalty: Below Daily 20-EMA (Counter-Trend Risk)", "impact": -25})
-        elif is_1d_bullish is None and alpha_mode in ["BREAKOUT", "PULLBACK", "EARLY", "MOMENTUM"]:
-            penalty += 10; reasons.append({"text": "Caution: No Daily Data (1D trend unknown)", "impact": -10})
+        if not is_trade_short:
+            if is_1d_bullish is False and alpha_mode in ["BREAKOUT", "PULLBACK", "EARLY", "MOMENTUM"]:
+                penalty += 25; reasons.append({"text": "Penalty: Below Daily 20-EMA (Counter-Trend Risk)", "impact": -25})
+            elif is_1d_bullish is None and alpha_mode in ["BREAKOUT", "PULLBACK", "EARLY", "MOMENTUM"]:
+                penalty += 10; reasons.append({"text": "Caution: No Daily Data (1D trend unknown)", "impact": -10})
+        else:
+            if is_1d_bullish is True and alpha_mode in ["SHORT_MOMENTUM", "SHORT_PULLBACK", "SHORT_OPENING_DRIVE"]:
+                penalty += 25; reasons.append({"text": "Penalty: Above Daily 20-EMA (Counter-Trend Short)", "impact": -25})
+            elif is_1d_bullish is None and alpha_mode in ["SHORT_MOMENTUM", "SHORT_PULLBACK", "SHORT_OPENING_DRIVE"]:
+                penalty += 10; reasons.append({"text": "Caution: No Daily Data (1D trend unknown)", "impact": -10})
+
+        # [V45 FIX] Intraday Macro Trend Contradiction (Strict Safeguard)
+        # Prevents getting trapped in dead-cat bounces or lower-highs during intraday downtrends
+        mkt_struct = indicators.get("market_structure", "NEUTRAL_STRUCTURE")
+        if not is_trade_short:
+            if mkt_struct == "BEARISH_STRUCTURE":
+                penalty += 25; reasons.append({"text": "Penalty: Counter-Trend Long (Intraday LH/LL Structure)", "impact": -25})
+        else:
+            if mkt_struct == "BULLISH_STRUCTURE":
+                penalty += 25; reasons.append({"text": "Penalty: Counter-Trend Short (Intraday HH/HL Structure)", "impact": -25})
             
         # [V24 V3-FIX 3] 1H MACD Momentum Bearish Penalty
-        # [V33 GAP#6 FIX] None = unknown data → reduced penalty instead of free pass
+        # [V43 AUDIT FIX #10] Only penalize Longs for bearish 1H MACD — for Shorts it's confirmation
         is_1h_mom = indicators.get("is_1h_momentum_bullish", None)
-        if is_1h_mom is False:
-            penalty += 15; reasons.append({"text": "Penalty: 1H MACD Momentum Bearish", "impact": -15})
-        elif is_1h_mom is None:
-            penalty += 8; reasons.append({"text": "Caution: No 1H Data (momentum unknown)", "impact": -8})
+        if not is_trade_short:
+            if is_1h_mom is False:
+                penalty += 15; reasons.append({"text": "Penalty: 1H MACD Momentum Bearish", "impact": -15})
+            elif is_1h_mom is None:
+                penalty += 8; reasons.append({"text": "Caution: No 1H Data (momentum unknown)", "impact": -8})
+        else:
+            if is_1h_mom is True:
+                penalty += 15; reasons.append({"text": "Penalty: 1H MACD Momentum Bullish (counter-trend short)", "impact": -15})
+            elif is_1h_mom is None:
+                penalty += 8; reasons.append({"text": "Caution: No 1H Data (momentum unknown)", "impact": -8})
         
         # P1/P10 FIX: Penalize Bearish RSI Divergence (reversal risk)
         # [V35 GAP#4 FIX] Increased High severity from -10 to -20
         # Bearish div at overbought is one of the strongest reversal signals — was weaker than lunch chop (-20)
+        # [V43 AUDIT FIX #1] Only penalize Longs for Bearish RSI Div — for Shorts it's a booster (already in L2)
         rsi_div = indicators.get("rsi_divergence", {})
-        if rsi_div.get("type") == "Bearish":
+        if rsi_div.get("type") == "Bearish" and not is_trade_short:
             p_val = 20 if rsi_div.get("severity") == "High" else 10
             penalty += p_val; reasons.append({"text": f"Penalty: Bearish RSI Divergence ({rsi_div.get('severity', 'Moderate')})", "impact": -p_val})
+        elif rsi_div.get("type") == "Bullish" and is_trade_short:
+            p_val = 20 if rsi_div.get("severity") == "High" else 10
+            penalty += p_val; reasons.append({"text": f"Penalty: Bullish RSI Divergence vs Short ({rsi_div.get('severity', 'Moderate')})", "impact": -p_val})
         
         # [V35 GAP#3 FIX] CVD Distribution Penalty — institutional selling detected but never penalized
         # CVD accumulation gets +5 in L2, but distribution had no L3 counterweight
         cvd = indicators.get("cvd", {})
-        if cvd.get("score", 50) <= 25:
+        # [V43 AUDIT FIX #2] Only penalize Longs for distribution — for Shorts, distribution is confirmation
+        if cvd.get("score", 50) <= 25 and not is_trade_short:
             penalty += 10; reasons.append({"text": "Penalty: Smart Money Distribution (CVD net selling)", "impact": -10})
+        elif cvd.get("score", 50) >= 75 and is_trade_short:
+            penalty += 10; reasons.append({"text": "Penalty: Smart Money Accumulation vs Short (CVD net buying)", "impact": -10})
         
         # P12 FIX: Penalize Bearish EMA Fan (textbook downtrend structure)
         ema_fan = indicators.get("ema_fan", {})
-        if ema_fan.get("status") == "Bearish Fan":
+        # [V43 AUDIT FIX #3] Only penalize Longs for Bearish Fan — for Shorts it's confirmation
+        if ema_fan.get("status") == "Bearish Fan" and not is_trade_short:
             penalty += 15; reasons.append({"text": "Penalty: Bearish EMA Fan (9<20<50<200)", "impact": -15})
+        elif ema_fan.get("status") == "Bullish Fan" and is_trade_short:
+            penalty += 15; reasons.append({"text": "Penalty: Bullish EMA Fan vs Short (9>20>50>200)", "impact": -15})
             
         # PIONEER FIX: Volume Climax / Exhaustion Penalty
         # If the technical footprint shows massive spread over-extension + 5x relative volume, it's a trap.
@@ -1710,23 +1872,59 @@ class IntradayEngine:
         # [V23 FIX #7] Don't double-penalty stocks in OPENING_DRIVE mode
         # PIONEER FIX: Intelligent Early Bypass (If Undisputed A+ setup, skip noise penalty)
         if isinstance(df_15m.index, pd.DatetimeIndex) and len(df_15m.index) > 0:
-            hour = df_15m.index[-1].hour
-            minute = df_15m.index[-1].minute
-            current_mins = hour * 60 + minute
-            if current_mins < 570 and alpha_mode not in ["OPENING_DRIVE", "SHORT_OPENING_DRIVE"]:  # Before 9:30 AM
+            last_ts = df_15m.index[-1]
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.tz_localize('UTC').tz_convert('Asia/Kolkata')
+            else:
+                last_ts = last_ts.tz_convert('Asia/Kolkata')
+            
+            _h, _m = last_ts.hour, last_ts.minute
+            is_pre_930_local = (_h == 9 and _m <= 30)
+            
+            if is_pre_930_local and alpha_mode not in ["OPENING_DRIVE", "SHORT_OPENING_DRIVE"]:  # Before 9:30 AM IST
                 # Check for "Undisputed Execution" bypass: Perfect MAs, VWAP control, and extreme volume
                 is_undisputed = indicators.get("ema_score", 0) >= 100 and indicators.get("vwap_score", 0) >= 75 and rvol > 2.0
                 if not is_undisputed:
-                    penalty += 10; reasons.append({"text": "Penalty: Opening volatility (pre-9:30 noise)", "impact": -10})
+                    # [V41 FIX] Scale penalty to -20 for aggressive modes trying to bypass OPENING_DRIVE checks
+                    pen_val = 20 if alpha_mode in ["BREAKOUT", "BREAKOUT_RETEST", "SHORT_BREAKOUT", "MOMENTUM", "SHORT_MOMENTUM"] else 10
+                    penalty += pen_val; reasons.append({"text": f"Penalty: Opening volatility (pre-9:30 noise)", "impact": -pen_val})
                 else:
                     reasons.append({"text": "System Guard: Bypassed 9:30 Guard due to A+ Volume & Structure", "impact": 0})
+            
+            # [V42] 10:15 AM Opening Extension Trap Guard
+            # Between 9:30 and 10:15, MOMENTUM/BREAKOUT stocks already far from VWAP
+            # are likely opening spikes that will fade. Don't chase them.
+            if not is_pre_930_local:
+                try:
+                    ist_now_l3 = datetime.now(pytz.timezone('Asia/Kolkata'))
+                    is_pre_1015 = ist_now_l3.hour == 9 or (ist_now_l3.hour == 10 and ist_now_l3.minute < 15)
+                    if is_pre_1015 and alpha_mode in ["MOMENTUM", "BREAKOUT", "OPENING_DRIVE", "MOMENTUM_EXTENDED"]:
+                        vwap_val_l3 = indicators.get("vwap_val", price)
+                        extension_atr = abs(price - vwap_val_l3) / max(atr, 1e-6)
+                        if extension_atr > 2.0:
+                            pen = 15
+                            penalty += pen
+                            reasons.append({
+                                "text": f"Penalty: Opening Extension Trap ({extension_atr:.1f} ATR from VWAP, wait for 10:15)",
+                                "impact": -pen
+                            })
+                except Exception:
+                    pass
         
         # [V31 GAP#9 FIX] Scale L3 cap by alpha quality
         # F6 FIX: Scale L3 cap by PROPORTIONAL alpha quality to stop protecting garbage
         l1_l2_combined = l2_data.get("score", 0) + (indicators.get("l1_score", 0) if "l1_score" in indicators else 20)
         
-        # Cap = 60% of combined L1+L2 score — ensures high-quality trades retain score, low-quality ones don't
-        MAX_L3_PENALTY = max(30, int(l1_l2_combined * 0.6))
+        # [V40 GAP#3 FIX] Tiered L3 cap — weak setups get less protection from penalties
+        # <40 combined: 90% cap (almost no protection — garbage must die)
+        # 40-64: 70% cap (moderate protection)
+        # 65+: 55% cap (strong setups retain conviction)
+        if l1_l2_combined < 40:
+            MAX_L3_PENALTY = max(40, int(l1_l2_combined * 0.9))
+        elif l1_l2_combined < 65:
+            MAX_L3_PENALTY = max(35, int(l1_l2_combined * 0.7))
+        else:
+            MAX_L3_PENALTY = max(30, int(l1_l2_combined * 0.55))
         
         if penalty > MAX_L3_PENALTY:
             penalty = MAX_L3_PENALTY
@@ -1785,8 +1983,15 @@ class IntradayEngine:
             # 4. TIME-BASED EXIT — Held > 2 hours with < 0.5% gain
             pnl_pct = (entry_price - current_price) / entry_price if is_short else (current_price - entry_price) / entry_price
             if entry_time:
-                now = datetime.utcnow()
-                hold_duration = (now - entry_time).total_seconds() / 3600
+                # [V40 GAP#9 FIX] IST-consistent time comparison
+                # Old: datetime.utcnow() vs potentially naive entry_time could be off by 5.5h
+                ist = pytz.timezone('Asia/Kolkata')
+                now_ist = datetime.now(ist)
+                if entry_time.tzinfo is None:
+                    entry_ist = pytz.utc.localize(entry_time).astimezone(ist)
+                else:
+                    entry_ist = entry_time.astimezone(ist)
+                hold_duration = (now_ist - entry_ist).total_seconds() / 3600
                 if hold_duration > 2.0 and pnl_pct < 0.005:
                     return {"action": "EXIT", "reason": f"Time Decay Exit ({hold_duration:.1f}h held, {pnl_pct*100:.2f}% gain)",
                             "urgency": "NEXT_CANDLE", "exit_price": current_price}
@@ -1795,10 +2000,15 @@ class IntradayEngine:
             unrealized_r = (entry_price - current_price) / max(atr, 1e-6) if is_short else (current_price - entry_price) / max(atr, 1e-6)
             if unrealized_r > 1.0:
                 if is_short:
-                    new_stop = min(stop_loss, current_price + (atr * 1.2))
+                    # Guarantee at least breakeven + spread (0.15%) locked in at +1R
+                    breakeven = entry_price * 0.9985
+                    dynamic_trail = current_price + (atr * 1.2)
+                    new_stop = min(stop_loss, min(breakeven, dynamic_trail))
                     trail_triggered = new_stop < stop_loss
                 else:
-                    new_stop = max(stop_loss, current_price - (atr * 1.2))
+                    breakeven = entry_price * 1.0015
+                    dynamic_trail = current_price - (atr * 1.2)
+                    new_stop = max(stop_loss, max(breakeven, dynamic_trail))
                     trail_triggered = new_stop > stop_loss
                     
                 if trail_triggered:

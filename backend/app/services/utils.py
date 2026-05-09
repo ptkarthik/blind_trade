@@ -1,6 +1,7 @@
 
 import numpy as np
 import math
+from datetime import datetime, date
 
 def sanitize_data(data):
     """
@@ -11,6 +12,8 @@ def sanitize_data(data):
         return {k: sanitize_data(v) for k, v in data.items()}
     elif isinstance(data, list):
         return [sanitize_data(i) for i in data]
+    elif isinstance(data, (datetime, date)):
+        return data.isoformat()
     elif isinstance(data, (np.bool_, bool)):
         return bool(data)
     elif isinstance(data, (np.integer, int)):

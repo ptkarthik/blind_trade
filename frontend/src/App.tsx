@@ -54,8 +54,18 @@ function App() {
     holds: Signal[];
     sells: Signal[];
   }
-  const [sectorSignals, setSectorSignals] = useState<Record<string, SectorData>>({});
-  const [sectorStats, setSectorStats] = useState<any>(null);
+  const [sectorSignals, setSectorSignals] = useState<Record<string, SectorData>>(() => {
+    try {
+      const cached = localStorage.getItem('sector_v2_intraday');
+      return cached ? JSON.parse(cached) : {};
+    } catch { return {}; }
+  });
+  const [sectorStats, setSectorStats] = useState<any>(() => {
+    try {
+      const cached = localStorage.getItem('sector_stats_v2_intraday');
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
+  });
   const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade'>('deals');
   const lastCompletedJobId = useRef<string | null>(null);
   const currentSignalJobId = useRef<string | null>(null);
@@ -119,11 +129,24 @@ function App() {
       const resData = sectorRes.data;
       
       if (resData && resData.data) {
-        setSectorSignals(resData.data);
+        // [V43 FIX] Guard against empty API responses wiping existing scan results
+        // If we already have sector data and the new response is empty, keep existing data
+        const newSectorData = resData.data;
+        const hasExistingData = Object.keys(sectorSignals).length > 0;
+        const newDataIsEmpty = typeof newSectorData === 'object' && Object.keys(newSectorData).length === 0;
+        
+        if (hasExistingData && newDataIsEmpty && !jobId) {
+          // Don't wipe existing results with empty data from a generic (no jobId) fetch
+          console.log('[V43] Blocked empty sector wipe — preserving existing scan results');
+          return;
+        }
+        
+        setSectorSignals(newSectorData);
         setSectorStats(resData.stats);
-        localStorage.setItem(`sector_v2_${mode}`, JSON.stringify(resData.data));
+        localStorage.setItem(`sector_v2_${mode}`, JSON.stringify(newSectorData));
         if (resData.stats) localStorage.setItem(`sector_stats_v2_${mode}`, JSON.stringify(resData.stats));
-      } else {
+      } else if (resData && Object.keys(sectorSignals).length === 0) {
+        // Only set raw data if we have nothing yet
         setSectorSignals(resData);
       }
     } catch (e) {

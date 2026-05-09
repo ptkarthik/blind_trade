@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import numpy as np
 from ta.volume import MFIIndicator
@@ -5,6 +6,8 @@ from ta.trend import ADXIndicator, EMAIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 from ta.momentum import RSIIndicator
 from app.services.liquidity_service import liquidity_service
+
+_ta_logger = logging.getLogger("ta_intraday")
 
 def safe_scalar(x):
     import numpy as np
@@ -274,9 +277,9 @@ class IntradayTechnicalAnalysis:
                 if closes_above >= 3:
                     was_trending_above = True
             
-            # 1. Test of VWAP (Low is near or below VWAP)
-            # We want to catch candles that 'bounce' off VWAP
-            pullback_test = latest['low'] <= vwap_now * 1.0025
+            # 1. Test of VWAP (Liquidity Sweep)
+            # Must actually pierce VWAP and reject back above it to flush out retail
+            pullback_test = (latest['low'] < vwap_now) and (latest['close'] > vwap_now)
             
             # 2. Bullish Confirmation
             body_size = abs(latest['close'] - latest['open'])
@@ -371,7 +374,8 @@ class IntradayTechnicalAnalysis:
                 "range_size": orb_high - orb_low,
                 "early_detection": is_institutional_open
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_orb] {df.attrs.get('symbol','?')}: {_e}")
             return {}
 
     @staticmethod
@@ -419,7 +423,8 @@ class IntradayTechnicalAnalysis:
                 "prev_close": prev_close,
                 "today_open": today_open
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[analyze_gap] {df.attrs.get('symbol','?')}: {_e}")
             return {"type": "None", "pct": 0, "is_fading": False, "vol_ratio": 0}
 
     @staticmethod
@@ -463,8 +468,9 @@ class IntradayTechnicalAnalysis:
             return {
                 "P": pivot, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3
             }
-        except:
-             return {}
+        except Exception as _e:
+            _ta_logger.warning(f"[calculate_pivots] {df.attrs.get('symbol','?')}: {_e}")
+            return {}
 
     @staticmethod
     def check_exhaustion(df: pd.DataFrame, current_price: float) -> dict:
@@ -514,7 +520,8 @@ class IntradayTechnicalAnalysis:
                 "atr_dist": round(atr_multiple, 2),
                 "reasons": reasons
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[check_exhaustion] {df.attrs.get('symbol','?')}: {_e}")
             return {"is_exhausted": False}
 
     @staticmethod
@@ -552,7 +559,8 @@ class IntradayTechnicalAnalysis:
                 "type": "9EMA" if near_ema else "VWAP" if near_vwap else "None",
                 "support_val": ema_9 if near_ema else vwap if near_vwap else 0
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[identify_pullback] {df.attrs.get('symbol','?')}: {_e}")
             return {"is_pullback": False}
 
     @staticmethod
@@ -619,7 +627,8 @@ class IntradayTechnicalAnalysis:
                 "upper": round((h_band.iloc[-1] if len(h_band) > 0 else 0.0), 2),
                 "lower": round((l_band.iloc[-1] if len(l_band) > 0 else 0.0), 2)
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_squeeze] {df.attrs.get('symbol','?')}: {_e}")
             return {"is_squeeze": False, "is_breakout": False, "width": 0}
 
     @staticmethod
@@ -665,7 +674,8 @@ class IntradayTechnicalAnalysis:
                 return {"type": "Bullish", "severity": "High" if recent_rsi_low > prior_rsi_low + 5 else "Moderate"}
                 
             return {"type": "None"}
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_rsi_divergence] {df.attrs.get('symbol','?')}: {_e}")
             return {"type": "None"}
 
     @staticmethod
@@ -698,7 +708,8 @@ class IntradayTechnicalAnalysis:
                             "strength": "High" if current['volume'] > df['volume'].rolling(14).mean().iloc[-1] * 2.5 else "Moderate"
                         }
             return {"is_trap": False}
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_wash_and_rinse] {df.attrs.get('symbol','?')}: {_e}")
             return {"is_trap": False}
 
     @staticmethod
@@ -731,7 +742,8 @@ class IntradayTechnicalAnalysis:
                 "is_tapping": is_tapping, 
                 "zone": (fvg_zone_bottom, fvg_zone_top)
             }
-        except Exception:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_bullish_fvg] {df.attrs.get('symbol','?')}: {_e}")
             return {"has_fvg": False}
 
     @staticmethod
@@ -754,7 +766,8 @@ class IntradayTechnicalAnalysis:
                 "is_aligned": is_bullish_fan or is_bearish_fan,
                 "score_bonus": 15 if is_bullish_fan else -15 if is_bearish_fan else 0
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[check_ema_fan] {df.attrs.get('symbol','?')}: {_e}")
             return {"status": "No Fan", "is_aligned": False, "score_bonus": 0}
 
     @staticmethod
@@ -791,7 +804,8 @@ class IntradayTechnicalAnalysis:
                 "bias": bias,
                 "score": 100 if adx > 25 and plus_di > minus_di else 0 if adx > 25 and minus_di > plus_di else 50
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[calculate_adx] {df.attrs.get('symbol','?')}: {_e}")
             return {"adx": 0, "status": "Unknown", "bias": "Neutral", "score": 50, "is_rising": False, "adx_slope": 0.0}
 
     @staticmethod
@@ -834,7 +848,8 @@ class IntradayTechnicalAnalysis:
                 "is_cluster": is_cluster,
                 "reasons": ["Sequential abnormal volume + rising price"] if is_cluster else []
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_volume_cluster] {df.attrs.get('symbol','?')}: {_e}")
             return {"is_cluster": False}
 
     @staticmethod
@@ -868,7 +883,8 @@ class IntradayTechnicalAnalysis:
                 "hh_hl": hh_hl,
                 "lh": lh
             }
-        except:
+        except Exception as _e:
+            _ta_logger.warning(f"[detect_micro_trend] {df.attrs.get('symbol','?')}: {_e}")
             return {"pattern": "None", "hh_hl": False, "lh": False}
 
     @staticmethod
@@ -1360,7 +1376,7 @@ class IntradayTechnicalAnalysis:
 
             # --- V4.2 PRE-REQUISITES (ATR 14) ---
             atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-            atr_val = float(atr_series.iloc[-1])
+            atr_val = float(atr_series.iloc[-2])
             # Safety fallback for ATR
             atr_val = atr_val if atr_val > 0 else (l_close_val * 0.001)
 
@@ -1391,8 +1407,8 @@ class IntradayTechnicalAnalysis:
             # 5. TREND CONFIRMATION (EMA 9/20) (10 pts)
             ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
             ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
-            ema9 = float(ema9_series.iloc[-1])
-            ema20 = float(ema20_series.iloc[-1])
+            ema9 = float(ema9_series.iloc[-2])
+            ema20 = float(ema20_series.iloc[-2])
             trend_aligned = ema9 > ema20 and l_close_val > ema9
             trend_score = 10 if trend_aligned else 0
 
@@ -1522,13 +1538,14 @@ class IntradayTechnicalAnalysis:
             ema9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
             ema20_series = EMAIndicator(close=df['close'], window=20).ema_indicator()
             ema50_series = EMAIndicator(close=df['close'], window=50).ema_indicator()
-            ema9_val = float(ema9_series.iloc[-1])
-            ema20_val = float(ema20_series.iloc[-1])
-            ema50_val = float(ema50_series.iloc[-1])
+            ema9_val = float(ema9_series.iloc[-2])
+            ema20_val = float(ema20_series.iloc[-2])
+            ema50_val = float(ema50_series.iloc[-2])
             
-            vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
+            # Calculate VWAP up to the closed candle to prevent live tick repainting
+            vwap = IntradayTechnicalAnalysis.calculate_vwap(df.iloc[:-1])
             atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-            atr_val = float(atr_series.iloc[-1])
+            atr_val = float(atr_series.iloc[-2])
             atr_val = atr_val if atr_val > 0 else (l_close_val * 0.001)
 
             vol_ma_series = df['volume'].iloc[-21:-1]
@@ -1581,9 +1598,14 @@ class IntradayTechnicalAnalysis:
             vol_mult = context.get("vol_mult", 1.0) if context else 1.0
             gate_size = 0.4 * vol_mult # Scales gate from 0.4 to 0.6 for high-beta
             
-            dist_ema9_atr = abs(l_low_val - ema9_val) / max(atr_val, 1e-6)
-            dist_vwap_atr = abs(l_low_val - vwap) / max(atr_val, 1e-6)
-            dist_retest_atr = abs(l_low_val - breakout_level) / max(atr_val, 1e-6)
+            if is_short:
+                dist_ema9_atr = abs(l_high_val - ema9_val) / max(atr_val, 1e-6)
+                dist_retest_atr = abs(l_high_val - breakout_level) / max(atr_val, 1e-6)
+                vwap_pierced = (l_high_val > vwap) and (l_close_val < vwap)
+            else:
+                dist_ema9_atr = abs(l_low_val - ema9_val) / max(atr_val, 1e-6)
+                dist_retest_atr = abs(l_low_val - breakout_level) / max(atr_val, 1e-6)
+                vwap_pierced = (l_low_val < vwap) and (l_close_val > vwap)
 
             pullback_score = 0
             entry_type = "None"
@@ -1595,7 +1617,8 @@ class IntradayTechnicalAnalysis:
                 return 0
 
             s_ema = calculate_proximity_score(dist_ema9_atr, gate_size)
-            s_vwap = calculate_proximity_score(dist_vwap_atr, gate_size)
+            # [GAP 3 FIX] VWAP requires an actual liquidity sweep piercing, no near misses
+            s_vwap = 30 if vwap_pierced else 0
             s_retest = calculate_proximity_score(dist_retest_atr, gate_size)
             
             pullback_score = max(s_ema, s_vwap, s_retest)
@@ -2343,8 +2366,9 @@ class IntradayTechnicalAnalysis:
                 "status": status,
                 "score": score
             }
-        except:
-             return {"cvd": 0, "cvd_ratio": 0.0, "status": "Neutral", "score": 50}
+        except Exception as _e:
+            _ta_logger.warning(f"[calculate_cvd_proxy] {df.attrs.get('symbol','?')}: {_e}")
+            return {"cvd": 0, "cvd_ratio": 0.0, "status": "Neutral", "score": 50}
 
     @staticmethod
     def analyze_stock(df: pd.DataFrame) -> dict:

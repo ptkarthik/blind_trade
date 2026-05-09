@@ -1,0 +1,156 @@
+
+--- Penalties in ta_intraday.py ---
+L1421: trap_penalty = 0
+L1448: trap_penalty = 10
+L1477: trap_penalty
+L1771: # Adaptive proximity bonus/penalty using ATR (volatility parity)
+L1780: validation_penalty = 0
+L1785: if overextended: validation_penalty += 15
+L1787: # 2. BREAKOUT/BREAKDOWN CONTINUITY CHECK (Penalty -20 pts) [V6.5 REFINE]
+L1793: if breakout_failure: validation_penalty += 20
+L1801: if support_risk: validation_penalty += 10
+L1807: if resistance_risk: validation_penalty += 10
+L1811: if volume_dry_up: validation_penalty += 10
+L1825: if structure_weak: validation_penalty += 20
+L1829: # Apply a heavy "Trend Gravity" penalty for trades in the negative/bearish range
+L1830: # UNLESS a Smart Gate (Reclaim/Div) is active, in which case we cut the penalty.
+L1833: trend_penalty = 0
+L1836: trend_penalty = 15 # Reduced penalty for high-conviction reclaims
+L1838: trend_penalty = 50 # Standard hard penalty for falling knives
+L1845: entry_score = max(0, min(base_score - validation_penalty - trend_penalty, 100))
+
+--- Penalties in intraday_engine.py ---
+L266: # Cooldown Penalty
+L408: mtf_bonus -= 10  # Counter-trend penalty: 15m bullish but 1h bearish
+L409: # else: None means data missing -> neutral, no penalty
+L423: # [V36 GAP#6 FIX] Converted hard reject to penalty — sector rotation alpha plays
+L428: sector_boost = -10  # Penalty instead of hard reject
+L467: # [V18 FIX #7] L3: PENALTY ENGINE — re-integrated into scoring
+L469: l3_penalty, l3_data = self._run_layer3(indicators, df_15m, global_index_ctx, l2_data, liq)
+L470: base_score = max(0, min(100, base_score - l3_penalty))
+L538: # [V36 GAP#1+2 FIX] VWAP chase penalty MOVED INSIDE _run_layer3()
+L539: # OLD: Applied post-L3, bypassing the L3 penalty cap (MAX_L3_PENALTY=50-60)
+L588: "Safeguards (L3)": {"score": -l3_penalty, "max": 0, "details": [r for r in reasons if r["layer"] == 3]}
+L765: # [V40 GAP#12 FIX] Deduct round-trip execution costs (brokerage+STT+stamps ≈ 0.08%)
+L791: # [V33 GAP#6 FIX] Default to None instead of True — True suppresses the -15 L3 penalty
+L885: # This caused universal near-zero RVOL → false -15 to -25 L3 penalties on ALL stocks.
+L1015: # This enables the +15 L2 boost and reduced L3 penalty for high-conviction reclaims.
+L1109: score -= 5; reasons.append({"text": "Below VWAP (bearish bias)", "impact": -5})
+L1124: score -= 5; reasons.append({"text": "Intraday uptrend contradicting short bias", "impact": -5})
+L1129: score -= 5; reasons.append({"text": "Intraday downtrend active (LH/LL)", "impact": -5})
+L1133: # NEW: Return negative L1 score so it deducts from total final_score
+L1388: score -= 5; reasons.append({"text": "Warning: MFI Overbought (>70, potential squeeze)", "impact": -5})
+L1393: score -= 5; reasons.append({"text": "Warning: MFI Oversold (<30, potential reversal)", "impact": -5})
+L1437: score -= 15; reasons.append({"text": "Warning: V-POC/VAL Bounce (Buying support)", "impact": -15})
+L1444: score -= 15; reasons.append({"text": "Warning: VAH Rejection (Bearish volume rejection)", "impact": -15})
+L1454: score -= 5; reasons.append({"text": "Warning: Micro HH-HL Structure", "impact": -5})
+L1459: score -= 5; reasons.append({"text": "Confluence: Lower-High Warning", "impact": -5})
+L1481: score -= 5; reasons.append({"text": "Warning: 15m MACD Momentum Rising", "impact": -5})
+L1488: score -= 5; reasons.append({"text": "Warning: 15m MACD Momentum Fading", "impact": -5})
+L1563: reasons.append({"text": f"Diminishing Returns: Booster overflow clipped by {_clipped} pts", "impact": -_clipped})
+L1592: penalty, reasons = 0, []
+L1599: penalty += 25
+L1600: reasons.append({"text": f"Penalty: Tape Contradiction (Shorting a +{day_change_pct}% bull tape)", "impact": -25})
+L1602: penalty += 25
+L1603: reasons.append({"text": f"Penalty: Tape Contradiction (Longing a {day_change_pct}% bear tape)", "impact": -25})
+L1605: # V14.1 FIX: Smart L3 EMA Penalty (Synced with Step 1 Smart Gate)
+L1610: penalty += 25; reasons.append({"text": "Penalty: Below EMA20 (no conviction reclaim)", "impact": -25})
+L1612: penalty += 10; reasons.append({"text": "Caution: Below EMA20 (smart gate recovery in progress)", "impact": -10})
+L1617: # OLD: rvol < 1.2 fired BOTH chop (-10) AND low RVOL (-15) = -25 total for normal volume
+L1619: penalty += 10; reasons.append({"text": "Penalty: Too close to EMA on dead volume (chop risk)", "impact": -10})
+L1622: penalty += 15; reasons.append({"text": "Penalty: Low RVOL (no institutional volume)", "impact": -15})
+L1624: # [V32 P3 FIX] VWAP Oscillation Penalty — stocks chopping across VWAP are untradeable
+L1627: penalty += 15; reasons.append({"text": "Penalty: VWAP Oscillation (chop zone, 3+ crosses)", "impact": -15})
+L1629: # [V36 GAP#1+2 FIX] VWAP Chase Penalty — moved inside L3 from post-L3 block
+L1630: # OLD: Applied after L3 cap, bypassing MAX_L3_PENALTY protection
+L1637: penalty += chase_pen; reasons.append({"text": f"Penalty: VWAP Chase ({vwap_chase_dist:.1f} ATR away)", "impact": -chase_pen})
+L1645: penalty += 30; reasons.append({"text": "Penalty: Volume Climax Absorption (Extreme Volume Doji Trap)", "impact": -30})
+L1655: # NEW: penalty at < ₹2Cr, which is the institutional minimum for safe intraday participation
+L1657: penalty += 20; reasons.append({"text": "Penalty: Low Daily Turnover (< ₹2 Cr)", "impact": -20})
+L1658: # R4-9 FIX: Unknown liquidity (adv20 == 0) should get FULL penalty, not a pass
+L1660: penalty += 20; reasons.append({"text": "Penalty: Unknown Liquidity (no ADV20 data)", "impact": -20})
+L1667: penalty += 15; reasons.append({"text": "Penalty: Bearish upper wick (selling pressure)", "impact": -15})
+L1694: penalty += 15; reasons.append({"text": f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})", "impact": -15})
+L1701: penalty += 20; reasons.append({"text": "Penalty: Liquidity Trap Detected (Distribution)", "impact": -20})
+L1727: reasons.append({"text": f"Penalty: Lunch Chop Zone (Time Decay {'[LOTTO PASS]' if is_lotto else ''})", "impact": -p_val})
+L1728: penalty += p_val
+L1732: # Power Hour with volume = institutional accumulation — no penalty
+L1736: penalty += p_val
+L1737: reasons.append({"text": "Caution: Power Hour (low volume)", "impact": -p_val})
+L1741: reasons.append({"text": f"Penalty: End Of Day Liquidation Risk {'[LOTTO PASS]' if is_lotto else ''})", "impact": -p_val})
+L1742: penalty += p_val
+L1755: penalty += 20; reasons.append({"text": "Penalty: Extreme Market Weakness (Nifty Bearish Trend)", "impact": -20})
+L1759: penalty += 10; reasons.append({"text": "Penalty: Choppy Market (Low ADX + Low RVOL)", "impact": -10})
+L1761: # [V21.3 FIX] Advance/Decline Ratio Penalty
+L1767: penalty += pen; reasons.append({"text": f"Penalty: Broad Market Weakness (A/D {ad_ratio:.2f})", "impact": -pen})
+L1774: penalty += 5; reasons.append({"text": "Penalty: No momentum (stale move)", "impact": -5})
+L1776: # V16 AUDIT FIX 4: Daily (1D) Macro Trend Penalty
+L1781: penalty += 25; reasons.append({"text": "Penalty: Below Daily 20-EMA (Counter-Trend Risk)", "impact": -25})
+L1783: penalty += 10; reasons.append({"text": "Caution: No Daily Data (1D trend unknown)", "impact": -10})
+L1786: penalty += 25; reasons.append({"text": "Penalty: Above Daily 20-EMA (Counter-Trend Short)", "impact": -25})
+L1788: penalty += 10; reasons.append({"text": "Caution: No Daily Data (1D trend unknown)", "impact": -10})
+L1795: penalty += 25; reasons.append({"text": "Penalty: Counter-Trend Long (Intraday LH/LL Structure)", "impact": -25})
+L1798: penalty += 25; reasons.append({"text": "Penalty: Counter-Trend Short (Intraday HH/HL Structure)", "impact": -25})
+L1800: # [V24 V3-FIX 3] 1H MACD Momentum Bearish Penalty
+L1805: penalty += 15; reasons.append({"text": "Penalty: 1H MACD Momentum Bearish", "impact": -15})
+L1807: penalty += 8; reasons.append({"text": "Caution: No 1H Data (momentum unknown)", "impact": -8})
+L1810: penalty += 15; reasons.append({"text": "Penalty: 1H MACD Momentum Bullish (counter-trend short)", "impact": -15})
+L1812: penalty += 8; reasons.append({"text": "Caution: No 1H Data (momentum unknown)", "impact": -8})
+L1821: penalty += p_val; reasons.append({"text": f"Penalty: Bearish RSI Divergence ({rsi_div.get('severity', 'Moderate')})", "impact": -p_val})
+L1824: penalty += p_val; reasons.append({"text": f"Penalty: Bullish RSI Divergence vs Short ({rsi_div.get('severity', 'Moderate')})", "impact": -p_val})
+L1826: # [V35 GAP#3 FIX] CVD Distribution Penalty — institutional selling detected but never penalized
+L1831: penalty += 10; reasons.append({"text": "Penalty: Smart Money Distribution (CVD net selling)", "impact": -10})
+L1833: penalty += 10; reasons.append({"text": "Penalty: Smart Money Accumulation vs Short (CVD net buying)", "impact": -10})
+L1839: penalty += 15; reasons.append({"text": "Penalty: Bearish EMA Fan (9<20<50<200)", "impact": -15})
+L1841: penalty += 15; reasons.append({"text": "Penalty: Bullish EMA Fan vs Short (9>20>50>200)", "impact": -15})
+L1843: # PIONEER FIX: Volume Climax / Exhaustion Penalty
+L1847: # Strongest penalty: it represents buying the very top
+L1848: penalty += 20
+L1851: reasons.append({"text": f"Warning: {', '.join(ex_reasons)}", "impact": -20})
+L1854: # V16 AUDIT FIX 2: Removed duplicate lunch penalty (was stacking -25 with V15 Time Decay at L637)
+L1855: # [V23 FIX #7] Don't double-penalty stocks in OPENING_DRIVE mode
+L1856: # PIONEER FIX: Intelligent Early Bypass (If Undisputed A+ setup, skip noise penalty)
+L1871: # [V41 FIX] Scale penalty to -20 for aggressive modes trying to bypass OPENING_DRIVE checks
+L1873: penalty += pen_val; reasons.append({"text": f"Penalty: Opening volatility (pre-9:30 noise)", "impact": -pen_val})
+L1889: penalty += pen
+L1891: "text": f"Penalty: Opening Extension Trap ({extension_atr:.1f} ATR from VWAP, wait for 10:15)",
+L1892: "impact": -pen
+L1906: MAX_L3_PENALTY = max(40, int(l1_l2_combined * 0.9))
+L1908: MAX_L3_PENALTY = max(35, int(l1_l2_combined * 0.7))
+L1910: MAX_L3_PENALTY = max(30, int(l1_l2_combined * 0.55))
+L1912: if penalty > MAX_L3_PENALTY:
+L1913: penalty = MAX_L3_PENALTY
+L1914: reasons.append({"text": f"System: L3 Penalty Capped at Maximum (-{MAX_L3_PENALTY} max)", "impact": 0})
+L1916: return penalty, {"penalty": penalty, "reasons": reasons}
+L2022: # OLD: Entire bootstrap was fire-and-forget with 2s sleep — first 20% of scan got false -20 penalty
+
+--- Penalties in scanner_engine.py ---
+L296: # Sector Bonus/Penalty (Phase 30: Alpha Influence)
+L320: elif "Distribution" in spon_action: inst_score -= 10
+L356: # Penalty for Low Momentum in Momentum Mode
+L358: final_score -= 20 # Crush dead stocks in momentum scan
+L400: "value": f"{round(macro_adjustment, 1)}pt Penalty"
+
+--- Penalties in fundamentals.py ---
+L81: # Plus a bonus/penalty for DCF Gap
+L90: elif val_gap < -20: final_score -= min(10, abs(val_gap + 20) / 2)
+L92: # Apply Junk Penalty (Structural Invalidation)
+L189: elif pm < 0.05: score -= 1
+L190: elif pm < 0: score -= 3 # Loss making
+L197: elif roe < 0.05: score -= 1
+L203: elif om < 0.05: score -= 1
+L229: elif pe > sector_pe * 2.0: score -= 1
+L236: score -= 2 # Historically overextended
+L242: elif peg > 2.5: score -= 2
+L276: score -= 2 # Cash burn is dangerous long term
+L431: elif de > 1000: score -= 2
+L436: elif de > 200: score -= 3
+L441: elif cr < 1.0: score -= 2
+L454: elif rev_growth < 0: score -= 3
+L460: elif earn_growth < 0: score -= 2
+L574: if ratio < 0.5: quality_score -= 5
+L575: elif ratio < 0.8: quality_score -= 2
+
+--- Penalties in institutional_intel.py ---
+L60: score -= 3 # Big Money Sell
+L62: score -= 0.5 # Weak Rally (Retail?)

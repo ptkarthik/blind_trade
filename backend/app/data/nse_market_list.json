@@ -3565,7 +3565,7 @@
     },
     {
         "symbol": "IGIL.NS",
-        "name": "International Gemmological Institute (India) Limited",
+        "name": "International Gemological Institute Limited",
         "raw_symbol": "IGIL",
         "industry": "General"
     },
@@ -5064,12 +5064,6 @@
         "industry": "General"
     },
     {
-        "symbol": "MAWANASUG.NS",
-        "name": "Mawana Sugars Limited",
-        "raw_symbol": "MAWANASUG",
-        "industry": "General"
-    },
-    {
         "symbol": "MAXESTATES.NS",
         "name": "Max Estates Limited",
         "raw_symbol": "MAXESTATES",
@@ -5787,12 +5781,6 @@
         "symbol": "OLECTRA.NS",
         "name": "Olectra Greentech Limited",
         "raw_symbol": "OLECTRA",
-        "industry": "General"
-    },
-    {
-        "symbol": "OMAXAUTO.NS",
-        "name": "Omax Autos Limited",
-        "raw_symbol": "OMAXAUTO",
         "industry": "General"
     },
     {
@@ -8562,12 +8550,6 @@
         "industry": "General"
     },
     {
-        "symbol": "VASCONEQ.NS",
-        "name": "Vascon Engineers Limited",
-        "raw_symbol": "VASCONEQ",
-        "industry": "General"
-    },
-    {
         "symbol": "VBL.NS",
         "name": "Varun Beverages Limited",
         "raw_symbol": "VBL",
@@ -8727,12 +8709,6 @@
         "symbol": "VOLTAS.NS",
         "name": "Voltas Limited",
         "raw_symbol": "VOLTAS",
-        "industry": "General"
-    },
-    {
-        "symbol": "VPRPL.NS",
-        "name": "Vishnu Prakash R Punglia Limited",
-        "raw_symbol": "VPRPL",
         "industry": "General"
     },
     {
