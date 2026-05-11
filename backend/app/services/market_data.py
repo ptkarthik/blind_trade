@@ -16,6 +16,7 @@ import time
 import urllib3
 import traceback
 import numpy as np
+from datetime import datetime
 
 # Suppress InsecureRequestWarning for proxies
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -307,7 +308,7 @@ class MarketDataService:
         try:
             def _try():
                 t = yf.Ticker(symbol)
-                h = t.history(period="1d", proxy=proxy)
+                h = t.history(period="1d")
                 return h['Close'].iloc[-1]
             p = await asyncio.to_thread(_try)
             return {"symbol": symbol, "price": p, "source": "Yahoo Proxy"}
@@ -344,7 +345,7 @@ class MarketDataService:
         proxy = await proxy_manager.get_proxy()
         try:
             def _fetch(): 
-                return yf.Ticker(symbol).history(period=period, interval=interval, proxy=proxy)
+                return yf.Ticker(symbol).history(period=period, interval=interval)
             df = await asyncio.to_thread(_fetch)
             if df is not None and not df.empty:
                 df.columns = [c.lower() for c in df.columns]

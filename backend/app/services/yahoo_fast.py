@@ -31,8 +31,8 @@ class YahooFast:
             )
         return self.session
 
-    async def fetch_ohlc(self, symbol: str, period: str = "7d", interval: str = "15m", proxy: str = None) -> pd.DataFrame:
-        """Fetches OHLC data directly from Yahoo Chart API with Browser Mimicry and optional proxy."""
+    async def fetch_ohlc(self, symbol: str, period: str = "7d", interval: str = "15m") -> pd.DataFrame:
+        """Fetches OHLC data directly from Yahoo Chart API with Browser Mimicry (No Proxies)."""
         params = {
             "range": period,
             "interval": interval,
@@ -43,15 +43,17 @@ class YahooFast:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         session = await self._get_session()
         
-        req_kwargs = {"params": params, "timeout": 10}
-        if proxy:
-            req_kwargs["proxies"] = {"http": proxy, "https": proxy}
+        req_kwargs = {"params": params, "timeout": 15}
         
         try:
             # Mimic a real browser request
             resp = await session.get(url, **req_kwargs)
             if resp.status_code != 200:
-                return pd.DataFrame()
+                # Fallback to standard requests if curl_cffi is blocked
+                import requests as std_requests
+                resp = await asyncio.to_thread(std_requests.get, url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                if resp.status_code != 200:
+                    return pd.DataFrame()
             
             data = resp.json()
             chart = data.get("chart", {}).get("result", [None])[0]
@@ -78,38 +80,50 @@ class YahooFast:
             return df
             
         except Exception as e:
-            # print(f"❌ YahooFast Error [{symbol}]: {str(e)}") # reduced noise
+            # ConnectionError usually means TCP reset from too many parallel hits
+            if "curl: (55)" in str(e) or "curl: (56)" in str(e):
+                try:
+                    import requests as std_requests
+                    resp = await asyncio.to_thread(std_requests.get, url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        chart = data.get("chart", {}).get("result", [None])[0]
+                        if chart:
+                            timestamp = chart.get("timestamp", [])
+                            indicators = chart.get("indicators", {}).get("quote", [{}])[0]
+                            if timestamp and indicators:
+                                df = pd.DataFrame({
+                                    "open": indicators.get("open", []),
+                                    "high": indicators.get("high", []),
+                                    "low": indicators.get("low", []),
+                                    "close": indicators.get("close", []),
+                                    "volume": indicators.get("volume", [])
+                                }, index=pd.to_datetime(timestamp, unit="s"))
+                                return df.dropna()
+                except: pass
+                
+            print(f"YahooFast Error [{symbol}]: {repr(e)}") # reduced noise
             return pd.DataFrame()
 
-    async def fetch_batch(self, symbols: List[str], interval: str = "15m", period: str = "7d", concurrency: int = 25) -> Dict[str, pd.DataFrame]:
-        """Fetches a batch of symbols at high speed using parallel ribbons with proxy rotation."""
-        from app.services.proxy_manager import proxy_manager
-        
+    async def fetch_batch(self, symbols: List[str], interval: str = "15m", period: str = "7d", concurrency: int = 5) -> Dict[str, pd.DataFrame]:
+        """Fetches a batch of symbols at high speed using parallel ribbons with robust retry."""
         results = {}
         semaphore = asyncio.Semaphore(concurrency)
         
         async def _worker(sym):
             async with semaphore:
                 # Add tiny random jitter to avoid perfect robotic synchronization
-                await asyncio.sleep(random.uniform(0.1, 0.4))
+                await asyncio.sleep(random.uniform(0.5, 2.0))
                 
-                proxy = await proxy_manager.get_proxy()
-                df = await self.fetch_ohlc(sym, period=period, interval=interval, proxy=proxy)
-                
-                # [V23 FIX #16] Single retry with proxy rotation for individual symbol failures
-                if df.empty:
-                    if proxy: 
-                        proxy_manager.blacklist(proxy)
-                    await asyncio.sleep(random.uniform(0.5, 1.0))
-                    
-                    new_proxy = await proxy_manager.get_proxy()
-                    df = await self.fetch_ohlc(sym, period=period, interval=interval, proxy=new_proxy)
-                    
-                    if df.empty and new_proxy:
-                        proxy_manager.blacklist(new_proxy)
-                        
-                if not df.empty:
-                    results[sym] = df
+                # 3-Attempt Exponential Backoff Retry (No Proxy)
+                for attempt in range(3):
+                    df = await self.fetch_ohlc(sym, period=period, interval=interval)
+                    if not df.empty:
+                        results[sym] = df
+                        break
+                    else:
+                        # If empty, wait and retry (longer wait per attempt)
+                        await asyncio.sleep(random.uniform(0.5, 1.5) * (attempt + 1))
         
         await asyncio.gather(*[_worker(s) for s in symbols])
         return results

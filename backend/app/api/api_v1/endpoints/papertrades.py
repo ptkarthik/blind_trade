@@ -52,7 +52,13 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=400, detail="Missing order details")
     
     account = await get_or_create_account(db)
-    total_cost = qty * price
+    
+    # [FIX] Apply realistic 0.12% execution slippage to entry
+    is_short = True if (order_data.get("stop_loss", 0) > price) else False
+    entry_slip = price * 0.0012
+    execution_price = price + entry_slip if not is_short else price - entry_slip
+    
+    total_cost = qty * execution_price
     
     if account.balance < total_cost:
         raise HTTPException(status_code=400, detail="Insufficient virtual balance")
@@ -64,7 +70,7 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     new_trade = PaperTrade(
         symbol=symbol,
         qty=qty,
-        buy_price=price,
+        buy_price=execution_price,
         target=order_data.get("target"),
         stop_loss=order_data.get("stop_loss"),
         score_at_buy=order_data.get("score"),

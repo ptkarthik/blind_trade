@@ -774,6 +774,12 @@
         "industry": "General"
     },
     {
+        "symbol": "ATLANTAELE.NS",
+        "name": "Atlanta Electricals Limited",
+        "raw_symbol": "ATLANTAELE",
+        "industry": "General"
+    },
+    {
         "symbol": "ATUL.NS",
         "name": "Atul Limited",
         "raw_symbol": "ATUL",

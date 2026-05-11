@@ -1882,8 +1882,9 @@ class IntradayEngine:
             is_pre_930_local = (_h == 9 and _m <= 30)
             
             if is_pre_930_local and alpha_mode not in ["OPENING_DRIVE", "SHORT_OPENING_DRIVE"]:  # Before 9:30 AM IST
-                # Check for "Undisputed Execution" bypass: Perfect MAs, VWAP control, and extreme volume
-                is_undisputed = indicators.get("ema_score", 0) >= 100 and indicators.get("vwap_score", 0) >= 75 and rvol > 2.0
+                # Check for "Undisputed Execution" bypass: Strong MAs, VWAP control, and high volume
+                # [FIX] Lowered thresholds to unlock realistic Morning Alpha
+                is_undisputed = indicators.get("ema_score", 0) >= 80 and indicators.get("vwap_score", 0) >= 60 and rvol > 1.5
                 if not is_undisputed:
                     # [V41 FIX] Scale penalty to -20 for aggressive modes trying to bypass OPENING_DRIVE checks
                     pen_val = 20 if alpha_mode in ["BREAKOUT", "BREAKOUT_RETEST", "SHORT_BREAKOUT", "MOMENTUM", "SHORT_MOMENTUM"] else 10
@@ -2183,7 +2184,10 @@ class IntradayEngine:
                                     cap_str = f"{liq_info.get('max_stealth_buy_qty', 0):,}"
                                     
                                     if res['signal'] == 'IGNORE':
-                                        logger.info(f"SKIP {sym}: {res.get('skip_reason', 'Threshold')}")
+                                        skip_msg = res.get('skip_reason')
+                                        if not skip_msg:
+                                            skip_msg = f"Score {res.get('score', 0)} < 50 (System Floor)"
+                                        logger.info(f"SKIP {sym}: {skip_msg}")
                                     else:
                                         # [V13] INSTITUTIONAL LOG TRACE
                                         flags = [k for k, v in res.get("flags", {}).items() if v]

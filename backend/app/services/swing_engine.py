@@ -168,7 +168,7 @@ class SwingEngine:
                 ua = random.choice(USER_AGENTS)
                 try:
                     def _fetch_proxy():
-                        return yf.Ticker(sym).history(period=period, interval=interval, proxy=proxy)
+                        return yf.Ticker(sym).history(period=period, interval=interval)
                     df = await asyncio.to_thread(_fetch_proxy)
                     if df is not None and not df.empty:
                         df.columns = [c.lower() for c in df.columns]
