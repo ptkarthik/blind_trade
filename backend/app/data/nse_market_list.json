@@ -1620,12 +1620,6 @@
         "industry": "General"
     },
     {
-        "symbol": "CIGNITITEC.NS",
-        "name": "Cigniti Technologies Limited",
-        "raw_symbol": "CIGNITITEC",
-        "industry": "General"
-    },
-    {
         "symbol": "CIPLA.NS",
         "name": "Cipla Limited",
         "raw_symbol": "CIPLA",
@@ -3093,12 +3087,6 @@
         "symbol": "GSPCROP.NS",
         "name": "GSP Crop Science Limited",
         "raw_symbol": "GSPCROP",
-        "industry": "General"
-    },
-    {
-        "symbol": "GSPL.NS",
-        "name": "Gujarat State Petronet Limited",
-        "raw_symbol": "GSPL",
         "industry": "General"
     },
     {
@@ -4698,12 +4686,6 @@
         "industry": "General"
     },
     {
-        "symbol": "LAXMIINDIA.NS",
-        "name": "Laxmi India Finance Limited",
-        "raw_symbol": "LAXMIINDIA",
-        "industry": "General"
-    },
-    {
         "symbol": "LEMERITE.NS",
         "name": "Le Merite Exports Limited",
         "raw_symbol": "LEMERITE",
@@ -5520,12 +5502,6 @@
         "industry": "General"
     },
     {
-        "symbol": "NECLIFE.NS",
-        "name": "Nectar Lifesciences Limited",
-        "raw_symbol": "NECLIFE",
-        "industry": "General"
-    },
-    {
         "symbol": "NELCAST.NS",
         "name": "Nelcast Limited",
         "raw_symbol": "NELCAST",
@@ -6051,12 +6027,6 @@
         "symbol": "PFIZER.NS",
         "name": "Pfizer Limited",
         "raw_symbol": "PFIZER",
-        "industry": "General"
-    },
-    {
-        "symbol": "PFOCUS.NS",
-        "name": "Prime Focus Limited",
-        "raw_symbol": "PFOCUS",
         "industry": "General"
     },
     {
@@ -6615,12 +6585,6 @@
         "symbol": "REFEX.NS",
         "name": "Refex Industries Limited",
         "raw_symbol": "REFEX",
-        "industry": "General"
-    },
-    {
-        "symbol": "REGAAL.NS",
-        "name": "Regaal Resources Limited",
-        "raw_symbol": "REGAAL",
         "industry": "General"
     },
     {
@@ -7650,12 +7614,6 @@
         "industry": "General"
     },
     {
-        "symbol": "STLTECH.NS",
-        "name": "Sterlite Technologies Limited",
-        "raw_symbol": "STLTECH",
-        "industry": "General"
-    },
-    {
         "symbol": "STOVEKRAFT.NS",
         "name": "Stove Kraft Limited",
         "raw_symbol": "STOVEKRAFT",
@@ -7689,12 +7647,6 @@
         "symbol": "STYRENIX.NS",
         "name": "Styrenix Performance Materials Limited",
         "raw_symbol": "STYRENIX",
-        "industry": "General"
-    },
-    {
-        "symbol": "SUBEXLTD.NS",
-        "name": "Subex Limited",
-        "raw_symbol": "SUBEXLTD",
         "industry": "General"
     },
     {
