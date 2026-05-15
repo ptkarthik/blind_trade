@@ -110,7 +110,16 @@ class IntradayEngine:
             
             # 3. REGIME DETECTION WITH HYSTERESIS
             prev_regime = self.system_state.get("regime", "Mixed")
-            day_ret = (close - nifty_df['open'].iloc[0]) / nifty_df['open'].iloc[0]
+            
+            # Calculate true day return (from previous day close, or today's open if 1 day available)
+            unique_dates = pd.Series(nifty_df.index.date).unique()
+            if len(unique_dates) > 1:
+                prev_date = unique_dates[-2]
+                prev_close = nifty_df[nifty_df.index.date == prev_date]['close'].iloc[-1]
+                day_ret = (close - prev_close) / prev_close
+            else:
+                today_open = nifty_df['open'].iloc[0]
+                day_ret = (close - today_open) / today_open
             
             regime = prev_regime
             if prev_regime == "Trend":
@@ -156,7 +165,7 @@ class IntradayEngine:
                 "india_vix": india_vix,
                 "regime": regime,
                 "regime_strength": strength,
-                "market_trend": "BULLISH" if day_ret > 0 else "BEARISH",
+                "market_trend": "BULLISH" if day_ret > 0.003 else ("BEARISH" if day_ret < -0.003 else "NEUTRAL"),
                 "sector_momentum_stall": sector_momentum_stall,
                 "regime_weight": weight,
                 "15m_returns": nifty_df['close'].pct_change().dropna(),
@@ -398,19 +407,13 @@ class IntradayEngine:
             
             # [V18 FIX #15] Single RS contribution — no double counting
             rs_contribution = max(min(rs_alpha * 1000, 15), -15)
+            if rs_contribution > 0:
+                l2_data.setdefault("reasons", []).append({"text": "Alpha: Relative Strength vs Index", "impact": round(rs_contribution, 1)})
+            elif rs_contribution < 0:
+                l2_data.setdefault("reasons", []).append({"text": "Penalty: Weak Relative Strength vs Index", "impact": round(rs_contribution, 1)})
             
             # [V19 APEX-A] MULTI-TIMEFRAME CONFLUENCE GATE
-            mtf_bonus = 0
-            ema_1h_trend = indicators.get("ema_1h_trend_up")
-            if ema_1h_trend is True:
-                mtf_bonus += 5  # 1h trend supports 15m setup
-            elif ema_1h_trend is False:
-                mtf_bonus -= 10  # Counter-trend penalty: 15m bullish but 1h bearish
-            # else: None means data missing -> neutral, no penalty
-            
-            # Triple alignment bonus (15m + 1h + 1d all bullish)
-            if indicators.get("ema_1h_trend_up") and indicators.get("is_1d_bullish"):
-                mtf_bonus += 5  # Full alignment = highest conviction
+            # REMOVED: mtf_bonus was causing double-counting of the 1H Trend Up L2 booster.
             
             # [V17] SECTOR HEAT GATING (Structural Filter)
             sector_boost = 0
@@ -426,17 +429,20 @@ class IntradayEngine:
                 # NEW: Negative heat becomes a negative sector_boost, handled by L3 regime penalties
                 if heat < -0.005:
                     sector_boost = -10  # Penalty instead of hard reject
+                    l2_data.setdefault("reasons", []).append({"text": "Penalty: Weak Sector Heat", "impact": sector_boost})
                 elif heat > 0:
                     # Scale boost: 5 pts for 0.5% heat, max 10 pts
                     sector_boost = min(10, heat * 1000)
+                    l2_data.setdefault("reasons", []).append({"text": "Alpha: Sector Heat Catalyst", "impact": round(sector_boost, 1)})
             
             # [V19 APEX-F] SECTOR ROTATION ALPHA
             # Stock outperforming a hot sector = institutional rotation play
             rotation_boost = 0
             if rs_alpha > 0.002 and heat > 0.005:
                 rotation_boost = min(8, heat * 800)  # +4 for 0.5% heat, +8 for 1%+
+                l2_data.setdefault("reasons", []).append({"text": "Alpha: Institutional Sector Rotation", "impact": round(rotation_boost, 1)})
             
-            base_score = max(0, min(100, l1_score + l2_score + rs_contribution + mtf_bonus + sector_boost + rotation_boost))
+            base_score = max(0, min(100, l1_score + l2_score + rs_contribution + sector_boost + rotation_boost))
             
             # F21 FIX: Inject Daily Macro Trend Data BEFORE Level 3 execution
             df_1d = pulse_data.get(sym, {}).get("1d") if pulse_data else None
@@ -1628,11 +1634,11 @@ class IntradayEngine:
         elif is_below_ema and has_conviction and not is_trade_short:
             penalty += 10; reasons.append({"text": "Caution: Below EMA20 (smart gate recovery in progress)", "impact": -10})
         
-        distance_ema = abs((price - ema20) / ema20) * 100
+        distance_ema_atr = abs(price - ema20) / max(atr, 1e-6)
         
-        # P2 FIX: Tightened chop threshold to 0.8 to avoid double-penalizing stocks with RVOL 1.0-1.2
-        # OLD: rvol < 1.2 fired BOTH chop (-10) AND low RVOL (-15) = -25 total for normal volume
-        if distance_ema < 0.5 and alpha_mode != "PULLBACK" and rvol < 0.8: 
+        # [PHASE 1 FIX] Normalize Chop Distance to ATR instead of arbitrary 0.5%
+        # Tightened chop threshold to 0.25 ATR to adapt to stock volatility
+        if distance_ema_atr < 0.25 and alpha_mode != "PULLBACK" and rvol < 0.8: 
             penalty += 10; reasons.append({"text": "Penalty: Too close to EMA on dead volume (chop risk)", "impact": -10})
         
         if rvol < 0.8: 
@@ -1647,10 +1653,14 @@ class IntradayEngine:
         # OLD: Applied after L3 cap, bypassing MAX_L3_PENALTY protection
         # NEW: Inside L3, subject to cap. Exempts MOMENTUM/BREAKOUT/OPENING_DRIVE
         #      because their alpha IS distance from VWAP — penalizing extension is circular
-        if alpha_mode not in ["MOMENTUM", "MOMENTUM_EXTENDED", "BREAKOUT", "BREAKOUT_RETEST", "OPENING_DRIVE"]:
-            vwap_chase_dist = abs(price - indicators.get("vwap_val", price)) / max(atr, 1e-6)
+        # [PHASE 1 FIX] Absolute VWAP Extension Guard
+        # Exempts MOMENTUM/BREAKOUT/OPENING_DRIVE from minor chase, but absolutely penalizes > 3.0 ATR extension
+        vwap_chase_dist = abs(price - indicators.get("vwap_val", price)) / max(atr, 1e-6)
+        is_exempt_alpha = alpha_mode in ["MOMENTUM", "MOMENTUM_EXTENDED", "BREAKOUT", "BREAKOUT_RETEST", "OPENING_DRIVE"]
+        
+        if not is_exempt_alpha or vwap_chase_dist > 3.0:
             if vwap_chase_dist > 1.5:
-                chase_pen = 15 if vwap_chase_dist > 2.5 else 10
+                chase_pen = 25 if vwap_chase_dist > 3.0 else (15 if vwap_chase_dist > 2.5 else 10)
                 penalty += chase_pen; reasons.append({"text": f"Penalty: VWAP Chase ({vwap_chase_dist:.1f} ATR away)", "impact": -chase_pen})
             
         # [V24 V4-FIX 2] Volume Climax / Absorption Trap
@@ -1678,10 +1688,18 @@ class IntradayEngine:
         
         last_candle = df_15m.iloc[-1]; high, low, close = last_candle['high'], last_candle['low'], last_candle['close']
         candle_range = high - low
+        # [PHASE 1 FIX] Volume-Confirmed Rejections
+        # A wick is only institutional rejection if volume is high. Otherwise, it's just low-liquidity noise.
+        try:
+            vol_ma = df_15m['volume'].rolling(20).mean().iloc[-1]
+            curr_vol = df_15m['volume'].iloc[-1]
+            is_high_volume_wick = curr_vol > vol_ma
+        except:
+            is_high_volume_wick = True  # Fail-safe
+            
         # P8 FIX: Only penalize upper wick on BEARISH candles (close < open)
-        # OLD: fired on ANY candle with close in bottom half — including bullish hammers
-        if candle_range > 0 and (high - close) / candle_range > 0.5 and close < last_candle['open']:
-            penalty += 15; reasons.append({"text": "Penalty: Bearish upper wick (selling pressure)", "impact": -15})
+        if candle_range > 0 and (high - close) / candle_range > 0.5 and close < last_candle['open'] and is_high_volume_wick:
+            penalty += 15; reasons.append({"text": "Penalty: Bearish upper wick (high volume selling pressure)", "impact": -15})
             
         # [V23 FIX #12] RR Gate Revival — use actual L2 dynamic zones when available
         # OLD: rr_ratio = (atr * reward_mult) / (atr * 1.5) = CONSTANT 1.33 or 2.0 — gate NEVER fired
@@ -1694,18 +1712,16 @@ class IntradayEngine:
             actual_risk = price - dynamic_sl
             rr_ratio = actual_reward / max(actual_risk, 1e-6)
         else:
-            # [V32 P5 FIX] Use realistic SL/Target instead of constant atr ratio
-            # OLD: rr = (atr * 2.0) / (atr * 1.5) = 1.33 ALWAYS — zero discrimination
-            # NEW: Use the same ATR-based SL/Target the output section computes
+            # [PHASE 1 FIX] Prevent artificial RR penalties on unmapped charts.
+            # If we don't have dynamic L2 zones and no clear pivots, assume a momentum-based trailing target 
+            # rather than hardcoding a failing RR ratio that triggers the penalty.
             actual_sl_distance = max(atr * (2.0 if indicators.get("india_vix", 15) > 20 else 1.5), price * 0.005)
-            # Use pivot-based nearest resistance if available
             pivot_vals = [v for v in indicators.get("pivots", {}).values() if isinstance(v, (int, float)) and v > price * 1.002]
             if pivot_vals:
                 nearest_reward = min(pivot_vals) - price
+                rr_ratio = nearest_reward / max(actual_sl_distance, 1e-6)
             else:
-                reward_mult = 3.0 if rvol > 2.5 else 2.0
-                nearest_reward = atr * reward_mult
-            rr_ratio = nearest_reward / max(actual_sl_distance, 1e-6)
+                rr_ratio = 1.5  # Assumed viable RR for momentum run
         
         if rr_ratio < 1.2: 
             penalty += 15; reasons.append({"text": f"Penalty: Poor Risk/Reward ({rr_ratio:.1f})", "impact": -15})
@@ -1767,9 +1783,13 @@ class IntradayEngine:
             is_trade_short = "SHORT" in alpha_mode
             
             # Strong bearish: Nifty trending down with confirmed ADX strength
+            # Only penalize when Nifty is clearly bearish (> 0.3% down), with scaled severity
+            day_chg = abs(market_ctx.get("day_change_pct", 0.0))
             if market_trend == "BEARISH" and regime_strength in ["STRONG_TREND", "WEAK_TREND"]:
                 if not is_trade_short:
-                    penalty += 20; reasons.append({"text": "Penalty: Extreme Market Weakness (Nifty Bearish Trend)", "impact": -20})
+                    # Scale penalty: -10 for mild dip (0.3-0.75%), -20 for strong sell-off (>0.75%)
+                    pen_val = 20 if day_chg > 0.75 else 10
+                    penalty += pen_val; reasons.append({"text": f"Penalty: Market Weakness (Nifty {market_ctx.get('day_change_pct', 0):.2f}%)", "impact": -pen_val})
             
             # Choppy market with no institutional volume = fade everything (Longs & Shorts)
             elif regime_strength == "CHOP" and rvol < 2.0:
@@ -1927,9 +1947,12 @@ class IntradayEngine:
         else:
             MAX_L3_PENALTY = max(30, int(l1_l2_combined * 0.55))
         
-        if penalty > MAX_L3_PENALTY:
+        has_hard_reject = any("HARD REJECT" in r.get("text", "") for r in reasons)
+        if penalty > MAX_L3_PENALTY and not has_hard_reject:
             penalty = MAX_L3_PENALTY
             reasons.append({"text": f"System: L3 Penalty Capped at Maximum (-{MAX_L3_PENALTY} max)", "impact": 0})
+        elif has_hard_reject and penalty > MAX_L3_PENALTY:
+            reasons.append({"text": f"System: L3 Penalty Cap Bypassed (Hard Reject Active)", "impact": 0})
         
         return penalty, {"penalty": penalty, "reasons": reasons}
 

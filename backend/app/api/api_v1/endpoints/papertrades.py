@@ -90,16 +90,26 @@ async def get_paper_trades(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PaperTrade).order_by(PaperTrade.buy_time.desc()))
     trades = result.scalars().all()
     
-    # Batch fetch prices for all OPEN trades for maximum efficiency (Phase 102)
     open_symbols = [t.symbol for t in trades if t.status == "OPEN"]
     live_prices = {}
     if open_symbols:
         try:
-            # Set a tight timeout for live price enrichment to avoid 500/timeout in UI
-            live_prices = await asyncio.wait_for(market_service.get_batch_prices(open_symbols), timeout=5.0)
+            from app.services.kite_data import kite_data
+            if kite_data.is_ready:
+                live_prices = await kite_data.get_ltp(open_symbols)
+            else:
+                # Trigger background reconnect if disconnected
+                if not getattr(kite_data, '_is_reconnecting', False):
+                    kite_data._is_reconnecting = True
+                    async def background_reconnect():
+                        print("🔄 [PAPER TRADING] Kite disconnected. Triggering background auto-login...")
+                        try:
+                            await kite_data.initialize()
+                        finally:
+                            kite_data._is_reconnecting = False
+                    asyncio.create_task(background_reconnect())
         except Exception as e:
-            # If batch sync takes too long or fails, we silently fallback to ensure the list loads
-            print(f"⚠️ Batch sync skipped (Timeout/Limit): {e}")
+            print(f"⚠️ Simple Kite LTP sync failed: {e}")
 
     # Enrich trades with live data (or fallbacks)
     enriched_trades = []

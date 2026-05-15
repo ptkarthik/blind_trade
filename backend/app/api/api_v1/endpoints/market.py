@@ -51,3 +51,16 @@ async def search_stocks(q: str):
         return []
     results = await market_service.search_symbols(q)
     return results
+
+@router.get("/kite/status")
+async def get_kite_status():
+    """Returns Kite Connect connection status and login URL if needed."""
+    from app.services.kite_data import kite_data
+    return kite_data.get_status()
+
+@router.post("/kite/login")
+async def trigger_kite_login():
+    """Re-initializes Kite Connect and returns login URL."""
+    from app.services.kite_data import kite_data
+    await kite_data.initialize()
+    return kite_data.get_status()

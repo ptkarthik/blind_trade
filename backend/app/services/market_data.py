@@ -17,6 +17,7 @@ import urllib3
 import traceback
 import numpy as np
 from datetime import datetime
+from app.services.kite_data import kite_data
 
 # Suppress InsecureRequestWarning for proxies
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -43,7 +44,10 @@ class MarketDataService:
     async def initialize(self):
         """[V11 RESTORED] Async Initialization Pulse."""
         self._load_master_list()
-        print(f"📦 MarketDataService: Systems Online ({len(self.stock_master)} symbols).")
+        # Initialize Kite Connect (loads saved session or prompts login)
+        await kite_data.initialize()
+        kite_status = "CONNECTED" if kite_data.is_ready else "FALLBACK (Yahoo)"
+        print(f"📦 MarketDataService: Systems Online ({len(self.stock_master)} symbols). Data: {kite_status}")
 
     def _load_master_list(self):
         """[V11 RESTORED] Loads Nifty 500+ Universe."""
@@ -116,6 +120,38 @@ class MarketDataService:
             "FMCG": "^CNXFMCG", "Infrastructure": "^CNXINFRA", "Pharma": "^CNXPHARMA", "Metal": "^CNXMETAL"
         }
 
+    async def search_symbols(self, query: str) -> list:
+        """[KITE UPGRADE] Search for stocks using Kite's active instrument list."""
+        if not query: return []
+        q = query.upper()
+        results = []
+        
+        try:
+            if kite_data.is_ready and hasattr(kite_data, '_instruments'):
+                for sym in kite_data._instruments.keys():
+                    if q in sym:
+                        results.append({
+                            "symbol": f"{sym}.NS",
+                            "name": sym,
+                            "sector": self.SECTOR_MAP.get(sym, "General")
+                        })
+                        if len(results) >= 15:
+                            break
+                if results:
+                    return results
+        except Exception as e:
+            print(f"⚠️ [SEARCH] Kite search failed: {e}")
+            
+        # Fallback
+        for item in self.stock_master:
+            name_val = item.get("name", "")
+            sym_val = item.get("symbol", "")
+            if q in sym_val.upper() or q in name_val.upper():
+                results.append(item)
+                if len(results) >= 15:
+                    break
+        return results
+
     async def get_live_price(self, symbol: str) -> Dict[str, Any]:
         """[V11 RESTORED] Credit-Aware Price Fetcher."""
         current_time = time.time()
@@ -159,95 +195,130 @@ class MarketDataService:
             return await self._fetch_live_with_proxy(symbol)
 
     async def get_batch_ohlc(self, symbols: list[str], period: str = "7d", interval: str = "15m") -> Dict[str, pd.DataFrame]:
-        """[V12.2 REPAIRED] High-Velocity Concurrent Pulse Loader."""
+        """[V12.2 REPAIRED] High-Velocity Concurrent Pulse Loader.
+        
+        [KITE UPGRADE] Tries Kite Connect first for historical data,
+        then falls back to Yahoo Fast for any symbols that failed.
+        """
         results = {}
-        batch_size = 60 # Increased from 30 for higher throughput
-        concurrent_batches = 2 # Increased from 1 to allow some parallel sub-batches
+        remaining_symbols = list(symbols)
         
-        all_chunks = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+        # ── TIER 1: Kite Connect (Primary — only for small batches) ──
+        # Kite Historical API = 3 req/sec → 1,300 symbols = ~7 min (SLOW)
+        # Yahoo batch = 10 parallel = ~3 min for same (FASTER for bulk)
+        # Use Kite only for ≤50 symbols (index context, re-scans, paper monitor)
+        if kite_data.is_ready and len(symbols) <= 50:
+            try:
+                kite_results = await kite_data.fetch_batch(remaining_symbols, interval=interval, period=period)
+                if kite_results:
+                    results.update(kite_results)
+                    remaining_symbols = [s for s in remaining_symbols if s not in kite_results]
+                    if len(kite_results) > 5:
+                        print(f"✅ [KITE] Fetched {len(kite_results)}/{len(symbols)} symbols. {len(remaining_symbols)} remaining for Yahoo.")
+            except Exception as e:
+                print(f"⚠️ [KITE] Batch fetch failed, falling back to Yahoo: {e}")
         
-        for i in range(0, len(all_chunks), concurrent_batches):
-            group = all_chunks[i:i + concurrent_batches]
+        # ── TIER 2: Yahoo Fast (Fallback for failures) ──
+        if remaining_symbols:
+            batch_size = 60
+            concurrent_batches = 2
+            all_chunks = [remaining_symbols[i:i + batch_size] for i in range(0, len(remaining_symbols), batch_size)]
             
-            async def _process_chunk(chunk):
-                batch_results = {}
-                proxy = await proxy_manager.get_proxy()
-                # Faster Humanize: Reduced from 1.0-3.0 to 0.2-0.5 for Grow Plan performance
-                await asyncio.sleep(random.uniform(0.2, 0.5))
+            for i in range(0, len(all_chunks), concurrent_batches):
+                group = all_chunks[i:i + concurrent_batches]
                 
-                # [V12.4 HYPER-SPEED RESTORATION] 🚀
-                from app.services.yahoo_fast import yahoo_fast
-                try:
-                    # Mimic the 'Sequential 5 symbols a second' logic by using Parallel Ribbons
-                    batch_results = await yahoo_fast.fetch_batch(chunk, interval=interval, period=period, concurrency=10)
+                async def _process_chunk(chunk):
+                    batch_results = {}
+                    proxy = await proxy_manager.get_proxy()
+                    await asyncio.sleep(random.uniform(0.2, 0.5))
                     
-                    if not batch_results and self.td and i == 0:
-                        # TwelveData as last resort for Nifty 50 only
-                        print(f"🆘 [YAHOO BLOCKED] Invoking TwelveData Failover for batch...")
-                        for s in chunk:
-                            try:
-                                td_df = self.td.time_series(symbol=s, interval=interval, outputsize=50).as_pandas()
-                                if not td_df.empty:
-                                    td_df.columns = [c.lower() for c in td_df.columns]
-                                    batch_results[s] = td_df
-                            except Exception as e:
-                                print(f"⚠️ [TD FAILOVER] {s}: {e}")
-                                continue
-                    
-                    return batch_results
-                except Exception as e:
-                    print(f"❌ [API FAIL] Batch fetch failed. Error: {str(e)}")
-                    # V21.2 FIX: Don't just return {} silently. Log the failure explicitly.
-                    import traceback
-                    traceback.print_exc()
-                    return {}
+                    from app.services.yahoo_fast import yahoo_fast
+                    try:
+                        batch_results = await yahoo_fast.fetch_batch(chunk, interval=interval, period=period, concurrency=10)
+                        
+                        if not batch_results and self.td and i == 0:
+                            print(f"🆘 [YAHOO BLOCKED] Invoking TwelveData Failover for batch...")
+                            for s in chunk:
+                                try:
+                                    td_df = self.td.time_series(symbol=s, interval=interval, outputsize=50).as_pandas()
+                                    if not td_df.empty:
+                                        td_df.columns = [c.lower() for c in td_df.columns]
+                                        batch_results[s] = td_df
+                                except Exception as e:
+                                    print(f"⚠️ [TD FAILOVER] {s}: {e}")
+                                    continue
+                        
+                        return batch_results
+                    except Exception as e:
+                        print(f"❌ [API FAIL] Batch fetch failed. Error: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        return {}
 
-            # Fire batches in the current group concurrently (now limited to 1)
-            pulse_tasks = [_process_chunk(chunk) for chunk in group]
-            batch_outputs = await asyncio.gather(*pulse_tasks)
-            
-            for b_res in batch_outputs:
-                results.update(b_res)
-            
-            # [V12.2 GUARD] Balanced delay between batches
-            await asyncio.sleep(1.5) 
+                pulse_tasks = [_process_chunk(chunk) for chunk in group]
+                batch_outputs = await asyncio.gather(*pulse_tasks)
+                
+                for b_res in batch_outputs:
+                    results.update(b_res)
+                
+                await asyncio.sleep(1.5)
             
         return results
 
     async def get_batch_prices(self, symbols: list[str]) -> Dict[str, Dict[str, Any]]:
-        """[V12 REPAIRED] High-Velocity Price Pulse."""
+        """[V12 REPAIRED] High-Velocity Price Pulse.
+        
+        [KITE UPGRADE] Uses Kite LTP API for instant bulk quotes,
+        falls back to Yahoo yf.download for failures.
+        """
         results = {}
-        batch_size = 150
-        for i in range(0, len(symbols), batch_size):
-            chunk = symbols[i:i + batch_size]
-            proxy = await proxy_manager.get_proxy()
+        remaining = list(symbols)
+        
+        # ── TIER 1: Kite LTP (Primary — instant bulk quotes) ──
+        if kite_data.is_ready:
             try:
-                def _batch(): 
-                    return yf.download(
-                        chunk, period="1d", interval="15m", 
-                        group_by='ticker', progress=False, threads=True, 
-                        proxy=proxy, session=self.session
-                    )
-                df_batch = await asyncio.to_thread(_batch)
-                for s in chunk:
-                    try:
-                        if isinstance(df_batch.columns, pd.MultiIndex):
-                            sdf = df_batch[s] if s in df_batch.columns.levels[0] else None
-                        else: sdf = df_batch
-                        
-                        if sdf is not None and not sdf.empty:
-                            p = float(sdf['Close'].iloc[-1])
-                            op = float(sdf['Open'].iloc[0])
-                            results[s] = {"price": p, "change_percent": round(((p-op)/op)*100 if op else 0, 2)}
-                    except: continue
-                await asyncio.sleep(0.3) # Faster guard for price pulse
-            except: continue
+                kite_prices = await kite_data.get_ltp(symbols)
+                if kite_prices:
+                    results.update(kite_prices)
+                    remaining = [s for s in symbols if s not in kite_prices]
+            except Exception as e:
+                print(f"⚠️ [KITE] LTP fetch failed: {e}")
+        
+        # ── TIER 2: Yahoo (Fallback) ──
+        if remaining:
+            batch_size = 150
+            for i in range(0, len(remaining), batch_size):
+                chunk = remaining[i:i + batch_size]
+                proxy = await proxy_manager.get_proxy()
+                try:
+                    def _batch(): 
+                        return yf.download(
+                            chunk, period="1d", interval="15m", 
+                            group_by='ticker', progress=False, threads=True, 
+                            proxy=proxy, session=self.session
+                        )
+                    df_batch = await asyncio.to_thread(_batch)
+                    for s in chunk:
+                        try:
+                            if isinstance(df_batch.columns, pd.MultiIndex):
+                                sdf = df_batch[s] if s in df_batch.columns.levels[0] else None
+                            else: sdf = df_batch
+                            
+                            if sdf is not None and not sdf.empty:
+                                p = float(sdf['Close'].iloc[-1])
+                                op = float(sdf['Open'].iloc[0])
+                                results[s] = {"price": p, "change_percent": round(((p-op)/op)*100 if op else 0, 2)}
+                        except: continue
+                    await asyncio.sleep(0.3)
+                except: continue
         return results
 
     async def get_advance_decline_ratio(self) -> float:
-        """[V18 FIX #11] Professional A/D Ratio with 30-stock sample for statistical significance."""
+        """[V18 FIX #11] Professional A/D Ratio with 30-stock sample for statistical significance.
+        
+        [KITE UPGRADE] Uses Kite bulk LTP for instant, reliable breadth signal.
+        """
         try:
-            # Expanded from 8 to 30 Nifty 50 components for reliable breadth signal
             nifty_sample = [
                 "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
                 "HUL.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
@@ -257,8 +328,12 @@ class MarketDataService:
                 "M&M.NS", "TATAMOTORS.NS", "ADANIENT.NS", "TECHM.NS", "HCLTECH.NS"
             ]
             prices = await self.get_batch_prices(nifty_sample)
-            adv = sum(1 for p in prices.values() if p.get("change_percent", 0) > 0)
-            dec = len(prices) - adv
+            # Only count stocks that returned valid price data
+            valid_prices = {k: v for k, v in prices.items() if v.get("price", 0) > 0}
+            if len(valid_prices) < 10:
+                return 1.0
+            adv = sum(1 for p in valid_prices.values() if p.get("change_percent", 0) > 0)
+            dec = len(valid_prices) - adv
             return adv / max(dec, 1)
         except: return 1.0
 
@@ -342,6 +417,17 @@ class MarketDataService:
             return {"status": "OPEN", "nifty_50": 0.0, "india_vix": 15.0}
 
     async def get_ohlc(self, symbol: str, period: str = "30d", interval: str = "1d", fast_fail: bool=False):
+        """[KITE UPGRADE] Single-symbol OHLC with Kite-first fallback chain."""
+        # ── TIER 1: Kite Connect ──
+        if kite_data.is_ready:
+            try:
+                df = await kite_data.fetch_ohlc(symbol, period=period, interval=interval)
+                if not df.empty:
+                    return df
+            except Exception:
+                pass
+
+        # ── TIER 2: Yahoo Direct ──
         proxy = await proxy_manager.get_proxy()
         try:
             def _fetch(): 
@@ -353,7 +439,7 @@ class MarketDataService:
         except Exception as e:
             print(f"[OHLC] Direct Yahoo fetch failed for {symbol}: {e}")
         
-        # [V12.3 SINGLE FAILOVER] 🆘
+        # ── TIER 3: TwelveData ──
         if self.td:
             try:
                 td_df = self.td.time_series(symbol=symbol, interval=interval, outputsize=50).as_pandas()

@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     MARKET_DATA_PROVIDER: str = "twelvedata" # default
 
     # -----------------------------------------------------------------------
+    # ZERODHA KITE CONNECT
+    # -----------------------------------------------------------------------
+    KITE_API_KEY: str | None = None
+    KITE_API_SECRET: str | None = None
+    KITE_USER_ID: str | None = None
+    KITE_PASSWORD: str | None = None
+    KITE_TOTP_SECRET: str | None = None
+
+    # -----------------------------------------------------------------------
     # REDIS (CACHE)
     # -----------------------------------------------------------------------
     REDIS_HOST: str = "localhost"

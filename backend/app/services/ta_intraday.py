@@ -961,23 +961,35 @@ class IntradayTechnicalAnalysis:
             breakout_level = 0
             breakout_level_source = "None"
             
-            # 1. Higher Priority: Previous Day High (Within 3% range)
-            if pdh > 0 and current_price > 0 and abs(pdh - current_price) / current_price < 0.03:
+            # [PHASE 2 FIX] ATR-Aware Proximity Threshold
+            # Replaced rigid 3% band with 1.5 ATR to adapt to high-VIX environments
+            try:
+                from ta.volatility import AverageTrueRange
+                _atr_series = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+                atr = _atr_series.iloc[-1]
+                if pd.isna(atr) or atr == 0: atr = current_price * 0.015
+            except Exception:
+                atr = current_price * 0.015
+                
+            proximity_band = max(1.5 * atr, current_price * 0.005)
+            
+            # 1. Higher Priority: Previous Day High
+            if pdh > 0 and current_price > 0 and abs(pdh - current_price) < proximity_band:
                 breakout_level = pdh
                 breakout_level_source = "Prev_Day_High"
             
             # 2. Medium Priority: Opening Range High (If PDH not valid)
-            elif orb_high > 0 and current_price > 0 and abs(orb_high - current_price) / current_price < 0.03:
+            elif orb_high > 0 and current_price > 0 and abs(orb_high - current_price) < proximity_band:
                 breakout_level = orb_high
                 breakout_level_source = "OR_High"
                 
             # 3. Standard Priority: Swing High (If others not valid)
-            elif swing_high > 0 and current_price > 0 and abs(swing_high - current_price) / current_price < 0.03:
+            elif swing_high > 0 and current_price > 0 and abs(swing_high - current_price) < proximity_band:
                 breakout_level = swing_high
                 breakout_level_source = "Swing_High"
                 
             # 4. Fallback: VWAP Res
-            elif vwap_res > 0 and current_price > 0 and abs(vwap_res - current_price) / current_price < 0.03:
+            elif vwap_res > 0 and current_price > 0 and abs(vwap_res - current_price) < proximity_band:
                 breakout_level = vwap_res
                 breakout_level_source = "VWAP_Res"
             
