@@ -163,7 +163,7 @@ export function PaperTradingView() {
                                         <div>
                                             <h3 className="text-lg font-black text-slate-800 leading-tight">{trade.symbol}</h3>
                                             <p className="text-[10px] font-bold text-muted-foreground flex items-center gap-1 opacity-70">
-                                                <Clock size={10} /> {new Date(trade.buy_time).toLocaleTimeString()}
+                                                <Clock size={10} /> {new Date(trade.buy_time.endsWith('Z') ? trade.buy_time : trade.buy_time + 'Z').toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
                                             </p>
                                         </div>
                                         <div className="text-right">
