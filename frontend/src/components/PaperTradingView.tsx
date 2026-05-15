@@ -59,8 +59,8 @@ export function PaperTradingView() {
     useEffect(() => {
         fetchData();
         
-        // Auto-Refresh Live P&L every 60 seconds
-        const interval = setInterval(fetchData, 60000);
+        // Auto-Refresh Live P&L every 10 seconds for near-real-time prices
+        const interval = setInterval(fetchData, 10000);
         return () => clearInterval(interval);
     }, []);
 
@@ -143,7 +143,7 @@ export function PaperTradingView() {
                 <div className="flex items-center gap-2">
                     <Activity className="text-primary h-5 w-5" />
                     <h2 className="text-xl font-black tracking-tight uppercase">Active Positions ({openTrades.length})</h2>
-                    {openTrades.length > 0 && <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-1 ml-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Prices Syncing</span>}
+                    {openTrades.length > 0 && <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-1 ml-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live · 10s</span>}
                 </div>
 
                 {openTrades.length === 0 ? (

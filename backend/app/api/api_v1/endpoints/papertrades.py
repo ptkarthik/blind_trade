@@ -93,23 +93,34 @@ async def get_paper_trades(db: AsyncSession = Depends(get_db)):
     open_symbols = [t.symbol for t in trades if t.status == "OPEN"]
     live_prices = {}
     if open_symbols:
+        from app.services.kite_data import kite_data
+        print(f"📊 [PAPER TRADES] Fetching live prices for {len(open_symbols)} positions. Kite ready: {kite_data.is_ready}")
         try:
-            from app.services.kite_data import kite_data
             if kite_data.is_ready:
                 live_prices = await kite_data.get_ltp(open_symbols)
+                print(f"✅ [PAPER TRADES] Kite LTP returned {len(live_prices)} prices")
             else:
-                # Trigger background reconnect if disconnected
+                # Eagerly attempt re-initialization (with timeout) so THIS request benefits
                 if not getattr(kite_data, '_is_reconnecting', False):
                     kite_data._is_reconnecting = True
-                    async def background_reconnect():
-                        print("🔄 [PAPER TRADING] Kite disconnected. Triggering background auto-login...")
-                        try:
-                            await kite_data.initialize()
-                        finally:
-                            kite_data._is_reconnecting = False
-                    asyncio.create_task(background_reconnect())
+                    print("🔄 [PAPER TRADES] Kite not ready. Attempting eager re-init (15s timeout)...")
+                    try:
+                        await asyncio.wait_for(kite_data.initialize(), timeout=15.0)
+                        if kite_data.is_ready:
+                            live_prices = await kite_data.get_ltp(open_symbols)
+                            print(f"✅ [PAPER TRADES] Kite re-init successful! Got {len(live_prices)} prices")
+                        else:
+                            print("⚠️ [PAPER TRADES] Kite re-init completed but still not ready")
+                    except asyncio.TimeoutError:
+                        print("⏱️ [PAPER TRADES] Kite re-init timed out (15s). Will retry next poll.")
+                    except Exception as e:
+                        print(f"⚠️ [PAPER TRADES] Kite re-init failed: {e}")
+                    finally:
+                        kite_data._is_reconnecting = False
+                else:
+                    print("⏳ [PAPER TRADES] Kite reconnect already in progress, using fallback")
         except Exception as e:
-            print(f"⚠️ Simple Kite LTP sync failed: {e}")
+            print(f"⚠️ [PAPER TRADES] Kite LTP sync failed: {e}")
 
     # Enrich trades with live data (or fallbacks)
     enriched_trades = []
@@ -133,10 +144,10 @@ async def get_paper_trades(db: AsyncSession = Depends(get_db)):
                 trade_dict["current_price"] = current_price
                 trade_dict["is_live"] = is_live
                 trade_dict["price_source"] = source
+                print(f"   💰 {t.symbol}: Buy={t.buy_price} → Live={current_price} ({source}) {'✅' if is_live else '⚠️ FALLBACK'}")
             enriched_trades.append(trade_dict)
         except Exception as e:
             print(f"⚠️ Error enriching trade {t.id}: {e}")
-            # Ensure we at least return the basic trade data
             enriched_trades.append({c.name: getattr(t, c.name) for c in t.__table__.columns})
         
     return sanitize_data(enriched_trades)
