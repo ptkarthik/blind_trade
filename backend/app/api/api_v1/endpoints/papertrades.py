@@ -53,6 +53,24 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     
     account = await get_or_create_account(db)
     
+    # [AUDIT GAP-3] SECTOR CONCENTRATION RISK FILTER
+    # Prevent taking >3 positions in the same sector (avoids massive correlated drawdowns)
+    open_trades_result = await db.execute(select(PaperTrade).where(PaperTrade.status == "OPEN"))
+    open_trades = open_trades_result.scalars().all()
+    
+    if open_trades:
+        new_sector = market_service.get_sector_for_symbol(symbol)
+        if new_sector and new_sector != "General" and new_sector != "Unknown":
+            same_sector_count = sum(
+                1 for t in open_trades 
+                if market_service.get_sector_for_symbol(t.symbol) == new_sector
+            )
+            if same_sector_count >= 3:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Sector Concentration Limit: Already have {same_sector_count} open trades in {new_sector}"
+                )
+    
     # [FIX] Apply realistic 0.12% execution slippage to entry
     is_short = True if (order_data.get("stop_loss", 0) > price) else False
     entry_slip = price * 0.0012
@@ -164,18 +182,40 @@ async def close_paper_trade(trade_id: str, close_data: dict = Body(None), db: As
     if not trade:
         raise HTTPException(status_code=404, detail="Open trade not found")
     
-    # Get latest price (with fallback if market is throttled)
+    # Get latest price — Kite first, Yahoo fallback, buy_price last resort
+    current_val = 0.0
+    price_source = "NONE"
+    
+    # TIER 1: Kite LTP (real-time exchange price)
     try:
-        current_price_data = await market_service.get_latest_price(trade.symbol)
-        current_val = current_price_data.get("price", 0.0)
-    except Exception:
-        current_val = 0.0
-        
+        from app.services.kite_data import kite_data
+        if kite_data.is_ready:
+            ltp_result = await kite_data.get_ltp([trade.symbol])
+            if ltp_result and trade.symbol in ltp_result:
+                current_val = ltp_result[trade.symbol].get("price", 0.0)
+                if current_val > 0:
+                    price_source = "Kite"
+    except Exception as e:
+        print(f"[CLOSE] Kite LTP failed: {e}")
+    
+    # TIER 2: Yahoo batch prices
     if not current_val:
-        # Final Fallback: If YF is totally blocked, use the BUY PRICE as a fallback
-        # to ensure the user can at least clear the position with zero loss/gain
-        print(f"⚠️ Market data blocked for {trade.symbol}. Using fallback Buy Price.")
+        try:
+            prices = await market_service.get_batch_prices([trade.symbol])
+            if prices and trade.symbol in prices:
+                current_val = prices[trade.symbol].get("price", 0.0)
+                if current_val > 0:
+                    price_source = "Yahoo"
+        except Exception as e:
+            print(f"[CLOSE] Yahoo price failed: {e}")
+    
+    # TIER 3: Last resort — buy price
+    if not current_val:
+        print(f"⚠️ [CLOSE] All price sources failed for {trade.symbol}. Using buy price as fallback.")
         current_val = trade.buy_price
+        price_source = "FALLBACK"
+    
+    print(f"💰 [CLOSE] {trade.symbol}: Sell at ₹{current_val:.2f} (source: {price_source})")
     
     # Update trade
     trade.sell_price = current_val

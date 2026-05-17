@@ -29,9 +29,46 @@ class PaperMonitor:
         """
         Main logic loop to monitor open positions.
         - Optimized to use Batch Price fetching (Phase 102).
+        - [AUDIT GAP-2] Daily P&L Circuit Breaker prevents catastrophic loss days.
         """
         async with AsyncSessionLocal() as session:
             try:
+                # [AUDIT GAP-2] DAILY P&L CIRCUIT BREAKER
+                # If today's realized losses exceed -2% of capital, stop active management.
+                # Positions will still hit their hard SL/TP but no trailing/advanced exits.
+                ist_now = self.get_ist_now()
+                today_start_utc = (ist_now.replace(hour=0, minute=0, second=0, microsecond=0) 
+                                   - (ist_now.utcoffset() or __import__('datetime').timedelta(0)))
+                
+                from sqlalchemy import func, case, and_
+                daily_pnl_query = select(
+                    func.coalesce(func.sum(
+                        case(
+                            (and_(PaperTrade.stop_loss != None, PaperTrade.stop_loss > PaperTrade.buy_price),
+                             (PaperTrade.buy_price - PaperTrade.sell_price) * PaperTrade.qty),
+                            else_=(PaperTrade.sell_price - PaperTrade.buy_price) * PaperTrade.qty
+                        )
+                    ), 0)
+                ).where(
+                    PaperTrade.status == "CLOSED",
+                    PaperTrade.sell_time >= today_start_utc.replace(tzinfo=None)
+                )
+                daily_pnl_result = await session.execute(daily_pnl_query)
+                today_pnl = float(daily_pnl_result.scalar() or 0)
+                
+                CIRCUIT_BREAKER_CAPITAL = 1000000.0  # ₹10L base
+                CIRCUIT_BREAKER_PCT = 0.02           # -2% daily max loss
+                
+                if today_pnl < -(CIRCUIT_BREAKER_CAPITAL * CIRCUIT_BREAKER_PCT):
+                    if not getattr(self, '_circuit_breaker_logged', False):
+                        logger.warning(f"🚨 [CIRCUIT BREAKER] Daily loss ₹{today_pnl:,.0f} exceeds "
+                                      f"-{CIRCUIT_BREAKER_PCT*100}% threshold. "
+                                      f"Active position management SUSPENDED for today.")
+                        self._circuit_breaker_logged = True
+                    return  # Let positions hit natural SL/TP
+                else:
+                    self._circuit_breaker_logged = False
+                
                 # 1. Get all OPEN trades
                 result = await session.execute(
                     select(PaperTrade).where(PaperTrade.status == "OPEN")

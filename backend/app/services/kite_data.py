@@ -533,6 +533,98 @@ class KiteDataService:
                 logger.error(f"❌ [KITE] Quote fetch failed: {e}")
             return {}
 
+    async def get_market_depth(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """[AUDIT GAP-C] Fetches Level-2 market depth (bid/ask order flow) from Kite.
+        
+        Returns: {symbol: {
+            "buy_quantity": int,      # Total bid volume across 5 levels
+            "sell_quantity": int,     # Total ask volume across 5 levels
+            "bid_ask_ratio": float,  # buy_qty / sell_qty — >2.0 = institutional buying
+            "spread_pct": float,     # (best_ask - best_bid) / mid_price × 100
+            "depth_imbalance": str,  # "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL"
+        }}
+        
+        This replaces the CVD proxy (close-position-in-range) with REAL order book data.
+        When Kite is not connected, returns empty dict (caller falls back to CVD proxy).
+        """
+        if not self.is_ready or not symbols:
+            return {}
+
+        # Build token list (same as get_ltp)
+        token_to_sym = {}
+        nse_tokens = []
+        for sym in symbols:
+            token = self.get_token(sym)
+            if token:
+                key = f"NSE:{sym.replace('.NS', '').upper()}"
+                token_to_sym[key] = sym
+                nse_tokens.append(key)
+
+        if not nse_tokens:
+            return {}
+
+        try:
+            all_quotes = {}
+            for i in range(0, len(nse_tokens), 500):
+                batch = nse_tokens[i:i+500]
+                quotes = await asyncio.to_thread(self._kite.quote, batch)
+                all_quotes.update(quotes)
+
+            result = {}
+            for key, data in all_quotes.items():
+                sym = token_to_sym.get(key)
+                if sym:
+                    buy_qty = data.get("buy_quantity", 0)
+                    sell_qty = data.get("sell_quantity", 0)
+                    depth = data.get("depth", {})
+                    
+                    # Calculate bid-ask spread from top of book
+                    spread_pct = 0.0
+                    best_bid = 0.0
+                    best_ask = 0.0
+                    buy_depth = depth.get("buy", [])
+                    sell_depth = depth.get("sell", [])
+                    
+                    if buy_depth and sell_depth:
+                        best_bid = buy_depth[0].get("price", 0)
+                        best_ask = sell_depth[0].get("price", 0)
+                        if best_bid > 0 and best_ask > 0:
+                            mid_price = (best_bid + best_ask) / 2
+                            spread_pct = ((best_ask - best_bid) / mid_price) * 100
+                    
+                    # Bid/Ask ratio: institutional flow signal
+                    ratio = buy_qty / max(sell_qty, 1)
+                    
+                    # Classify imbalance
+                    if ratio >= 3.0:
+                        imbalance = "STRONG_BUY"
+                    elif ratio >= 2.0:
+                        imbalance = "BUY"
+                    elif ratio <= 0.33:
+                        imbalance = "STRONG_SELL"
+                    elif ratio <= 0.5:
+                        imbalance = "SELL"
+                    else:
+                        imbalance = "NEUTRAL"
+                    
+                    result[sym] = {
+                        "buy_quantity": buy_qty,
+                        "sell_quantity": sell_qty,
+                        "bid_ask_ratio": round(ratio, 2),
+                        "spread_pct": round(spread_pct, 4),
+                        "depth_imbalance": imbalance,
+                        "best_bid": best_bid,
+                        "best_ask": best_ask,
+                    }
+
+            return result
+
+        except Exception as e:
+            if "TokenException" in type(e).__name__:
+                self._is_ready = False
+            logger.debug(f"[KITE] Market depth fetch failed: {e}")
+            return {}
+
     async def get_index_ohlc(self, index_symbol: str = "NIFTY 50",
                               period: str = "7d", interval: str = "15m") -> pd.DataFrame:
         """Fetches index (Nifty/BankNifty) historical data.

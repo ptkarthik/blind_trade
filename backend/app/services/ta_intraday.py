@@ -532,11 +532,21 @@ class IntradayTechnicalAnalysis:
                 if col in df.columns:
                     df[col] = IntradayTechnicalAnalysis._ensure_series(df[col])
         try:
-            ema_9 = EMAIndicator(close=df['close'], window=9).ema_indicator().iloc[-1]
+            ema_9_series = EMAIndicator(close=df['close'], window=9).ema_indicator()
+            # [AUDIT GAP#1 FIX] Use previous candle's EMA9 as anchor, not current (which lags by up to 15m)
+            # The current candle's EMA includes the close we're reacting to — by the time it updates, price has moved.
+            # Anchoring to the previous candle's EMA gives us a stable reference to trigger INSTANTLY on touch.
+            ema_9_prev = ema_9_series.iloc[-2] if len(ema_9_series) >= 2 else ema_9_series.iloc[-1]
+            ema_9_current = ema_9_series.iloc[-1]
             vwap = IntradayTechnicalAnalysis.calculate_vwap(df)
-            # Check if price is within 0.5% of either support
-            near_ema = abs(current_price - ema_9) / current_price < 0.005
-            near_vwap = abs(current_price - vwap) / max(current_price, 1e-6) < 0.005
+            # [AUDIT GAP#1 FIX] Tightened proximity from 0.5% to 0.2% — 0.5% is too wide for intraday precision
+            # At 0.5%, a ₹1000 stock triggers pullback when ₹5 away from EMA — that's an entire ATR on most stocks.
+            near_ema = abs(current_price - ema_9_prev) / current_price <= 0.002
+            near_vwap = abs(current_price - vwap) / max(current_price, 1e-6) <= 0.002
+            
+            # [AUDIT GAP#1 FIX] Live bounce confirmation — price must be recovering (above current candle's open)
+            # Without this, we enter on falling knives that are crashing THROUGH the EMA, not bouncing off it.
+            is_bouncing_live = current_price > df['open'].iloc[-1]
             
             # Must be above 20 EMA to be a "Bullish" pullback
             ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
@@ -555,9 +565,9 @@ class IntradayTechnicalAnalysis:
                 is_vol_contracting = True # Pass if not enough data
                 
             return {
-                "is_pullback": (near_ema or near_vwap) and is_bullish and is_vol_contracting,
+                "is_pullback": (near_ema or near_vwap) and is_bullish and is_vol_contracting and is_bouncing_live,
                 "type": "9EMA" if near_ema else "VWAP" if near_vwap else "None",
-                "support_val": ema_9 if near_ema else vwap if near_vwap else 0
+                "support_val": ema_9_prev if near_ema else vwap if near_vwap else 0
             }
         except Exception as _e:
             _ta_logger.warning(f"[identify_pullback] {df.attrs.get('symbol','?')}: {_e}")

@@ -341,6 +341,7 @@ class IntradayEngine:
             regime = global_index_ctx.get("regime", "Mixed")
             # 1. DATA EXTRACTION & L1 DETECTION
             df_15m = None; df_1h = None; df_1d = None; real_price = 0.0
+            kite_depth = None  # [AUDIT GAP-C] Kite Level-2 order flow data
             if pulse_data and sym in pulse_data:
                 item = pulse_data[sym]
                 if isinstance(item, pd.DataFrame): df_15m = item
@@ -352,6 +353,8 @@ class IntradayEngine:
                     live_price = item.get("price", 0.0)
                     if live_price and live_price > 0:
                         real_price = float(live_price)
+                    # [AUDIT GAP-C] Extract Kite market depth if available
+                    kite_depth = item.get("kite_depth")
                 if real_price == 0.0 and df_15m is not None and not df_15m.empty:
                     real_price = float(df_15m['close'].iloc[-1])  # Fallback only
             else:
@@ -394,6 +397,10 @@ class IntradayEngine:
             #      Then called V4.5 AGAIN in L2 with correct context. = ~200ms wasted per stock.
             # NEW: Use indicators dict directly for flags. V4.5 only called once in L2.
             patterns = {}
+            
+            # [AUDIT GAP-C] Inject Kite market depth into indicators for L2 confluence
+            if kite_depth:
+                indicators["kite_depth"] = kite_depth
             
             # --- L2: SCORING ENGINE ---
             l1_score, l1_data = self._run_layer1(indicators)
@@ -442,7 +449,13 @@ class IntradayEngine:
                 rotation_boost = min(8, heat * 800)  # +4 for 0.5% heat, +8 for 1%+
                 l2_data.setdefault("reasons", []).append({"text": "Alpha: Institutional Sector Rotation", "impact": round(rotation_boost, 1)})
             
-            base_score = max(0, min(100, l1_score + l2_score + rs_contribution + sector_boost + rotation_boost))
+            # [AUDIT GAP#3 FIX] Cap total environmental alpha to ±20 to prevent score inflation
+            # Without this cap, RS(+15) + Sector(+10) + Rotation(+8) = +33 can push a bad technical
+            # setup (score 45) into Pioneer Prime territory (78+). The base technical L1+L2 must carry
+            # the signal — environmental alpha is confirmation, not the primary edge.
+            environmental_alpha = rs_contribution + sector_boost + rotation_boost
+            capped_alpha = max(min(environmental_alpha, 20), -20)
+            base_score = max(0, min(100, l1_score + l2_score + capped_alpha))
             
             # F21 FIX: Inject Daily Macro Trend Data BEFORE Level 3 execution
             df_1d = pulse_data.get(sym, {}).get("1d") if pulse_data else None
@@ -640,8 +653,19 @@ class IntradayEngine:
             
             # [V28 V8-FIX] Time-Weighted Edge Decay (Target Scaling)
             try:
-                now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
-                current_hour = now_ist.hour + (now_ist.minute / 60.0)
+                # [AUDIT GAP#5 FIX] Time decay must use candle timestamp, not wall clock.
+                # If we scan on a Sunday or backtest, wall clock time breaks the logic.
+                if df_15m is not None and not df_15m.empty:
+                    last_ts = df_15m.index[-1]
+                    if hasattr(last_ts, 'tzinfo') and last_ts.tzinfo is None:
+                        last_ts = last_ts.tz_localize('UTC').tz_convert('Asia/Kolkata')
+                    elif hasattr(last_ts, 'tz_convert'):
+                        last_ts = last_ts.tz_convert('Asia/Kolkata')
+                    current_hour = last_ts.hour + (last_ts.minute / 60.0)
+                else:
+                    now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
+                    current_hour = now_ist.hour + (now_ist.minute / 60.0)
+                
                 time_decay_factor = 1.0
                 if current_hour > 10.0:
                     # [V40 GAP#2 FIX] Slower decay (0.10/hr vs 0.12/hr), higher floor (0.5 vs 0.4)
@@ -653,9 +677,10 @@ class IntradayEngine:
 
             # Target: Nearest resistance/support level, capped by ATR extension
             atr_target_dist = max((atr * time_decay_factor) * (3.0 if india_vix > 20 else 2.0), real_price * 0.01)
-            # [V40 GAP#2 FIX] Enforce minimum 1.3 RR floor — no trade should enter with negative expectancy
-            _min_rr_target = atr_sl_dist * 1.3
-            atr_target_dist = max(atr_target_dist, _min_rr_target)
+            # [AUDIT GAP#2 FIX] REMOVED artificial 1.3 RR floor — this was extending the target past structural
+            # resistance, turning winning trades into stop-outs. The market doesn't care about our math.
+            # If structural resistance is at 1.0 RR, forcing the target to 1.3 RR just means we never hit it.
+            # Instead, we validate ACTUAL structural RR after target calculation and reject if < 1.2.
             atr_target = round(real_price - atr_target_dist if is_short else real_price + atr_target_dist, 2)
             
             pivot_data = indicators.get("pivots", {})
@@ -683,6 +708,15 @@ class IntradayEngine:
             if max_value > (adv20_dollar * 0.05):
                 target = round(real_price + ((target - real_price) * 0.75), 2)
             
+            # [AUDIT GAP#2 FIX] Structural RR Rejection Gate
+            # Validates the ACTUAL target/stop distance AFTER all structural adjustments.
+            # If the trade offers < 1.2 RR after deducting execution costs (~0.08%), reject it.
+            _structural_reward = abs(target - real_price) - (real_price * 0.0008)  # Deduct round-trip costs
+            _structural_risk = abs(stop_loss - real_price)  # [FIX] Use actual calculated stop-loss, not generic ATR
+            _structural_rr = _structural_reward / max(_structural_risk, 1e-6)
+            if _structural_rr < 1.2:
+                return {"symbol": sym, "skip_reason": f"Poor Structural RR ({_structural_rr:.2f} < 1.2). Artificial extension prevented."}
+            
             # [V24 V3-FIX 2] Execution Edge: Pin limit orders on defensive setups
             # [V40 GAP#1 FIX] Realistic slippage model calibrated from NSE microstructure
             # PULLBACK/SHORT_PULLBACK: Limit order pinning → near-zero slippage (existing logic)
@@ -692,12 +726,23 @@ class IntradayEngine:
             _slip_pct = _SLIPPAGE_MAP.get(liq_level, 0.0015)
             
             ideal_entry = real_price
+            # [AUDIT GAP#4 FIX] Zone Execution replaces passive limit pins
+            # OLD: Limit pin at EMA20 * 1.002 → you only get filled if price falls back to EMA,
+            #      which means the 15m trend is breaking (Adverse Selection = bleeding win rate)
+            # NEW: If price is ALREADY within 0.3% of EMA, execute at Market (zone is live).
+            #      If price has escaped the zone, reject — don't leave stale limit orders.
             if alpha_mode == "PULLBACK":
-                limit_pin = indicators.get("ema20", real_price) * 1.002
-                ideal_entry = min(real_price, limit_pin)
+                ema20_val = indicators.get("ema20", real_price)
+                if abs(real_price - ema20_val) / max(ema20_val, 1e-6) <= 0.003:
+                    ideal_entry = round(real_price * (1 + _slip_pct), 2)  # Market execution with slippage
+                else:
+                    return {"symbol": sym, "skip_reason": "Pullback price escaped execution zone (>0.3% from EMA20)"}
             elif alpha_mode == "SHORT_PULLBACK":
-                limit_pin = indicators.get("ema20", real_price) * 0.998
-                ideal_entry = max(real_price, limit_pin)
+                ema20_val = indicators.get("ema20", real_price)
+                if abs(real_price - ema20_val) / max(ema20_val, 1e-6) <= 0.003:
+                    ideal_entry = round(real_price * (1 - _slip_pct), 2)  # Market execution with slippage
+                else:
+                    return {"symbol": sym, "skip_reason": "Short Pullback price escaped execution zone (>0.3% from EMA20)"}
             else:
                 # Market order entry: apply adverse slippage (buy higher, short lower)
                 if is_short:
@@ -1280,8 +1325,11 @@ class IntradayEngine:
             
         # 2C. Momentum Phase
         # [V41 FIX] Block MOMENTUM pre-9:30 AM (it's fake momentum, just 1 candle deep)
-        elif is_trending and distance_vwap >= 1.0 and rvol > 1.5 and not is_pre_930:
-            alpha_mode = "MOMENTUM"; score += 40; reasons.append({"text": "MOMENTUM: Strong trend + volume", "impact": 40})
+        # [AUDIT GAP-A FIX] ATR-distance gate — reject if already extended > 1.5 ATR from EMA20
+        # Without this gate, MOMENTUM fires on stocks that have already moved 2-3% from their base.
+        # By the time you enter, the move is 60-70% done → poor RR, high mean-reversion risk.
+        elif is_trending and distance_vwap >= 1.0 and rvol > 1.5 and not is_pre_930 and (abs(price - ema20) / max(indicators.get("atr", 1e-6), 1e-6)) < 1.5:
+            alpha_mode = "MOMENTUM"; score += 40; reasons.append({"text": "MOMENTUM: Strong trend + volume (within 1.5 ATR)", "impact": 40})
         
         # [V23 FIX #15] OPENING DRIVE DETECTION (9:15-9:45) — Moved BEFORE EARLY mode
         # OLD: Only fired when alpha_mode == "NONE", so gap-and-go setups were mislabeled as EARLY
@@ -1320,8 +1368,10 @@ class IntradayEngine:
 
         # 2D. Early Phase Base (Catch-all for standard healthy setups that aren't explosive yet)
         # [V32 P1 FIX] Reduced from 45 to 30 — EARLY is lowest conviction, shouldn't outscore PULLBACK
-        if alpha_mode == "NONE" and is_near_vwap and is_trending and structure_ok:
-            alpha_mode = "EARLY"; score += 20; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure (low conviction)", "impact": 20})
+        # [AUDIT GAP-B FIX] Require RVOL > 1.2 — without at least above-average volume,
+        # there's no institutional interest to drive the move. EARLY trades without volume are coin-flips.
+        if alpha_mode == "NONE" and is_near_vwap and is_trending and structure_ok and rvol > 1.2:
+            alpha_mode = "EARLY"; score += 20; reasons.append({"text": "EARLY: Near VWAP + Trend + Structure + Volume (low conviction)", "impact": 20})
             
         # 2E. SHORT Phase (Bearish setups)
         if alpha_mode == "NONE" and not is_trending and distance_vwap < -1.0 and rvol > 1.5 and not is_pre_930:
@@ -1416,14 +1466,40 @@ class IntradayEngine:
             elif squeeze.get("is_squeeze"):
                 score += 3; reasons.append({"text": "Confluence: Squeeze Building (coiling energy)", "impact": 3})
             
-            # 3. CVD Accumulation
-            cvd = indicators.get("cvd", {})
-            if is_short_alpha:
-                if cvd.get("score", 50) <= 25:
-                    score += 5; reasons.append({"text": f"Confluence: Institutional Distribution (CVD {cvd.get('cvd_ratio', 0):+.0%})", "impact": 5})
+            # 3. Order Flow Accumulation
+            # [AUDIT GAP-C] Use Kite L2 depth (REAL bid/ask) when available, fallback to CVD proxy
+            kite_depth = indicators.get("kite_depth")
+            if kite_depth:
+                # REAL order flow from Kite Level-2 market depth
+                depth_imbalance = kite_depth.get("depth_imbalance", "NEUTRAL")
+                bid_ask_ratio = kite_depth.get("bid_ask_ratio", 1.0)
+                spread_pct = kite_depth.get("spread_pct", 0.0)
+                
+                if is_short_alpha:
+                    if depth_imbalance in ["SELL", "STRONG_SELL"]:
+                        bonus = 10 if depth_imbalance == "STRONG_SELL" else 7
+                        score += bonus; reasons.append({"text": f"Confluence: Kite L2 Sell Pressure (Bid/Ask {bid_ask_ratio:.1f})", "impact": bonus})
+                    elif depth_imbalance in ["BUY", "STRONG_BUY"]:
+                        score -= 7; reasons.append({"text": f"Warning: Kite L2 Buy Support (Bid/Ask {bid_ask_ratio:.1f})", "impact": -7})
+                else:
+                    if depth_imbalance in ["BUY", "STRONG_BUY"]:
+                        bonus = 10 if depth_imbalance == "STRONG_BUY" else 7
+                        score += bonus; reasons.append({"text": f"Confluence: Kite L2 Buy Pressure (Bid/Ask {bid_ask_ratio:.1f})", "impact": bonus})
+                    elif depth_imbalance in ["SELL", "STRONG_SELL"]:
+                        score -= 7; reasons.append({"text": f"Warning: Kite L2 Sell Pressure (Bid/Ask {bid_ask_ratio:.1f})", "impact": -7})
+                
+                # Wide spread penalty — illiquid stocks have wider spreads
+                if spread_pct > 0.15:
+                    score -= 5; reasons.append({"text": f"Warning: Wide Spread ({spread_pct:.2f}%, execution risk)", "impact": -5})
             else:
-                if cvd.get("score", 50) >= 75:
-                    score += 5; reasons.append({"text": f"Confluence: Institutional Accumulation (CVD {cvd.get('cvd_ratio', 0):+.0%})", "impact": 5})
+                # Fallback: CVD Proxy (close-position-in-range estimate)
+                cvd = indicators.get("cvd", {})
+                if is_short_alpha:
+                    if cvd.get("score", 50) <= 25:
+                        score += 3; reasons.append({"text": f"Confluence: Distribution Proxy (CVD {cvd.get('cvd_ratio', 0):+.0%})", "impact": 3})
+                else:
+                    if cvd.get("score", 50) >= 75:
+                        score += 3; reasons.append({"text": f"Confluence: Accumulation Proxy (CVD {cvd.get('cvd_ratio', 0):+.0%})", "impact": 3})
             
             # 4 & 8. Multi-Collinear Momentum Group (EMA Fan + MACD)
             ema_fan = indicators.get("ema_fan", {})
@@ -1860,14 +1936,27 @@ class IntradayEngine:
             p_val = 20 if rsi_div.get("severity") == "High" else 10
             penalty += p_val; reasons.append({"text": f"Penalty: Bullish RSI Divergence vs Short ({rsi_div.get('severity', 'Moderate')})", "impact": -p_val})
         
-        # [V35 GAP#3 FIX] CVD Distribution Penalty — institutional selling detected but never penalized
-        # CVD accumulation gets +5 in L2, but distribution had no L3 counterweight
-        cvd = indicators.get("cvd", {})
-        # [V43 AUDIT FIX #2] Only penalize Longs for distribution — for Shorts, distribution is confirmation
-        if cvd.get("score", 50) <= 25 and not is_trade_short:
-            penalty += 10; reasons.append({"text": "Penalty: Smart Money Distribution (CVD net selling)", "impact": -10})
-        elif cvd.get("score", 50) >= 75 and is_trade_short:
-            penalty += 10; reasons.append({"text": "Penalty: Smart Money Accumulation vs Short (CVD net buying)", "impact": -10})
+        # [V35 GAP#3 FIX] Order Flow Contradiction Penalty
+        # [AUDIT GAP-C] Use Kite L2 depth (REAL order flow) when available, fallback to CVD proxy
+        kite_depth = indicators.get("kite_depth")
+        if kite_depth:
+            depth_imbalance = kite_depth.get("depth_imbalance", "NEUTRAL")
+            bid_ask_ratio = kite_depth.get("bid_ask_ratio", 1.0)
+            # Penalize when real order flow contradicts trade direction
+            if not is_trade_short and depth_imbalance in ["SELL", "STRONG_SELL"]:
+                pen = 15 if depth_imbalance == "STRONG_SELL" else 10
+                penalty += pen; reasons.append({"text": f"Penalty: Kite L2 Sell Pressure vs Long (Bid/Ask {bid_ask_ratio:.1f})", "impact": -pen})
+            elif is_trade_short and depth_imbalance in ["BUY", "STRONG_BUY"]:
+                pen = 15 if depth_imbalance == "STRONG_BUY" else 10
+                penalty += pen; reasons.append({"text": f"Penalty: Kite L2 Buy Support vs Short (Bid/Ask {bid_ask_ratio:.1f})", "impact": -pen})
+        else:
+            # Fallback: CVD Proxy penalty
+            cvd = indicators.get("cvd", {})
+            # [V43 AUDIT FIX #2] Only penalize Longs for distribution — for Shorts, distribution is confirmation
+            if cvd.get("score", 50) <= 25 and not is_trade_short:
+                penalty += 10; reasons.append({"text": "Penalty: Smart Money Distribution (CVD net selling)", "impact": -10})
+            elif cvd.get("score", 50) >= 75 and is_trade_short:
+                penalty += 10; reasons.append({"text": "Penalty: Smart Money Accumulation vs Short (CVD net buying)", "impact": -10})
         
         # P12 FIX: Penalize Bearish EMA Fan (textbook downtrend structure)
         ema_fan = indicators.get("ema_fan", {})
@@ -2020,23 +2109,50 @@ class IntradayEngine:
                     return {"action": "EXIT", "reason": f"Time Decay Exit ({hold_duration:.1f}h held, {pnl_pct*100:.2f}% gain)",
                             "urgency": "NEXT_CANDLE", "exit_price": current_price}
             
-            # 5. TRAILING STOP UPDATE — If in profit > 1 ATR, trail the stop up (or down for shorts)
+            # 5. PROGRESSIVE TRAILING STOP — [AUDIT GAP-D ENHANCEMENT]
+            # Multi-tier system: locks in more profit as the trade runs further
+            # Tier 1 (+0.5R): Lock breakeven — eliminate loss risk on winning trades
+            # Tier 2 (+1.0R): Trail with 1.2 ATR cushion — standard institutional trail
+            # Tier 3 (+2.0R): Tight trail with 0.8 ATR — lock most profit on runners
             unrealized_r = (entry_price - current_price) / max(atr, 1e-6) if is_short else (current_price - entry_price) / max(atr, 1e-6)
-            if unrealized_r > 1.0:
+            
+            if unrealized_r > 0.5:
                 if is_short:
-                    # Guarantee at least breakeven + spread (0.15%) locked in at +1R
-                    breakeven = entry_price * 0.9985
-                    dynamic_trail = current_price + (atr * 1.2)
-                    new_stop = min(stop_loss, min(breakeven, dynamic_trail))
+                    breakeven = entry_price * 0.9985  # Breakeven + spread (0.15%)
+                    
+                    if unrealized_r >= 2.0:
+                        # Tier 3: Tight trail (0.8 ATR) — lock in most profit on runners
+                        dynamic_trail = current_price + (atr * 0.8)
+                        new_stop = min(stop_loss, min(breakeven, dynamic_trail))
+                    elif unrealized_r >= 1.0:
+                        # Tier 2: Standard trail (1.2 ATR) — institutional standard
+                        dynamic_trail = current_price + (atr * 1.2)
+                        new_stop = min(stop_loss, min(breakeven, dynamic_trail))
+                    else:
+                        # Tier 1: Just lock breakeven — eliminate loss
+                        new_stop = min(stop_loss, breakeven)
+                    
                     trail_triggered = new_stop < stop_loss
                 else:
-                    breakeven = entry_price * 1.0015
-                    dynamic_trail = current_price - (atr * 1.2)
-                    new_stop = max(stop_loss, max(breakeven, dynamic_trail))
+                    breakeven = entry_price * 1.0015  # Breakeven + spread (0.15%)
+                    
+                    if unrealized_r >= 2.0:
+                        # Tier 3: Tight trail (0.8 ATR) — lock in most profit on runners
+                        dynamic_trail = current_price - (atr * 0.8)
+                        new_stop = max(stop_loss, max(breakeven, dynamic_trail))
+                    elif unrealized_r >= 1.0:
+                        # Tier 2: Standard trail (1.2 ATR) — institutional standard
+                        dynamic_trail = current_price - (atr * 1.2)
+                        new_stop = max(stop_loss, max(breakeven, dynamic_trail))
+                    else:
+                        # Tier 1: Just lock breakeven — eliminate loss
+                        new_stop = max(stop_loss, breakeven)
+                    
                     trail_triggered = new_stop > stop_loss
                     
                 if trail_triggered:
-                    return {"action": "TRAIL_STOP", "reason": f"Trailing Stop Update ({unrealized_r:.1f}R profit)",
+                    tier_label = "T3-Tight" if unrealized_r >= 2.0 else ("T2-Standard" if unrealized_r >= 1.0 else "T1-Breakeven")
+                    return {"action": "TRAIL_STOP", "reason": f"Trailing Stop {tier_label} ({unrealized_r:.1f}R profit)",
                             "urgency": "UPDATE", "new_stop": round(new_stop, 2)}
             
             dist_to_tgt = (current_price - target) / current_price if is_short else (target - current_price) / current_price
@@ -2112,13 +2228,16 @@ class IntradayEngine:
                 print(f"[BATCH] Pulse Batch: {i}/{total} ({len(chunk_syms)} symbols)")
                 
                 # 1. Fetch data for this specific batch (with 120s HARD TIMEOUT)
+                # [AUDIT GAP-C] Add Kite market depth fetch in parallel — zero latency cost
                 try:
-                    res_15m, res_1h, res_1d, res_prices = await asyncio.wait_for(
+                    from app.services.kite_data import kite_data
+                    res_15m, res_1h, res_1d, res_prices, res_depth = await asyncio.wait_for(
                         asyncio.gather(
                             market_service.get_batch_ohlc(chunk_syms, interval="15m", period="7d"),
                             market_service.get_batch_ohlc(chunk_syms, interval="60m", period="15d"),
                             market_service.get_batch_ohlc(chunk_syms, interval="1d", period="3mo"),  # V16 FIX 4: Daily trend data
-                            market_service.get_batch_prices(chunk_syms)
+                            market_service.get_batch_prices(chunk_syms),
+                            kite_data.get_market_depth(chunk_syms),  # [GAP-C] Real L2 order flow
                         ),
                         timeout=120.0
                     )
@@ -2134,10 +2253,17 @@ class IntradayEngine:
                     print(f"⚠️ [DATA QUALITY] Batch {i}: {empty_count}/{len(chunk_syms)} symbols returned EMPTY 15m data!")
                 if short_count > 0:
                     print(f"⚠️ [DATA QUALITY] Batch {i}: {short_count} symbols have <100 15m candles (degraded indicators)")
+                if res_depth:
+                    print(f"📊 [KITE DEPTH] Batch {i}: {len(res_depth)} symbols with L2 order flow data")
 
                 batch_pulse = {}
                 for s in chunk_syms:
-                    batch_pulse[s] = {"15m": res_15m.get(s), "1h": res_1h.get(s), "1d": res_1d.get(s), "price": res_prices.get(s, {}).get("price", 0.0)}
+                    pulse_entry = {"15m": res_15m.get(s), "1h": res_1h.get(s), "1d": res_1d.get(s), "price": res_prices.get(s, {}).get("price", 0.0)}
+                    # [AUDIT GAP-C] Inject Kite market depth into pulse data
+                    depth_info = res_depth.get(s) if res_depth else None
+                    if depth_info:
+                        pulse_entry["kite_depth"] = depth_info
+                    batch_pulse[s] = pulse_entry
 
                 # [V31 GAP#1 FIX] Build time-of-day RVOL benchmarks from 15m data
                 # This runs opportunistically during the scan — zero extra network cost
