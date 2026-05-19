@@ -60,26 +60,9 @@ async def startup_event():
     from app.services.portfolio_engine import portfolio_engine
     portfolio_engine.sync_active_positions(trade_manager.active_trades)
     
-    # 4. Reset any stuck jobs from previous runs
-    from app.db.session import AsyncSessionLocal
-    from app.models.job import Job
-    from sqlalchemy import select
-    
-    async with AsyncSessionLocal() as session:
-        # Reset any stuck jobs (Processing, Paused, or old Pending)
-        result = await session.execute(
-            select(Job).where(Job.status.in_(["processing", "paused", "pending"]))
-        )
-        stuck_jobs = result.scalars().all()
-        for job in stuck_jobs:
-            print(f"⚠️ Clearing stale job {job.id} ({job.status})")
-            job.status = "failed"
-            job.error_details = "System restarted while job was active."
-            if not job.result: job.result = {}
-            job.result["status_msg"] = "Cleaned up on Restart"
-            session.add(job)
-        if stuck_jobs:
-            await session.commit()
+    # 4. Cleanup disabled in API tier
+    # Background Runner is now handled by external Worker process (app.worker.worker_main)
+    # The worker has its own Zombie Job Reaper, so the API should not touch job states on reload.
             
     # Background Runner is now handled by external Worker process (app.worker.worker_main)
     print("API Startup Complete. Background Jobs System Ready.")

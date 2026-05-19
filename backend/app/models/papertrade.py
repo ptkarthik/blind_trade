@@ -18,6 +18,7 @@ class PaperTrade(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     symbol = Column(String, index=True)
+    trade_type = Column(String, default="PAPER") # PAPER, REAL
     qty = Column(Integer)
     buy_price = Column(Float)
     buy_time = Column(DateTime, default=datetime.utcnow)

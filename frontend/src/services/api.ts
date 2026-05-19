@@ -25,6 +25,11 @@ export const marketApi = {
     search: (query: string) => api.get(`/market/search?q=${query}`),
 };
 
+export const kiteApi = {
+    getStatus: () => api.get('/market/kite/status'),
+    login: () => api.post('/market/kite/login'),
+};
+
 export const signalApi = {
     getTodaySignals: (mode = 'swing', jobId?: string) => api.get(`/signals/today?mode=${mode}${jobId ? `&job_id=${jobId}` : ''}`),
     analyze: (symbol: string, mode = 'swing') => api.get(`/signals/${symbol}?mode=${mode}`),

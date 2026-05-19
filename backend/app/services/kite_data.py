@@ -522,6 +522,9 @@ class KiteDataService:
                         "volume": data.get("volume", 0),
                         "source": "Kite"
                     }
+                    
+            if result:
+                logger.info(f"⚡ [KITE DATA] Live Prices (LTP) successfully fetched for {len(result)} symbols")
 
             return result
 
@@ -616,6 +619,9 @@ class KiteDataService:
                         "best_bid": best_bid,
                         "best_ask": best_ask,
                     }
+
+            if result:
+                logger.info(f"⚡ [KITE DATA] Level-2 Market Depth successfully fetched for {len(result)} symbols")
 
             return result
 

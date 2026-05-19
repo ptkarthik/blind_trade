@@ -5,6 +5,9 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
 
+import asyncio
+from app.services.alert_monitor import alert_monitor
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,14 @@ def trigger_swing_scan():
             logger.error(f"❌ Failed to start Swing Scan: {response.text}")
     except Exception as e:
         logger.error(f"❌ Connection Error triggering Swing Scan: {e}")
+
+def trigger_market_summary():
+    """Trigger the half-hourly market summary notification."""
+    logger.info("🕒 Scheduled Event: Triggering Market Summary...")
+    try:
+        asyncio.run(alert_monitor.run_periodic_summary())
+    except Exception as e:
+        logger.error(f"❌ Error triggering Market Summary: {e}")
 
 if __name__ == "__main__":
     logger.info("🚀 Blind Trade Automated Scheduler Starting...")
@@ -83,6 +94,15 @@ if __name__ == "__main__":
         CronTrigger(day_of_week='mon-fri', hour=15, minute=15),
         id='swing_scan',
         name='Pre-close Swing Scan'
+    )
+
+    # 4. Half-Hourly Market Summary (9:15 AM to 3:30 PM)
+    # Cron: Every 30 minutes between 9 and 15 hours. We can refine to exact market hours if needed.
+    scheduler.add_job(
+        trigger_market_summary,
+        CronTrigger(day_of_week='mon-fri', hour='9-15', minute='0,30'),
+        id='market_summary',
+        name='Half-Hourly Market Summary'
     )
 
     try:

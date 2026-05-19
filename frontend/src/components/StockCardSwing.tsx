@@ -5,9 +5,10 @@ import { ScoreGauge } from './ScoreGauge';
 interface Props {
     signal: Signal;
     onClick: () => void;
+    onBuy?: (e: React.MouseEvent, tradeType: 'PAPER' | 'REAL') => void;
 }
 
-export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
+export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
     // Specialist Tag Parser
     const parseSetupTags = (setupStr: string) => {
         if (!setupStr) return [];
@@ -110,6 +111,30 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick }) => {
                     </div>
                 )}
             </div>
+
+            {/* --- ACTION BUTTONS (Manual Trade) --- */}
+            {onBuy && (
+                <div className="mt-4 pt-4 border-t border-border flex items-center justify-end gap-2 relative z-10">
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onBuy(e, 'PAPER');
+                        }}
+                        className="text-[10px] font-black uppercase px-3 py-1.5 rounded border transition-all text-emerald-600 bg-emerald-50 border-emerald-100 hover:bg-emerald-500 hover:text-white"
+                    >
+                        BUY (PAPER)
+                    </button>
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if(confirm("⚠️ Place REAL LIVE ORDER on Zerodha?")) onBuy(e, 'REAL');
+                        }}
+                        className="text-[10px] font-black uppercase px-3 py-1.5 rounded border transition-all shadow-sm text-white bg-emerald-600 border-emerald-700 hover:bg-emerald-700"
+                    >
+                        BUY (REAL)
+                    </button>
+                </div>
+            )}
         </div>
     );
 };

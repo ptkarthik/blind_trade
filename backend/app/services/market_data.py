@@ -213,8 +213,8 @@ class MarketDataService:
                 if kite_results:
                     results.update(kite_results)
                     remaining_symbols = [s for s in remaining_symbols if s not in kite_results]
-                    if len(kite_results) > 5:
-                        print(f"✅ [KITE] Fetched {len(kite_results)}/{len(symbols)} symbols. {len(remaining_symbols)} remaining for Yahoo.")
+                    if len(kite_results) > 0:
+                        print(f"✅ [DATA SOURCE] Fetched Historical OHLC for {len(kite_results)} symbols from KITE")
             except Exception as e:
                 print(f"⚠️ [KITE] Batch fetch failed, falling back to Yahoo: {e}")
         
@@ -260,6 +260,8 @@ class MarketDataService:
                 
                 for b_res in batch_outputs:
                     results.update(b_res)
+                    if b_res:
+                        print(f"🔄 [DATA SOURCE] Fetched Historical OHLC for {len(b_res)} symbols from YAHOO")
                 
                 await asyncio.sleep(1.5)
             
@@ -281,6 +283,7 @@ class MarketDataService:
                 if kite_prices:
                     results.update(kite_prices)
                     remaining = [s for s in symbols if s not in kite_prices]
+                    print(f"✅ [DATA SOURCE] Fetched Live Prices (LTP) for {len(kite_prices)} symbols from KITE")
             except Exception as e:
                 print(f"⚠️ [KITE] LTP fetch failed: {e}")
         
@@ -309,6 +312,8 @@ class MarketDataService:
                                 op = float(sdf['Open'].iloc[0])
                                 results[s] = {"price": p, "change_percent": round(((p-op)/op)*100 if op else 0, 2)}
                         except: continue
+                    if results:
+                        print(f"🔄 [DATA SOURCE] Fetched Live Prices for {len(chunk)} symbols from YAHOO")
                     await asyncio.sleep(0.3)
                 except: continue
         return results

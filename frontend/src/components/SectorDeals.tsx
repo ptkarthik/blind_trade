@@ -17,7 +17,7 @@ interface SectorDealsProps {
     data: Record<string, SectorData>;
     mode: 'intraday' | 'longterm' | 'swing';
     onSignalClick: (signal: Signal) => void;
-    onBuy?: (signal: Signal) => void;
+    onBuy?: (signal: Signal, tradeType: 'PAPER' | 'REAL') => void;
     stats?: {
         started_at?: string;
         finished_at?: string;
@@ -108,14 +108,14 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                     signal={signal} 
                     rank={idx + 1} 
                     onClick={() => onSignalClick(signal)} 
-                    onBuy={onBuy ? (e) => { e.stopPropagation(); onBuy(signal); } : undefined}
+                    onBuy={onBuy ? (e, tradeType) => { e.stopPropagation(); onBuy(signal, tradeType); } : undefined}
                 />
             );
         }
         if (mode === 'swing') {
-            return <StockCardSwing key={signal.symbol} signal={signal} onClick={() => onSignalClick(signal)} />;
+            return <StockCardSwing key={signal.symbol} signal={signal} onClick={() => onSignalClick(signal)} onBuy={onBuy ? (e, tradeType) => { e.stopPropagation(); onBuy(signal, tradeType); } : undefined} />;
         }
-        return <StockCardLongTerm key={signal.symbol} signal={signal} rank={idx + 1} onClick={() => onSignalClick(signal)} />;
+        return <StockCardLongTerm key={signal.symbol} signal={signal} rank={idx + 1} onClick={() => onSignalClick(signal)} onBuy={onBuy ? (e, tradeType) => { e.stopPropagation(); onBuy(signal, tradeType); } : undefined} />;
     };
 
     return (

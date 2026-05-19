@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     KITE_TOTP_SECRET: str | None = None
 
     # -----------------------------------------------------------------------
+    # NOTIFICATIONS
+    # -----------------------------------------------------------------------
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_CHAT_ID: str | None = None
+    TWILIO_ACCOUNT_SID: str | None = None
+    TWILIO_AUTH_TOKEN: str | None = None
+    TWILIO_WHATSAPP_FROM: str | None = None
+    TWILIO_WHATSAPP_TO: str | None = None
+
+    # -----------------------------------------------------------------------
     # REDIS (CACHE)
     # -----------------------------------------------------------------------
     REDIS_HOST: str = "localhost"

@@ -6,9 +6,10 @@ interface StockCardLongTermProps {
     signal: Signal;
     rank?: number;
     onClick: () => void;
+    onBuy?: (e: React.MouseEvent, tradeType: 'PAPER' | 'REAL') => void;
 }
 
-export function StockCardLongTerm({ signal, rank, onClick }: StockCardLongTermProps) {
+export function StockCardLongTerm({ signal, rank, onClick, onBuy }: StockCardLongTermProps) {
     if (!signal) return null;
 
     const isBuy = signal.signal === "BUY";
@@ -175,9 +176,33 @@ export function StockCardLongTerm({ signal, rank, onClick }: StockCardLongTermPr
                     )}
                 </div>
 
-                <button className={`text-xs font-bold px-4 py-2 rounded-lg text-white shadow-sm hover:shadow-md transition-all ${isBuy ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-600 hover:bg-slate-700"}`}>
-                    Analysis Report
-                </button>
+                <div className="flex items-center gap-2">
+                    {onBuy && (
+                        <div className="flex gap-1 z-20">
+                            <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onBuy(e, 'PAPER');
+                                }}
+                                className="text-[10px] font-black uppercase px-3 py-1.5 rounded border transition-all text-emerald-600 bg-emerald-50 border-emerald-100 hover:bg-emerald-500 hover:text-white"
+                            >
+                                BUY (PAPER)
+                            </button>
+                            <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if(confirm("⚠️ Place REAL LIVE ORDER on Zerodha?")) onBuy(e, 'REAL');
+                                }}
+                                className="text-[10px] font-black uppercase px-3 py-1.5 rounded border transition-all shadow-sm text-white bg-emerald-600 border-emerald-700 hover:bg-emerald-700"
+                            >
+                                BUY (REAL)
+                            </button>
+                        </div>
+                    )}
+                    <button className={`text-xs font-bold px-4 py-2 rounded-lg text-white shadow-sm hover:shadow-md transition-all ${isBuy ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-600 hover:bg-slate-700"}`}>
+                        Analysis Report
+                    </button>
+                </div>
             </div>
         </div>
     );

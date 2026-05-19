@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy import select, update
 from app.db.session import AsyncSessionLocal
 from app.models.swing_trade import SwingTrade
+from app.services.execution_engine import execution_engine
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,27 @@ class TradeManager:
             "confidence": trade.get("confidence")
         }
         
+        # --- [NEW] REAL-TIME ORDER EXECUTION ---
+        # Determine MIS vs CNC (Swing is typically CNC)
+        product_type = "CNC" if "swing" in trade_entry["strategy"].lower() else "MIS"
+        
+        # Place the order via Kite
+        order_res = execution_engine.place_order(
+            symbol=symbol,
+            transaction_type="BUY",
+            quantity=trade_entry["quantity"],
+            order_type="MARKET",  # Or LIMIT if entry price is strict
+            product=product_type
+        )
+        
+        if order_res.get("status") == "success":
+            trade_entry["kite_order_id"] = order_res.get("order_id")
+            logger.info(f"⚡ REAL TRADE EXECUTED for {symbol}: Order ID {trade_entry['kite_order_id']}")
+        else:
+            logger.error(f"❌ Failed to execute real trade for {symbol}: {order_res.get('message')}")
+            # If real trade fails, we might still want to track it as PAPER or abort. 
+            # For now, let's track it but log the failure.
+
         # Persist to Database
         async with AsyncSessionLocal() as session:
             try:
@@ -376,6 +398,21 @@ class TradeManager:
         # Calculate P&L and Performance Metrics
         initial_sl = trade.get("initial_stop_loss", trade["stop_loss"])
         R_unit = abs(trade["entry"] - initial_sl)
+        
+        # --- [NEW] REAL-TIME ORDER EXECUTION (EXIT) ---
+        product_type = "CNC" if "swing" in trade.get("strategy", "").lower() else "MIS"
+        order_res = execution_engine.place_order(
+            symbol=symbol,
+            transaction_type="SELL",
+            quantity=trade["quantity"],
+            order_type="MARKET",
+            product=product_type
+        )
+        if order_res.get("status") == "success":
+            logger.info(f"⚡ REAL TRADE CLOSED for {symbol}: Order ID {order_res.get('order_id')}")
+        else:
+            logger.error(f"❌ Failed to execute closing trade for {symbol}: {order_res.get('message')}")
+
         
         # Risk-Adjusted Return (R-Multiple)
         r_multiple = (exit_price - trade["entry"]) / R_unit if R_unit > 0 else 0

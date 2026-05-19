@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { marketApi, signalApi, jobsApi, papertradeApi, settingsApi } from './services/api';
+import { marketApi, signalApi, jobsApi, papertradeApi, settingsApi, kiteApi } from './services/api';
 import { AnalysisModal } from './components/AnalysisModal';
 import { SectorDeals } from './components/SectorDeals';
 import { PortfolioOptimizer } from './components/PortfolioOptimizer';
@@ -21,6 +21,10 @@ function App() {
   const [mode, setMode] = useState<'intraday' | 'longterm' | 'swing'>('intraday');
   const [loading, setLoading] = useState(false);
   const [autoRestart, setAutoRestart] = useState(true);
+
+  // Kite Status State
+  const [kiteStatus, setKiteStatus] = useState<any>(null);
+  const [isConnectingKite, setIsConnectingKite] = useState(false);
 
   // Progress State - Global Tracking
   const [jobStates, setJobStates] = useState<Record<string, any>>({});
@@ -164,24 +168,37 @@ function App() {
     // 1. Initial Market Status, Account Fetch & Settings
     const fetchData = async () => {
       try {
-        const [statusRes, accRes, settingsRes] = await Promise.all([
+        const [statusRes, accRes, settingsRes, kiteRes] = await Promise.all([
           marketApi.getStatus(),
           papertradeApi.getAccount(),
-          settingsApi.get('auto_restart').catch(() => ({ data: { value: 'true' } }))
+          settingsApi.get('auto_restart').catch(() => ({ data: { value: 'true' } })),
+          kiteApi.getStatus().catch(() => ({ data: null }))
         ]);
         setMarketStatus(statusRes.data);
         setVirtualBalance(accRes.data.balance);
         setAutoRestart(settingsRes.data.value.toLowerCase() === 'true');
+        setKiteStatus(kiteRes.data);
       } catch (error) {
         console.error("Failed to fetch initial data:", error);
       }
     };
     fetchData();
 
+    // Setup periodic Kite status polling (every 15s)
+    const kiteInterval = setInterval(async () => {
+        try {
+            const res = await kiteApi.getStatus();
+            setKiteStatus(res.data);
+        } catch (e) {}
+    }, 15000);
+
     // Mark that initial load is done after slight delay
     setTimeout(() => { isInitialMount.current = false; }, 1000);
 
-    return () => window.removeEventListener('error', handleError);
+    return () => {
+        window.removeEventListener('error', handleError);
+        clearInterval(kiteInterval);
+    };
   }, []);
 
   // 2. Poll Job Status (2s) - Using Web Worker for background reliability
@@ -357,8 +374,8 @@ function App() {
     setSearching(false);
   };
 
-  const handleBuyRequest = (signal: Signal) => {
-    setBuySignal(signal);
+  const handleBuyRequest = (signal: Signal, tradeType: 'PAPER' | 'REAL' = 'PAPER') => {
+    setBuySignal({ ...signal, _intendedTradeType: tradeType } as any);
     setIsBuyModalOpen(true);
   };
 
@@ -371,11 +388,12 @@ function App() {
         price: buySignal.price,
         target: buySignal.target,
         stop_loss: buySignal.stop_loss,
-        score: buySignal.score
+        score: buySignal.score,
+        trade_type: (buySignal as any)._intendedTradeType || 'PAPER'
       });
       setVirtualBalance(res.data.remaining_balance);
       setIsBuyModalOpen(false);
-      alert(`Success! Bought ${qty} shares of ${buySignal.symbol}`);
+      alert(`Success! ${(buySignal as any)._intendedTradeType === 'REAL' ? 'LIVE ORDER PLACED FOR' : 'Bought'} ${qty} shares of ${buySignal.symbol}`);
     } catch (err: any) {
       alert(err.response?.data?.detail || "Trade execution failed");
     }
@@ -413,7 +431,7 @@ function App() {
         <div className="container mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
             <Activity className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold tracking-tight">Blind Trade Engine</h1>
+            <h1 className="text-xl font-bold tracking-tight">King and Queens Trading</h1>
           </div>
 
           {/* Search Bar with Suggestions - Keyed by mode for state isolation */}
@@ -445,6 +463,46 @@ function App() {
               <span className={`text-[10px] font-bold ${autoRestart ? 'text-primary' : 'text-muted-foreground'}`}>
                 {autoRestart ? 'ON' : 'OFF'}
               </span>
+            </div>
+
+            {/* Kite Connection Status Toggle */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border border-border ${kiteStatus?.is_ready ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-destructive/10 border-destructive/20'}`}>
+               <span className="text-[10px] font-black tracking-widest uppercase text-muted-foreground">
+                KITE
+               </span>
+               <button
+                disabled={isConnectingKite || kiteStatus?.is_ready}
+                onClick={async () => {
+                   setIsConnectingKite(true);
+                   try {
+                       const res = await kiteApi.login();
+                       setKiteStatus(res.data);
+                       if (res.data.is_ready) {
+                           console.log("Kite Connected Successfully!");
+                       } else if (res.data.login_url) {
+                           console.warn("Auto-login failed. Please check backend console for manual login URL.");
+                       } else {
+                           console.error("Login failed. Check backend logs.");
+                       }
+                   } catch (e) {
+                       console.error("Failed to connect to Kite");
+                   } finally {
+                       setIsConnectingKite(false);
+                   }
+                }}
+                className={`relative inline-flex items-center rounded-full focus:outline-none ${isConnectingKite ? 'opacity-70' : 'hover:opacity-80'}`}
+               >
+                  {isConnectingKite ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  ) : (
+                      <>
+                        <span className={`w-3 h-3 rounded-full mr-1.5 ${kiteStatus?.is_ready ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse'}`}></span>
+                        <span className={`text-[10px] font-bold ${kiteStatus?.is_ready ? 'text-emerald-500' : 'text-destructive'}`}>
+                          {kiteStatus?.is_ready ? 'CONNECTED' : 'DISCONNECTED (CLICK)'}
+                        </span>
+                      </>
+                  )}
+               </button>
             </div>
 
             {/* Context-aware Start Button (Phase 90: Manual Override) */}
@@ -646,7 +704,7 @@ function App() {
                 <StockCardIntraday
                   signal={searchResult}
                   onClick={() => openAnalysis(searchResult)}
-                  onBuy={(e) => { e.stopPropagation(); handleBuyRequest(searchResult); }}
+                  onBuy={(e, tradeType) => { e.stopPropagation(); handleBuyRequest(searchResult, tradeType); }}
                 />
               ) : mode === 'swing' ? (
                 <StockCardSwing

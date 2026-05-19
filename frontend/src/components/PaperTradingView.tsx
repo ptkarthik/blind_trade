@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { papertradeApi } from '../services/api';
 import { Wallet, TrendingUp, TrendingDown, Clock, XCircle, RefreshCcw, Landmark, Activity, Calendar } from 'lucide-react';
 
@@ -13,6 +13,9 @@ interface Trade {
     sell_time: string;
     status: 'OPEN' | 'CLOSED';
     close_reason?: string;
+    trade_type?: string;
+    target?: number;
+    stop_loss?: number;
 }
 
 interface DailyHistory {
@@ -36,6 +39,8 @@ export function PaperTradingView() {
     const [trades, setTrades] = useState<Trade[]>([]);
     const [dailyHistory, setDailyHistory] = useState<DailyHistory[]>([]);
     const [loading, setLoading] = useState(true);
+    const [activeTradeTab, setActiveTradeTab] = useState<'PAPER' | 'REAL'>('PAPER');
+    const prevTradesRef = useRef<Trade[]>([]);
 
     const fetchData = async () => {
         // Only set loading on first fetch
@@ -47,8 +52,27 @@ export function PaperTradingView() {
                 papertradeApi.getDailyHistory()
             ]);
             setAccount(accRes.data);
-            setTrades(tradesRes.data);
+            
+            const currentTrades = tradesRes.data as Trade[];
+            setTrades(currentTrades);
             setDailyHistory(historyRes.data);
+
+            // Compare with previous state to trigger SL/Target alerts
+            if (prevTradesRef.current.length > 0) {
+                const prevOpen = prevTradesRef.current.filter(t => t.status === 'OPEN');
+                prevOpen.forEach(pt => {
+                    const ct = currentTrades.find(t => t.id === pt.id);
+                    if (ct && ct.status === 'CLOSED') {
+                        if (ct.close_reason === 'TARGET') {
+                            alert(`🎯 TARGET HIT: ${ct.symbol} automatically closed at ₹${ct.sell_price}`);
+                        } else if (ct.close_reason === 'STOP_LOSS') {
+                            alert(`🚨 STOP LOSS HIT: ${ct.symbol} automatically closed at ₹${ct.sell_price}`);
+                        }
+                    }
+                });
+            }
+            prevTradesRef.current = currentTrades;
+
         } catch (error) {
             console.error("Failed to fetch paper trading data", error);
         } finally {
@@ -75,7 +99,7 @@ export function PaperTradingView() {
     };
 
     const handleReset = async () => {
-        if (!confirm("Reset virtual balance to 10 Lakhs and clear P&L?")) return;
+        if (!confirm("Reset internal P&L tracking? (Does NOT affect actual Zerodha balance)")) return;
         try {
             await papertradeApi.resetAccount();
             fetchData();
@@ -88,15 +112,19 @@ export function PaperTradingView() {
         return <div className="flex justify-center py-20"><RefreshCcw className="animate-spin text-primary" /></div>;
     }
 
-    const openTrades = trades.filter(t => t.status === 'OPEN');
+    const filteredTrades = trades.filter(t => (t.trade_type || 'PAPER') === activeTradeTab);
+    const openTrades = filteredTrades.filter(t => t.status === 'OPEN');
     
-    // Calculate REAL TOTAL P&L (Realized + Unrealized)
+    // Calculate REAL TOTAL P&L (Realized + Unrealized) for the active tab
     const unrealizedPnl = openTrades.reduce((sum, t) => {
         const currentPrice = t.current_price || t.buy_price;
         return sum + (currentPrice - t.buy_price) * t.qty;
     }, 0);
     
-    const totalPnl = (account?.total_pnl || 0) + unrealizedPnl;
+    // We can show total PNL from account for PAPER, but REAL trades might just be the unrealized PNL 
+    // since the real account balance is tracked by Zerodha directly. 
+    // To keep it simple, we just show unrealized + total_pnl.
+    const totalPnl = (activeTradeTab === 'PAPER' ? account?.total_pnl || 0 : 0) + unrealizedPnl;
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -107,7 +135,7 @@ export function PaperTradingView() {
                         <Wallet className="text-primary h-8 w-8" />
                     </div>
                     <div>
-                        <p className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Virtual Balance</p>
+                        <p className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Account Balance</p>
                         <h2 className="text-3xl font-black font-mono">₹{account?.balance?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h2>
                     </div>
                 </div>
@@ -132,17 +160,33 @@ export function PaperTradingView() {
                         onClick={handleReset}
                         className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-destructive/30 text-destructive font-black uppercase text-xs hover:bg-destructive/5 transition-colors"
                     >
-                        <RefreshCcw size={14} /> Reset Virtual Money
+                        <RefreshCcw size={14} /> Reset Local Tracker
                     </button>
-                    <p className="text-[10px] text-center text-muted-foreground font-bold tracking-tight px-4">Starting Capital: ₹10,00,000</p>
+                    <p className="text-[10px] text-center text-muted-foreground font-bold tracking-tight px-4">Allocated Capital: ₹10,00,000</p>
                 </div>
+            </div>
+
+            {/* Tabs for Real vs Paper */}
+            <div className="flex bg-muted p-1 rounded-xl border border-border w-fit mx-auto md:mx-0">
+                <button
+                    onClick={() => setActiveTradeTab('PAPER')}
+                    className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTradeTab === 'PAPER' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                    PAPER TRADES
+                </button>
+                <button
+                    onClick={() => setActiveTradeTab('REAL')}
+                    className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTradeTab === 'REAL' ? 'bg-card shadow-sm text-red-500 border border-red-500/20' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                    LIVE REAL MONEY
+                </button>
             </div>
 
             {/* Active Trades */}
             <div className="space-y-4">
                 <div className="flex items-center gap-2">
-                    <Activity className="text-primary h-5 w-5" />
-                    <h2 className="text-xl font-black tracking-tight uppercase">Active Positions ({openTrades.length})</h2>
+                    <Activity className={activeTradeTab === 'REAL' ? 'text-red-500 h-5 w-5' : 'text-primary h-5 w-5'} />
+                    <h2 className="text-xl font-black tracking-tight uppercase">Active {activeTradeTab} Positions ({openTrades.length})</h2>
                     {openTrades.length > 0 && <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-1 ml-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live · 10s</span>}
                 </div>
 
@@ -176,7 +220,7 @@ export function PaperTradingView() {
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-2 bg-muted/20 p-2 rounded-lg border border-slate-100/50 mb-4 font-mono relative z-10 text-[11px]">
+                                    <div className="grid grid-cols-2 gap-2 bg-muted/20 p-2 rounded-lg border border-slate-100/50 mb-2 font-mono relative z-10 text-[11px]">
                                         <div>
                                             <p className="text-[8px] font-bold text-muted-foreground uppercase">Buy Price</p>
                                             <p className="font-bold">₹{trade.buy_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
@@ -186,6 +230,23 @@ export function PaperTradingView() {
                                             <p className="font-black text-emerald-600">₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
                                         </div>
                                     </div>
+                                    
+                                    {(trade.target || trade.stop_loss) && (
+                                        <div className="grid grid-cols-2 gap-2 bg-muted/10 p-2 rounded-lg border border-border mb-4 font-mono relative z-10 text-[11px]">
+                                            {trade.stop_loss && (
+                                                <div>
+                                                    <p className="text-[8px] font-bold text-muted-foreground uppercase">Stop Loss</p>
+                                                    <p className="font-bold text-red-500">₹{trade.stop_loss.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                                                </div>
+                                            )}
+                                            {trade.target && (
+                                                <div className={!trade.stop_loss ? "col-span-2 text-right" : "text-right"}>
+                                                    <p className="text-[8px] font-bold text-muted-foreground uppercase">Target</p>
+                                                    <p className="font-bold text-emerald-500">₹{trade.target.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     <button 
                                         onClick={() => handleCloseTrade(trade.id)}
@@ -208,7 +269,13 @@ export function PaperTradingView() {
                         <h2 className="text-xl font-black tracking-tight text-muted-foreground uppercase">Date-Wise Performance History</h2>
                     </div>
 
-                    {dailyHistory.map(day => (
+                    {dailyHistory.map(day => {
+                        const dayDetails = day.details.filter((d: any) => (d.trade_type || 'PAPER') === activeTradeTab);
+                        if (dayDetails.length === 0) return null;
+                        
+                        const dayPnl = dayDetails.reduce((sum: number, d: any) => sum + d.pnl, 0);
+
+                        return (
                         <div key={day.date} className="space-y-3">
                             <div className="flex items-center justify-between bg-muted/30 px-4 py-2 rounded-xl border border-border/50">
                                 <div className="flex items-center gap-2">
@@ -218,8 +285,8 @@ export function PaperTradingView() {
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Day P&L:</span>
-                                    <span className={`text-sm font-black font-mono ${day.total_pnl >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                                        {day.total_pnl >= 0 ? '+' : ''}₹{day.total_pnl.toLocaleString('en-IN')}
+                                    <span className={`text-sm font-black font-mono ${dayPnl >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                        {dayPnl >= 0 ? '+' : ''}₹{dayPnl.toLocaleString('en-IN')}
                                     </span>
                                 </div>
                             </div>
@@ -238,7 +305,7 @@ export function PaperTradingView() {
                                         </tr>
                                     </thead>
                                     <tbody className="text-sm font-medium">
-                                        {day.details.map((detail, idx) => (
+                                        {dayDetails.map((detail: any, idx: number) => (
                                             <tr key={`${day.date}-${detail.symbol}-${idx}`} className="hover:bg-muted/10 transition-colors">
                                                 <td className="p-4 border-b border-border">
                                                     <p className="font-black text-slate-700">{detail.symbol}</p>
@@ -279,7 +346,7 @@ export function PaperTradingView() {
                                 </table>
                             </div>
                         </div>
-                    ))}
+                    )})}
                 </div>
             )}
         </div>

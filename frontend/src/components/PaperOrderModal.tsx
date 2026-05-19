@@ -15,7 +15,10 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
     const [qty, setQty] = useState(1);
     const price = signal.price || 0;
     const totalCost = qty * price;
-    const canAfford = balance >= totalCost;
+    const tradeType = (signal as any)._intendedTradeType || 'PAPER';
+    const isReal = tradeType === 'REAL';
+    // Real trades don't use virtual balance, but we'll bypass the block if it's REAL
+    const canAfford = isReal || balance >= totalCost;
 
     if (!isOpen) return null;
 
@@ -28,8 +31,12 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
                             <ShoppingCart size={20} />
                         </div>
                         <div>
-                            <h3 className="font-black text-xl tracking-tight">Paper Trade: {signal.symbol}</h3>
-                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Execute Intraday Order (MIS)</p>
+                            <h3 className="font-black text-xl tracking-tight">
+                                {isReal ? 'LIVE TRADE: ' : 'Paper Trade: '}{signal.symbol}
+                            </h3>
+                            <p className={`text-[10px] font-bold uppercase tracking-widest ${isReal ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`}>
+                                {isReal ? 'REAL MONEY EXECUTION (MIS)' : 'Execute Virtual Order (MIS)'}
+                            </p>
                         </div>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-black/5 rounded-full transition-colors">
@@ -85,9 +92,9 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
                     <button 
                         disabled={!canAfford || qty <= 0}
                         onClick={() => onConfirm(qty)}
-                        className={`w-full py-4 rounded-2xl font-black uppercase text-sm tracking-widest shadow-lg transition-all transform active:scale-95 ${canAfford ? 'bg-primary text-primary-foreground hover:shadow-primary/20' : 'bg-muted text-muted-foreground cursor-not-allowed'}`}
+                        className={`w-full py-4 rounded-2xl font-black uppercase text-sm tracking-widest shadow-lg transition-all transform active:scale-95 ${!canAfford ? 'bg-muted text-muted-foreground cursor-not-allowed' : isReal ? 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/30 shadow-xl border-2 border-red-500' : 'bg-primary text-primary-foreground hover:shadow-primary/20'}`}
                     >
-                        CONFIRM PAPER BUY
+                        {isReal ? 'CONFIRM LIVE TRADE' : 'CONFIRM PAPER BUY'}
                     </button>
                 </div>
             </div>

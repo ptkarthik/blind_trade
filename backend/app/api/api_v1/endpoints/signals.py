@@ -199,9 +199,35 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
     Supports both 'longterm' and 'intraday' modes.
     """
     sym = symbol.strip().upper()
-    candidates = [sym]
-    if "." not in sym:
-        candidates = [f"{sym}.NS", f"{sym}.BO", sym]
+    candidates = []
+    
+    # [V45] Smart Ticker Resolution (Map Company Name to Ticker)
+    import json
+    import os
+    json_path = os.path.join("app", "data", "nifty500.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r") as f:
+                nifty_data = json.load(f)
+                for item in nifty_data:
+                    item_name = item.get("name", "").upper()
+                    item_sym = item.get("symbol", "").upper()
+                    
+                    # Exact ticker match first
+                    if sym == item_sym or sym == item_sym.replace(".NS", ""):
+                        if item_sym not in candidates: candidates.insert(0, item_sym)
+                    # Name match (e.g. "INFOSYS" in "INFOSYS LTD.")
+                    elif len(sym) >= 3 and sym in item_name:
+                        if item_sym not in candidates: candidates.append(item_sym)
+        except Exception as e:
+            print(f"Error resolving ticker from name: {e}")
+            
+    # Fallbacks if not found in list
+    if not candidates:
+        if "." not in sym:
+            candidates = [f"{sym}.NS", f"{sym}.BO", sym]
+        else:
+            candidates = [sym]
         
     print(f"📡 Real-Time Analysis: {sym} in {mode} mode")
     analysis = None
@@ -209,7 +235,7 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
     for s in candidates:
         try:
             if mode == "intraday":
-                analysis = await intraday_engine.analyze_stock(s, fast_fail=True)
+                analysis = await intraday_engine.analyze_stock(s)
             elif mode == "swing":
                 # Ensure Swing mode uses the specialized Swing Engine
                 from app.services.swing_engine import swing_engine
@@ -225,9 +251,15 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
                     weights=regime["weights"], 
                     regime_label=regime["label"], 
                     macro_data=macro,
-                    fast_fail=True
+                    fast_fail=False
                 )
-            if analysis: break
+            if analysis and "skip_reason" not in analysis: 
+                break
+            else:
+                if analysis and "skip_reason" in analysis:
+                    print(f"Engine ({mode}) skipped {s}: {analysis['skip_reason']}")
+                analysis = None # Reset for next candidate
+
         except Exception as e:
             print(f"Engine ({mode}) failed for {s}: {e}")
             continue

@@ -6,6 +6,7 @@ from app.db.session import get_db
 from app.models.papertrade import Account, PaperTrade
 from app.services.market_data import market_service
 from app.services.utils import sanitize_data
+from app.services.execution_engine import execution_engine
 import datetime
 from datetime import timezone, timedelta
 import uuid
@@ -47,6 +48,7 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     symbol = order_data.get("symbol")
     qty = order_data.get("qty")
     price = order_data.get("price")
+    trade_type = order_data.get("trade_type", "PAPER").upper()
     
     if not symbol or not qty or not price:
         raise HTTPException(status_code=400, detail="Missing order details")
@@ -78,15 +80,32 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     
     total_cost = qty * execution_price
     
-    if account.balance < total_cost:
+    if account.balance < total_cost and trade_type == "PAPER":
         raise HTTPException(status_code=400, detail="Insufficient virtual balance")
     
-    # Deduct balance
-    account.balance -= total_cost
+    # [REAL TRADE EXECUTION]
+    if trade_type == "REAL":
+        order_res = execution_engine.place_order(
+            symbol=symbol,
+            transaction_type="BUY",
+            quantity=qty,
+            order_type="MARKET",
+            product="MIS" # Default to Intraday MIS for UI scanner trades
+        )
+        if order_res.get("status") != "success":
+            raise HTTPException(status_code=500, detail=f"Kite execution failed: {order_res.get('message')}")
+        # Optionally, we might not deduct virtual balance for real trades, but let's keep it isolated or not.
+        # Actually, if it's a REAL trade, the real capital handles it, but let's deduct from the virtual tracker so the dashboard acts as a consolidated journal.
+        # However, a better approach is to not deduct virtual money.
+    
+    if trade_type == "PAPER":
+        # Deduct balance
+        account.balance -= total_cost
     
     # Create trade
     new_trade = PaperTrade(
         symbol=symbol,
+        trade_type=trade_type,
         qty=qty,
         buy_price=execution_price,
         target=order_data.get("target"),
@@ -139,6 +158,20 @@ async def get_paper_trades(db: AsyncSession = Depends(get_db)):
                     print("⏳ [PAPER TRADES] Kite reconnect already in progress, using fallback")
         except Exception as e:
             print(f"⚠️ [PAPER TRADES] Kite LTP sync failed: {e}")
+
+        # [FIX] TIER 2 FALLBACK: If Kite is not ready or missing symbols, fetch from Yahoo
+        missing_symbols = [sym for sym in open_symbols if sym not in live_prices]
+        if missing_symbols:
+            try:
+                print(f"🔄 [PAPER TRADES] Falling back to Yahoo for {len(missing_symbols)} missing symbols...")
+                yahoo_prices = await market_service.get_batch_prices(missing_symbols)
+                for sym, price_data in yahoo_prices.items():
+                    live_prices[sym] = {
+                        "price": price_data.get("price", 0.0),
+                        "source": "Yahoo"
+                    }
+            except Exception as e:
+                print(f"⚠️ [PAPER TRADES] Yahoo fallback failed: {e}")
 
     # Enrich trades with live data (or fallbacks)
     enriched_trades = []
@@ -223,6 +256,18 @@ async def close_paper_trade(trade_id: str, close_data: dict = Body(None), db: As
     trade.status = "CLOSED"
     trade.close_reason = close_data.get("reason", "MANUAL") if close_data else "MANUAL"
     
+    # [REAL TRADE EXECUTION (SELL)]
+    if getattr(trade, "trade_type", "PAPER") == "REAL":
+        order_res = execution_engine.place_order(
+            symbol=trade.symbol,
+            transaction_type="SELL",
+            quantity=trade.qty,
+            order_type="MARKET",
+            product="MIS"
+        )
+        if order_res.get("status") != "success":
+             print(f"❌ [CLOSE] Kite sell execution failed for {trade.symbol}: {order_res.get('message')}")
+
     # Update account balance and P&L
     account = await get_or_create_account(db)
     
@@ -234,7 +279,9 @@ async def close_paper_trade(trade_id: str, close_data: dict = Body(None), db: As
         proceeds = trade.qty * current_val
         pnl = proceeds - (trade.qty * trade.buy_price)
     
-    account.balance += proceeds
+    if getattr(trade, "trade_type", "PAPER") == "PAPER":
+        account.balance += proceeds
+        
     account.total_pnl += pnl
     
     await db.commit()
@@ -277,6 +324,7 @@ async def get_daily_history(db: AsyncSession = Depends(get_db)):
             "pnl_percent": round(pnl_percent, 2),
             "score": t.score_at_buy or 0,
             "reason": t.close_reason,
+            "trade_type": getattr(t, "trade_type", "PAPER"),
             "time": ist_time.strftime("%H:%M")
         })
 

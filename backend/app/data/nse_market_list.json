@@ -1278,12 +1278,6 @@
         "industry": "General"
     },
     {
-        "symbol": "BNAGROCHEM.NS",
-        "name": "BN Agrochem Limited",
-        "raw_symbol": "BNAGROCHEM",
-        "industry": "General"
-    },
-    {
         "symbol": "BODALCHEM.NS",
         "name": "Bodal Chemicals Limited",
         "raw_symbol": "BODALCHEM",
@@ -1884,12 +1878,6 @@
         "industry": "General"
     },
     {
-        "symbol": "DBREALTY.NS",
-        "name": "Valor Estate Limited",
-        "raw_symbol": "DBREALTY",
-        "industry": "General"
-    },
-    {
         "symbol": "DCAL.NS",
         "name": "Dishman Carbogen Amcis Limited",
         "raw_symbol": "DCAL",
@@ -1935,12 +1923,6 @@
         "symbol": "DECNGOLD.NS",
         "name": "Deccan Gold Mines Limited",
         "raw_symbol": "DECNGOLD",
-        "industry": "General"
-    },
-    {
-        "symbol": "DEEDEV.NS",
-        "name": "DEE Development Engineers Limited",
-        "raw_symbol": "DEEDEV",
         "industry": "General"
     },
     {
@@ -3450,12 +3432,6 @@
         "industry": "General"
     },
     {
-        "symbol": "IBULLSLTD.NS",
-        "name": "Indiabulls Limited",
-        "raw_symbol": "IBULLSLTD",
-        "industry": "General"
-    },
-    {
         "symbol": "ICEMAKE.NS",
         "name": "Ice Make Refrigeration Limited",
         "raw_symbol": "ICEMAKE",
@@ -3510,12 +3486,6 @@
         "industry": "General"
     },
     {
-        "symbol": "IDEAFORGE.NS",
-        "name": "Ideaforge Technology Limited",
-        "raw_symbol": "IDEAFORGE",
-        "industry": "General"
-    },
-    {
         "symbol": "IDFCFIRSTB.NS",
         "name": "IDFC First Bank Limited",
         "raw_symbol": "IDFCFIRSTB",
@@ -3525,12 +3495,6 @@
         "symbol": "IEX.NS",
         "name": "Indian Energy Exchange Limited",
         "raw_symbol": "IEX",
-        "industry": "General"
-    },
-    {
-        "symbol": "IFBAGRO.NS",
-        "name": "IFB Agro Industries Limited",
-        "raw_symbol": "IFBAGRO",
         "industry": "General"
     },
     {
@@ -3723,12 +3687,6 @@
         "symbol": "INDOSTAR.NS",
         "name": "IndoStar Capital Finance Limited",
         "raw_symbol": "INDOSTAR",
-        "industry": "General"
-    },
-    {
-        "symbol": "INDOTECH.NS",
-        "name": "Indo Tech Transformers Limited",
-        "raw_symbol": "INDOTECH",
         "industry": "General"
     },
     {
@@ -3969,12 +3927,6 @@
         "symbol": "JAGSNPHARM.NS",
         "name": "Jagsonpal Pharmaceuticals Limited",
         "raw_symbol": "JAGSNPHARM",
-        "industry": "General"
-    },
-    {
-        "symbol": "JAIBALAJI.NS",
-        "name": "Jai Balaji Industries Limited",
-        "raw_symbol": "JAIBALAJI",
         "industry": "General"
     },
     {
@@ -4374,12 +4326,6 @@
         "industry": "General"
     },
     {
-        "symbol": "KESORAMIND.NS",
-        "name": "Kesoram Industries Limited",
-        "raw_symbol": "KESORAMIND",
-        "industry": "General"
-    },
-    {
         "symbol": "KFINTECH.NS",
         "name": "Kfin Technologies Limited",
         "raw_symbol": "KFINTECH",
@@ -4575,12 +4521,6 @@
         "symbol": "KRISHNADEF.NS",
         "name": "Krishna Defence And Allied Industries Limited",
         "raw_symbol": "KRISHNADEF",
-        "industry": "General"
-    },
-    {
-        "symbol": "KRN.NS",
-        "name": "KRN Heat Exchanger and Refrigeration Limited",
-        "raw_symbol": "KRN",
         "industry": "General"
     },
     {
@@ -4974,12 +4914,6 @@
         "industry": "General"
     },
     {
-        "symbol": "MANORG.NS",
-        "name": "Mangalam Organics Limited",
-        "raw_symbol": "MANORG",
-        "industry": "General"
-    },
-    {
         "symbol": "MANYAVAR.NS",
         "name": "Vedant Fashions Limited",
         "raw_symbol": "MANYAVAR",
@@ -5187,12 +5121,6 @@
         "symbol": "MINDTECK.NS",
         "name": "Mindteck (India) Limited",
         "raw_symbol": "MINDTECK",
-        "industry": "General"
-    },
-    {
-        "symbol": "MIRCELECTR.NS",
-        "name": "MIRC Electronics Limited",
-        "raw_symbol": "MIRCELECTR",
         "industry": "General"
     },
     {
@@ -6375,12 +6303,6 @@
         "symbol": "PWL.NS",
         "name": "Physicswallah Limited",
         "raw_symbol": "PWL",
-        "industry": "General"
-    },
-    {
-        "symbol": "QPOWER.NS",
-        "name": "Quality Power Electrical Equipments Limited",
-        "raw_symbol": "QPOWER",
         "industry": "General"
     },
     {
@@ -7608,12 +7530,6 @@
         "industry": "General"
     },
     {
-        "symbol": "STLNETWORK.NS",
-        "name": "STL Networks Limited",
-        "raw_symbol": "STLNETWORK",
-        "industry": "General"
-    },
-    {
         "symbol": "STOVEKRAFT.NS",
         "name": "Stove Kraft Limited",
         "raw_symbol": "STOVEKRAFT",
@@ -7635,12 +7551,6 @@
         "symbol": "STYLAMIND.NS",
         "name": "Stylam Industries Limited",
         "raw_symbol": "STYLAMIND",
-        "industry": "General"
-    },
-    {
-        "symbol": "STYLEBAAZA.NS",
-        "name": "Baazar Style Retail Limited",
-        "raw_symbol": "STYLEBAAZA",
         "industry": "General"
     },
     {

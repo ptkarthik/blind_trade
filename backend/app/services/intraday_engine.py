@@ -595,10 +595,13 @@ class IntradayEngine:
             # Build reasons list for UI transparency
             reasons = []
             for r_obj in l1_data.get("reasons", []):
-                reasons.append({"text": r_obj["text"], "type": "positive", "layer": 1, "impact": r_obj["impact"]})
+                r_type = "negative" if float(r_obj.get("impact", 0)) < 0 else "positive"
+                reasons.append({"text": r_obj["text"], "type": r_type, "layer": 1, "impact": r_obj["impact"]})
             for r_obj in l2_data.get("reasons", []):
-                reasons.append({"text": r_obj["text"], "type": "positive", "layer": 2, "impact": r_obj["impact"]})
+                r_type = "negative" if float(r_obj.get("impact", 0)) < 0 else "positive"
+                reasons.append({"text": r_obj["text"], "type": r_type, "layer": 2, "impact": r_obj["impact"]})
             for r_obj in l3_data.get("reasons", []):
+                # L3 reasons are always penalties
                 reasons.append({"text": r_obj["text"], "type": "negative", "layer": 3, "impact": r_obj["impact"]})
 
             groups = {
@@ -1993,7 +1996,8 @@ class IntradayEngine:
             if is_pre_930_local and alpha_mode not in ["OPENING_DRIVE", "SHORT_OPENING_DRIVE"]:  # Before 9:30 AM IST
                 # Check for "Undisputed Execution" bypass: Strong MAs, VWAP control, and high volume
                 # [FIX] Lowered thresholds to unlock realistic Morning Alpha
-                is_undisputed = indicators.get("ema_score", 0) >= 80 and indicators.get("vwap_score", 0) >= 60 and rvol > 1.5
+                # [V45] Institutional Gap-and-Go Override: Bypass unconditionally if RVOL > 2.5
+                is_undisputed = (indicators.get("ema_score", 0) >= 80 and indicators.get("vwap_score", 0) >= 60 and rvol > 1.5) or rvol > 2.5
                 if not is_undisputed:
                     # [V41 FIX] Scale penalty to -20 for aggressive modes trying to bypass OPENING_DRIVE checks
                     pen_val = 20 if alpha_mode in ["BREAKOUT", "BREAKOUT_RETEST", "SHORT_BREAKOUT", "MOMENTUM", "SHORT_MOMENTUM"] else 10
@@ -2012,12 +2016,19 @@ class IntradayEngine:
                         vwap_val_l3 = indicators.get("vwap_val", price)
                         extension_atr = abs(price - vwap_val_l3) / max(atr, 1e-6)
                         if extension_atr > 2.0:
-                            pen = 15
-                            penalty += pen
-                            reasons.append({
-                                "text": f"Penalty: Opening Extension Trap ({extension_atr:.1f} ATR from VWAP, wait for 10:15)",
-                                "impact": -pen
-                            })
+                            # [V45] Gap-and-Go Override: If it's over-extended but has massive institutional volume (RVOL > 2.5), bypass penalty
+                            if rvol > 2.5:
+                                reasons.append({
+                                    "text": f"Alpha: Bypassed Opening Extension Trap ({extension_atr:.1f} ATR) due to Massive Volume (RVOL {rvol:.1f})",
+                                    "impact": 0
+                                })
+                            else:
+                                pen = 15
+                                penalty += pen
+                                reasons.append({
+                                    "text": f"Penalty: Opening Extension Trap ({extension_atr:.1f} ATR from VWAP, wait for 10:15)",
+                                    "impact": -pen
+                                })
                 except Exception:
                     pass
         

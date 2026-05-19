@@ -6,7 +6,7 @@ interface StockCardIntradayProps {
     signal: Signal;
     rank?: number;
     onClick: () => void;
-    onBuy?: (e: React.MouseEvent) => void;
+    onBuy?: (e: React.MouseEvent, tradeType: 'PAPER' | 'REAL') => void;
 }
 
 export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayProps) {
@@ -199,19 +199,34 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
                     <div className="flex gap-2">
                         <span className="text-[8px] font-black uppercase text-primary/50 tracking-widest group-hover:text-primary transition-colors">CLICK TO ANALYZE</span>
                         {onBuy && (
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onBuy(e);
-                                }}
-                                className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all z-20 ${
-                                    isBuy 
-                                    ? "text-emerald-600 bg-emerald-50 border-emerald-100 hover:bg-emerald-500 hover:text-white" 
-                                    : "text-red-600 bg-red-50 border-red-100 hover:bg-red-500 hover:text-white"
-                                }`}
-                            >
-                                {isBuy ? "BUY (PAPER)" : "SHORT (PAPER)"}
-                            </button>
+                            <div className="flex gap-1 z-20">
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onBuy(e, 'PAPER');
+                                    }}
+                                    className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all ${
+                                        isBuy 
+                                        ? "text-emerald-600 bg-emerald-50 border-emerald-100 hover:bg-emerald-500 hover:text-white" 
+                                        : "text-red-600 bg-red-50 border-red-100 hover:bg-red-500 hover:text-white"
+                                    }`}
+                                >
+                                    {isBuy ? "BUY (PAPER)" : "SHORT (PAPER)"}
+                                </button>
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if(confirm("⚠️ Place REAL LIVE ORDER on Zerodha?")) onBuy(e, 'REAL');
+                                    }}
+                                    className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all shadow-sm ${
+                                        isBuy 
+                                        ? "text-white bg-emerald-600 border-emerald-700 hover:bg-emerald-700" 
+                                        : "text-white bg-red-600 border-red-700 hover:bg-red-700"
+                                    }`}
+                                >
+                                    {isBuy ? "BUY (REAL)" : "SHORT (REAL)"}
+                                </button>
+                            </div>
                         )}
                     </div>
                     <button className={`p-2 rounded-lg shadow-sm transition-all duration-300 transform group-hover:scale-110 group-hover:rotate-12 ${isBuy ? "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200" : "bg-red-500 hover:bg-red-600 shadow-red-200"}`}>
