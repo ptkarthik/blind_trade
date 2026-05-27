@@ -4,7 +4,11 @@ import random
 from typing import Dict, Any, List
 import pandas as pd
 import logging
+import warnings
 from datetime import datetime
+
+# Suppress harmless numpy timezone warnings from jugaad_data
+warnings.filterwarnings("ignore", message="no explicit representation of timezones available for np.datetime64")
 
 from app.services.market_data import market_service
 from app.services.market_discovery import market_discovery
@@ -60,8 +64,24 @@ class SwingEngine:
     async def refresh_market_context(self):
         """Fetch NIFTY 50 trend to set the global strategy bias."""
         try:
-            # V2 Evasion: Use NIFTYBEES.NS to bypass the ^NSEI Yahoo rate limits via jugaad_data
-            df_nifty = await self._fetch_swing_ohlc_with_evasion("NIFTYBEES.NS", period="1y", interval="1d")
+            # V3 Kite-Native: Use Kite index OHLC directly — no more NIFTYBEES Yahoo workaround
+            from app.services.kite_data import kite_data
+            df_nifty = None
+            if kite_data.is_ready:
+                try:
+                    df_nifty = await kite_data.get_index_ohlc("NIFTY 50", period="1y", interval="1d")
+                    if df_nifty is not None and not df_nifty.empty:
+                        print(f"⚡ [KITE MARKET CONTEXT] Fetched NIFTY 50 index directly ({len(df_nifty)} candles)", flush=True)
+                except Exception as e:
+                    logger.warning(f"⚠️ Kite index fetch failed, falling back to Yahoo: {e}")
+                    df_nifty = None
+            
+            # Fallback: Yahoo NIFTYBEES
+            if df_nifty is None or df_nifty.empty:
+                df_nifty = await self._fetch_swing_ohlc_with_evasion("NIFTYBEES.NS", period="1y", interval="1d")
+                if df_nifty is not None and not df_nifty.empty:
+                    print(f"🔄 [YAHOO FALLBACK] Fetched NIFTYBEES for market context ({len(df_nifty)} candles)", flush=True)
+            
             if df_nifty is not None and not df_nifty.empty and len(df_nifty) > 50:
                 from ta.trend import SMAIndicator
                 sma50_series = SMAIndicator(close=df_nifty['close'], window=50).sma_indicator()
@@ -123,6 +143,19 @@ class SwingEngine:
             s.verify = True
             s.headers.update({"User-Agent": ua, "Accept": "*/*", "Connection": "close"})
             return s
+
+        # Strategy -1: Kite Connect (Primary)
+        from app.services.kite_data import kite_data
+        if kite_data.is_ready and sym.endswith('.NS'):
+            try:
+                df = await kite_data.fetch_ohlc(sym, period=period, interval=interval)
+                if df is not None and not df.empty:
+                    logger.info(f"✅ Strategy Kite Success: {sym} ({len(df)} candles)")
+                    print(f"⚡ [KITE SWING DATA] Successfully fetched {len(df)} historical candles for {sym}", flush=True)
+                    return df
+            except Exception as e:
+                logger.warning(f"⚠️ Strategy Kite Failed for {sym}: {e}")
+                print(f"⚠️ [KITE SWING DATA] Failed for {sym}: {e}", flush=True)
 
         # Strategy 0: Direct NSE Fetch via jugaad-data (Bulletproof for Indian Equities)
         if sym.endswith('.NS'):

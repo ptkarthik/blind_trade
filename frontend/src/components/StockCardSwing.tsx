@@ -54,10 +54,18 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
 
             <div className="mb-4 flex items-center justify-between relative z-10 bg-slate-50/50 p-3 rounded-xl border border-border/50">
                 <div className="flex flex-col">
-                    <span className="text-[9px] uppercase font-black tracking-widest text-muted-foreground mb-0.5">CURRENT (LTP)</span>
+                    <span className="text-[9px] uppercase font-black tracking-widest text-muted-foreground mb-0.5 flex items-center gap-1">
+                        {signal.ltp_source === 'kite_live' && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                        CURRENT (LTP)
+                    </span>
                     <span className="text-xl font-black tracking-tighter text-slate-500">
                         ₹{signal.price ? Number(signal.price).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
                     </span>
+                    {signal.ltp_change_pct !== undefined && signal.ltp_change_pct !== 0 && (
+                        <span className={`text-[9px] font-bold ${signal.ltp_change_pct > 0 ? 'text-emerald-500' : 'text-destructive'}`}>
+                            {signal.ltp_change_pct > 0 ? '+' : ''}{Number(signal.ltp_change_pct).toFixed(2)}%
+                        </span>
+                    )}
                 </div>
 
                 <div className="h-8 w-px bg-border/50 mx-2" />
@@ -67,7 +75,7 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
                         <div className="w-1.5 h-1.5 rounded-full bg-primary" /> SMART ENTRY
                     </span>
                     <span className="text-2xl font-black tracking-tighter text-foreground">
-                        ₹{signal.entry ? Number(signal.entry).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
+                        ₹{(signal.scan_price || signal.entry) ? Number(signal.scan_price || signal.entry).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '---'}
                     </span>
                 </div>
             </div>

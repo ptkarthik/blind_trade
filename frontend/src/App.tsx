@@ -294,8 +294,8 @@ function App() {
               if (!streamedSectorSignals[sec]) {
                   streamedSectorSignals[sec] = { buys: [], holds: [], sells: [] };
               }
-              if (sig.signal === 'BUY') streamedSectorSignals[sec].buys.push(sig);
-              else if (sig.signal === 'SELL') streamedSectorSignals[sec].sells.push(sig);
+              if (sig.signal && sig.signal.includes('BUY')) streamedSectorSignals[sec].buys.push(sig);
+              else if (sig.signal && sig.signal.includes('SELL')) streamedSectorSignals[sec].sells.push(sig);
               else streamedSectorSignals[sec].holds.push(sig);
            });
            setSectorSignals(streamedSectorSignals);
@@ -480,12 +480,12 @@ function App() {
                        if (res.data.is_ready) {
                            console.log("Kite Connected Successfully!");
                        } else if (res.data.login_url) {
-                           console.warn("Auto-login failed. Please check backend console for manual login URL.");
+                           alert("Auto-login failed. Please check backend console for manual login URL.");
                        } else {
-                           console.error("Login failed. Check backend logs.");
+                           alert("Login failed. Check backend logs.");
                        }
                    } catch (e) {
-                       console.error("Failed to connect to Kite");
+                       alert("Failed to connect to Kite");
                    } finally {
                        setIsConnectingKite(false);
                    }

@@ -14,6 +14,52 @@ import numpy as np
 import uuid
 from datetime import datetime, timedelta
 
+
+async def enrich_with_live_ltp(signals: list) -> list:
+    """Enriches scan results with live Kite LTP prices.
+    
+    The scan produces prices at analysis time (could be hours old).
+    This function fetches real-time LTP from Kite and updates each signal's
+    'price' field while preserving the original scan price as 'scan_price'.
+    """
+    if not signals:
+        return signals
+    
+    from app.services.kite_data import kite_data
+    if not kite_data.is_ready:
+        return signals
+    
+    try:
+        symbols = [s.get("symbol") for s in signals if s.get("symbol")]
+        if not symbols:
+            return signals
+        
+        live_prices = await kite_data.get_ltp(symbols)
+        if not live_prices:
+            return signals
+        
+        enriched_count = 0
+        for signal in signals:
+            sym = signal.get("symbol")
+            if sym and sym in live_prices:
+                live_data = live_prices[sym]
+                live_price = live_data.get("price", 0)
+                if live_price > 0:
+                    # Preserve original scan price for audit trail
+                    if "scan_price" not in signal:
+                        signal["scan_price"] = signal.get("price", 0)
+                    signal["price"] = round(live_price, 2)
+                    signal["ltp_source"] = "kite_live"
+                    signal["ltp_change_pct"] = live_data.get("change_percent", 0)
+                    enriched_count += 1
+        
+        if enriched_count > 0:
+            print(f"⚡ [LIVE LTP] Enriched {enriched_count}/{len(signals)} signals with Kite real-time prices", flush=True)
+    except Exception as e:
+        print(f"⚠️ [LIVE LTP] Enrichment failed (non-critical): {e}", flush=True)
+    
+    return signals
+
 def sanitize_json_data(data):
     """Helper for final API responses"""
     return sanitize_data(data)
@@ -100,6 +146,10 @@ async def get_todays_signals(
         stats = get_job_pulse_stats(valid_job)
         
         data = valid_job.result.get("data", [])
+        
+        # [V3 KITE LTP] Enrich all signals with real-time prices before serving
+        await enrich_with_live_ltp(data)
+        
         # [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
         def sort_key(x): return (x.get("score", 0), -(x.get("analysis_index", 0)))
         
@@ -158,6 +208,9 @@ async def get_sector_signals(
         # Unified Pulse Statistics (IST)
         stats = get_job_pulse_stats(valid_job)
         data = valid_job.result.get("data", [])
+        
+        # [V3 KITE LTP] Enrich all signals with real-time prices before serving
+        await enrich_with_live_ltp(data)
         
         # Dynamic Aggregation
         response = {}

@@ -128,7 +128,12 @@ class KiteDataService:
         except Exception as e:
             logger.error(f"[KITE] Auto-login failed: {e}")
             import traceback
-            traceback.print_exc()
+            err_str = traceback.format_exc()
+            try:
+                with open(os.path.join(self._data_dir, "kite_login_error.txt"), "w") as f:
+                    f.write(f"Error: {e}\n\nTraceback:\n{err_str}")
+            except:
+                pass
             return False
 
     def _run_selenium_login(self, user_id, password, totp_secret, api_key, api_secret) -> bool:
@@ -408,8 +413,7 @@ class KiteDataService:
         if token is None:
             return pd.DataFrame()  # Unknown symbol — caller should fallback to Yahoo
 
-        # Map period strings to date ranges
-        period_days = {"1d": 1, "2d": 2, "5d": 5, "7d": 7, "1mo": 30, "3mo": 90}
+        period_days = {"1d": 1, "2d": 2, "5d": 5, "7d": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
         days = period_days.get(period, 7)
         to_date = datetime.now()
         from_date = to_date - timedelta(days=days)
@@ -651,7 +655,7 @@ class KiteDataService:
         if not token:
             return pd.DataFrame()
 
-        period_days = {"1d": 1, "2d": 2, "5d": 5, "7d": 7, "1mo": 30}
+        period_days = {"1d": 1, "2d": 2, "5d": 5, "7d": 7, "1mo": 30, "6mo": 180, "1y": 365, "2y": 730}
         days = period_days.get(period, 7)
         to_date = datetime.now()
         from_date = to_date - timedelta(days=days)

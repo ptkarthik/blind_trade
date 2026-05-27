@@ -31,6 +31,8 @@ interface DailyHistory {
         score: number;
         reason: string;
         time: string;
+        stop_loss?: number;
+        target?: number;
     }[];
 }
 
@@ -299,6 +301,7 @@ export function PaperTradingView() {
                                             <th className="p-4 border-b border-border">Reason</th>
                                             <th className="p-4 border-b border-border text-center">Score</th>
                                             <th className="p-4 border-b border-border text-right">Buy Price</th>
+                                            <th className="p-4 border-b border-border text-right">SL / Tgt</th>
                                             <th className="p-4 border-b border-border text-right">Sell Price</th>
                                             <th className="p-4 border-b border-border text-right">P&L (%)</th>
                                             <th className="p-4 border-b border-border text-right">Net P&L</th>
@@ -330,6 +333,10 @@ export function PaperTradingView() {
                                                 </td>
                                                 <td className="p-4 border-b border-border text-right font-mono text-muted-foreground font-bold">
                                                     ₹{detail.buy_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                                </td>
+                                                <td className="p-4 border-b border-border text-right font-mono text-[9px] leading-tight opacity-90">
+                                                    {detail.stop_loss ? <p className="text-red-500">SL: ₹{detail.stop_loss.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p> : null}
+                                                    {detail.target ? <p className="text-emerald-500">TG: ₹{detail.target.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p> : null}
                                                 </td>
                                                 <td className="p-4 border-b border-border text-right font-mono text-slate-700 font-black">
                                                     ₹{detail.sell_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}

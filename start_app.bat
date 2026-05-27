@@ -13,6 +13,9 @@ taskkill /F /IM python.exe /T >nul 2>&1
 echo   - Terminating web servers...
 taskkill /F /IM uvicorn.exe /T >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Blind Trade*" /IM cmd.exe >nul 2>&1
+echo   - Terminating orphaned headless browsers...
+taskkill /F /IM msedgedriver.exe /T >nul 2>&1
+taskkill /F /IM msedge.exe /T >nul 2>&1
 echo   - Success.
 
 :: [V30 FIX] Clean up stale Worker Lock Files

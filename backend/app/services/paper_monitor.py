@@ -44,7 +44,7 @@ class PaperMonitor:
                 daily_pnl_query = select(
                     func.coalesce(func.sum(
                         case(
-                            (and_(PaperTrade.stop_loss != None, PaperTrade.stop_loss > PaperTrade.buy_price),
+                            (and_(PaperTrade.target != None, PaperTrade.target < PaperTrade.buy_price),
                              (PaperTrade.buy_price - PaperTrade.sell_price) * PaperTrade.qty),
                             else_=(PaperTrade.sell_price - PaperTrade.buy_price) * PaperTrade.qty
                         )
@@ -151,7 +151,7 @@ class PaperMonitor:
                         # Instead of just basic SL/TP, use the engine's evaluate_exit
                         elif not is_eod_time:
                             # Dynamic inference of Short constraints
-                            is_short_pos = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+                            is_short_pos = True if (trade.target and trade.buy_price and trade.target < trade.buy_price) else False
                             
                             try:
                                 df_15m = ohlc_data.get(trade.symbol)
@@ -234,7 +234,7 @@ class PaperMonitor:
         [V40 GAP#6] Books profit on partial quantity without closing the full trade.
         Applies slippage and updates account P&L for the partial exit.
         """
-        is_short = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+        is_short = True if (trade.target and trade.buy_price and trade.target < trade.buy_price) else False
         _exit_slip = price * 0.0012  # Same slippage as full close
         exit_price = round(price + _exit_slip if is_short else price - _exit_slip, 2)
         
@@ -259,7 +259,7 @@ class PaperMonitor:
         """
         # 1. Update Trade (with realistic exit slippage)
         # [V40 GAP#5 FIX] Apply 0.12% adverse slippage on exits (NSE mid-cap calibrated)
-        is_short_pos = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+        is_short_pos = True if (trade.target and trade.buy_price and trade.target < trade.buy_price) else False
         _exit_slip = price * 0.0012
         trade.sell_price = round(price + _exit_slip if is_short_pos else price - _exit_slip, 2)
         trade.sell_time = datetime.utcnow() # Internal DB storage remains UTC for generic compatibility
@@ -271,13 +271,13 @@ class PaperMonitor:
         account = acc_res.scalars().first()
         
         if account:
-            is_short_log = True if (trade.stop_loss and trade.buy_price and trade.stop_loss > trade.buy_price) else False
+            is_short_log = True if (trade.target and trade.buy_price and trade.target < trade.buy_price) else False
             
             if is_short_log:
-                pnl = (trade.buy_price - price) * trade.qty
+                pnl = (trade.buy_price - trade.sell_price) * trade.qty
                 proceeds = (trade.buy_price * trade.qty) + pnl
             else:
-                proceeds = trade.qty * price
+                proceeds = trade.qty * trade.sell_price
                 pnl = proceeds - (trade.qty * trade.buy_price)
             
             account.balance += proceeds

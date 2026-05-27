@@ -816,12 +816,6 @@
         "industry": "General"
     },
     {
-        "symbol": "AUTOIND.NS",
-        "name": "Autoline Industries Limited",
-        "raw_symbol": "AUTOIND",
-        "industry": "General"
-    },
-    {
         "symbol": "AVALON.NS",
         "name": "Avalon Technologies Limited",
         "raw_symbol": "AVALON",
@@ -1275,12 +1269,6 @@
         "symbol": "BMWVENTLTD.NS",
         "name": "BMW Ventures Limited",
         "raw_symbol": "BMWVENTLTD",
-        "industry": "General"
-    },
-    {
-        "symbol": "BODALCHEM.NS",
-        "name": "Bodal Chemicals Limited",
-        "raw_symbol": "BODALCHEM",
         "industry": "General"
     },
     {
@@ -2793,12 +2781,6 @@
         "symbol": "GLOBUSSPR.NS",
         "name": "Globus Spirits Limited",
         "raw_symbol": "GLOBUSSPR",
-        "industry": "General"
-    },
-    {
-        "symbol": "GLOTTIS.NS",
-        "name": "Glottis Limited",
-        "raw_symbol": "GLOTTIS",
         "industry": "General"
     },
     {
@@ -7209,6 +7191,12 @@
         "symbol": "SIEMENS.NS",
         "name": "Siemens Limited",
         "raw_symbol": "SIEMENS",
+        "industry": "General"
+    },
+    {
+        "symbol": "SIGMAADV.NS",
+        "name": "SIGMA ADVANCED SYSTEMS LIMITED",
+        "raw_symbol": "SIGMAADV",
         "industry": "General"
     },
     {

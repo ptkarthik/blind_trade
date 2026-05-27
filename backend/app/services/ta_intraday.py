@@ -547,10 +547,12 @@ class IntradayTechnicalAnalysis:
             # [AUDIT GAP#1 FIX] Live bounce confirmation — price must be recovering (above current candle's open)
             # Without this, we enter on falling knives that are crashing THROUGH the EMA, not bouncing off it.
             is_bouncing_live = current_price > df['open'].iloc[-1]
+            is_rejecting_live = current_price < df['open'].iloc[-1]
             
             # Must be above 20 EMA to be a "Bullish" pullback
             ema_20 = EMAIndicator(close=df['close'], window=20).ema_indicator().iloc[-1]
             is_bullish = current_price > ema_20
+            is_bearish = current_price < ema_20
             
             # Added Pioneer Check: Pullback Volume Contraction
             is_vol_contracting = False
@@ -566,6 +568,7 @@ class IntradayTechnicalAnalysis:
                 
             return {
                 "is_pullback": (near_ema or near_vwap) and is_bullish and is_vol_contracting and is_bouncing_live,
+                "is_short_pullback": (near_ema or near_vwap) and is_bearish and is_vol_contracting and is_rejecting_live,
                 "type": "9EMA" if near_ema else "VWAP" if near_vwap else "None",
                 "support_val": ema_9_prev if near_ema else vwap if near_vwap else 0
             }
@@ -626,11 +629,13 @@ class IntradayTechnicalAnalysis:
             is_squeeze = (bb_width.iloc[-1] if len(bb_width) > 0 else 0.0) < (width_ma.iloc[-1] if len(width_ma) > 0 else 0.0) * 0.95
             
             # Breakout: Current Close > Upper Band
-            is_breakout = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0) > (h_band.iloc[-1] if len(h_band) > 0 else 0.0)
+            is_breakout_up = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0) > (h_band.iloc[-1] if len(h_band) > 0 else 0.0)
+            is_breakout_down = (df['close'].iloc[-1] if len(df['close']) > 0 else 0.0) < (l_band.iloc[-1] if len(l_band) > 0 else 0.0)
             
             return {
                 "is_squeeze": is_squeeze,
-                "is_breakout": is_breakout,
+                "is_breakout": is_breakout_up,
+                "is_breakout_down": is_breakout_down,
                 "width": round((bb_width.iloc[-1] if len(bb_width) > 0 else 0.0), 4),
                 # [V18 FIX #16] Prevent divide-by-zero on flat-price data
                 "width_percentile": round(((bb_width.iloc[-1] if len(bb_width) > 0 else 0.0) / max((width_ma.iloc[-1] if len(width_ma) > 0 else 1.0), 1e-8)) * 100, 1),
@@ -708,22 +713,34 @@ class IntradayTechnicalAnalysis:
             
             for lvl in levels:
                 if lvl == 0: continue
-                # Pattern: Prev low was below level, current close is above level + high volume
+                vol_spike = current['volume'] > df['volume'].rolling(14).mean().iloc[-1] * 1.5
+                
+                # Bullish Pattern: Prev low was below level, current close is above level + high volume
                 if prev['low'] < lvl and current['close'] > lvl:
-                    vol_spike = current['volume'] > df['volume'].rolling(14).mean().iloc[-1] * 1.5
                     if vol_spike:
                         return {
-                            "is_trap": True, 
+                            "is_trap": True,
+                            "trap_type": "Bullish", 
                             "level": "VWAP" if lvl == vwap else "S1" if lvl == pivots.get("S1") else "Pivot",
                             "strength": "High" if current['volume'] > df['volume'].rolling(14).mean().iloc[-1] * 2.5 else "Moderate"
                         }
-            return {"is_trap": False}
+                        
+                # Bearish Pattern: Prev high was above level, current close is below level + high volume
+                if prev['high'] > lvl and current['close'] < lvl:
+                    if vol_spike:
+                        return {
+                            "is_trap": True,
+                            "trap_type": "Bearish", 
+                            "level": "VWAP" if lvl == vwap else "R1" if lvl == pivots.get("R1") else "R2" if lvl == pivots.get("R2") else "Pivot",
+                            "strength": "High" if current['volume'] > df['volume'].rolling(14).mean().iloc[-1] * 2.5 else "Moderate"
+                        }
+            return {"is_trap": False, "trap_type": "None"}
         except Exception as _e:
             _ta_logger.warning(f"[detect_wash_and_rinse] {df.attrs.get('symbol','?')}: {_e}")
             return {"is_trap": False}
 
     @staticmethod
-    def detect_bullish_fvg(df: pd.DataFrame) -> dict:
+    def detect_fvg(df: pd.DataFrame) -> dict:
         """[V20 Vanguard] Detects Fair Value Gap (FVG) and verifies if current price is tapping it."""
         try:
             if len(df) < 5: return {"has_fvg": False}
@@ -731,29 +748,47 @@ class IntradayTechnicalAnalysis:
             fvg_zone_top = 0
             fvg_zone_bottom = 0
             has_fvg = False
+            fvg_type = "None"
             
             # Check last 5 candles (excluding the current incomplete one) for FVG
-            # Candle N-2 High < Candle N Low
+            # Candle N-2 High < Candle N Low (Bullish) or Candle N-2 Low > Candle N High (Bearish)
             for i in range(-5, -2):
                 c1_high = float(df['high'].iloc[i-2])
+                c1_low = float(df['low'].iloc[i-2])
+                c3_high = float(df['high'].iloc[i])
                 c3_low = float(df['low'].iloc[i])
                 
                 if c3_low > c1_high: # Bullish Imbalance
                     fvg_zone_bottom = c1_high
                     fvg_zone_top = c3_low
                     has_fvg = True
+                    fvg_type = "Bullish"
+                    break
+                elif c1_low > c3_high: # Bearish Imbalance
+                    fvg_zone_top = c1_low
+                    fvg_zone_bottom = c3_high
+                    has_fvg = True
+                    fvg_type = "Bearish"
                     break
                     
+            current_high = float(df['high'].iloc[-1])
             current_low = float(df['low'].iloc[-1])
-            is_tapping = has_fvg and (fvg_zone_bottom <= current_low <= fvg_zone_top)
+            
+            is_tapping = False
+            if has_fvg:
+                if fvg_type == "Bullish":
+                    is_tapping = (fvg_zone_bottom <= current_low <= fvg_zone_top)
+                elif fvg_type == "Bearish":
+                    is_tapping = (fvg_zone_bottom <= current_high <= fvg_zone_top)
             
             return {
                 "has_fvg": has_fvg, 
                 "is_tapping": is_tapping, 
-                "zone": (fvg_zone_bottom, fvg_zone_top)
+                "zone": (fvg_zone_bottom, fvg_zone_top),
+                "type": fvg_type
             }
         except Exception as _e:
-            _ta_logger.warning(f"[detect_bullish_fvg] {df.attrs.get('symbol','?')}: {_e}")
+            _ta_logger.warning(f"[detect_fvg] {df.attrs.get('symbol','?')}: {_e}")
             return {"has_fvg": False}
 
     @staticmethod
@@ -840,23 +875,34 @@ class IntradayTechnicalAnalysis:
             # 1. Volume > MA
             # 2. Close > Open (Rising)
             cond_vol = df['volume'] > vol_ma_val
-            cond_price = df['close'] > df['open']
+            cond_price_up = df['close'] > df['open']
+            cond_price_down = df['close'] < df['open']
             
             # Combined condition
-            cluster_mask = cond_vol & cond_price
+            cluster_mask_up = cond_vol & cond_price_up
+            cluster_mask_down = cond_vol & cond_price_down
             
             # Check for 3 consecutive True in the last 6 candles
-            trailing_mask = cluster_mask.tail(6)
+            trailing_mask_up = cluster_mask_up.tail(6)
+            trailing_mask_down = cluster_mask_down.tail(6)
             
             is_cluster = False
-            for i in range(len(trailing_mask) - 2):
-                if trailing_mask.iloc[i:i+3].all():
+            is_cluster_down = False
+            
+            for i in range(len(trailing_mask_up) - 2):
+                if trailing_mask_up.iloc[i:i+3].all():
                     is_cluster = True
-                    break
+                if trailing_mask_down.iloc[i:i+3].all():
+                    is_cluster_down = True
+            
+            reasons = []
+            if is_cluster: reasons.append("Sequential abnormal volume + rising price")
+            if is_cluster_down: reasons.append("Sequential abnormal volume + falling price")
             
             return {
                 "is_cluster": is_cluster,
-                "reasons": ["Sequential abnormal volume + rising price"] if is_cluster else []
+                "is_cluster_down": is_cluster_down,
+                "reasons": reasons
             }
         except Exception as _e:
             _ta_logger.warning(f"[detect_volume_cluster] {df.attrs.get('symbol','?')}: {_e}")
@@ -1622,10 +1668,16 @@ class IntradayTechnicalAnalysis:
             
             if is_short:
                 dist_ema9_atr = abs(l_high_val - ema9_val) / max(atr_val, 1e-6)
+                # [V46 FIX#2] Also check EMA20 distance — perfect 20-EMA pullbacks were scoring 0
+                dist_ema20_atr = abs(l_high_val - ema20_val) / max(atr_val, 1e-6)
+                dist_ema_best_atr = min(dist_ema9_atr, dist_ema20_atr)
                 dist_retest_atr = abs(l_high_val - breakout_level) / max(atr_val, 1e-6)
                 vwap_pierced = (l_high_val > vwap) and (l_close_val < vwap)
             else:
                 dist_ema9_atr = abs(l_low_val - ema9_val) / max(atr_val, 1e-6)
+                # [V46 FIX#2] Also check EMA20 distance — perfect 20-EMA pullbacks were scoring 0
+                dist_ema20_atr = abs(l_low_val - ema20_val) / max(atr_val, 1e-6)
+                dist_ema_best_atr = min(dist_ema9_atr, dist_ema20_atr)
                 dist_retest_atr = abs(l_low_val - breakout_level) / max(atr_val, 1e-6)
                 vwap_pierced = (l_low_val < vwap) and (l_close_val > vwap)
 
@@ -1638,7 +1690,8 @@ class IntradayTechnicalAnalysis:
                 if dist < gate * 1.5: return 15 # "Near Miss" reward
                 return 0
 
-            s_ema = calculate_proximity_score(dist_ema9_atr, gate_size)
+            # [V46 FIX#2] Use best (closest) EMA distance instead of EMA9-only
+            s_ema = calculate_proximity_score(dist_ema_best_atr, gate_size)
             # [GAP 3 FIX] VWAP requires an actual liquidity sweep piercing, no near misses
             s_vwap = 30 if vwap_pierced else 0
             s_retest = calculate_proximity_score(dist_retest_atr, gate_size)
@@ -1655,10 +1708,14 @@ class IntradayTechnicalAnalysis:
             
             if is_short:
                 pullback_depth_atr = (l_high_val - local_low) / max(atr_val, 1e-6)
-                trend_hold = l_close_val < ema20_val
+                # [V46 FIX#1b] Allow 0.1 ATR tolerance above EMA20 to match engine's pullback definition
+                trend_hold = l_close_val < (ema20_val + atr_val * 0.1)
             else:
                 pullback_depth_atr = (local_high - l_low_val) / max(atr_val, 1e-6)
-                trend_hold = l_close_val > ema20_val
+                # [V46 FIX#1b] Allow 0.1 ATR tolerance below EMA20 to match engine's pullback definition
+                # OLD: l_close_val > ema20_val — hard boundary killed entries at exact EMA touch
+                # NEW: 0.1 ATR tolerance matches intraday_engine.py L1034
+                trend_hold = l_close_val > (ema20_val - atr_val * 0.1)
                 
             depth_ok = pullback_depth_atr < 1.0
             

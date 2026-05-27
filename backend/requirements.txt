@@ -20,3 +20,6 @@ httpx
 twelvedata
 paramiko
 curl_cffi
+pyotp
+selenium
+webdriver-manager

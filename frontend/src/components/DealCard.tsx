@@ -74,6 +74,10 @@ export interface Signal {
         multiplier: number;
         reason: string;
     };
+    // Live LTP Enrichment (Kite)
+    scan_price?: number;
+    ltp_source?: string;
+    ltp_change_pct?: number;
 }
 
 interface DealCardProps {
