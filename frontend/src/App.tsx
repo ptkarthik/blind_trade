@@ -286,10 +286,11 @@ function App() {
         // 🚀 SWING STREAMING: Read matches from the job state payload directly.
         const liveData = scanJob?.result?.data;
         if (liveData && Array.isArray(liveData) && liveData.length > 0) {
-           setSignals(liveData);
+           const sortedData = [...liveData].sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+           setSignals(sortedData);
            // Dynamically build sectorSignals for real-time streaming to the Sector UI
            const streamedSectorSignals: Record<string, SectorData> = {};
-           liveData.forEach((sig: any) => {
+           sortedData.forEach((sig: any) => {
               const sec = sig.sector || 'General';
               if (!streamedSectorSignals[sec]) {
                   streamedSectorSignals[sec] = { buys: [], holds: [], sells: [] };

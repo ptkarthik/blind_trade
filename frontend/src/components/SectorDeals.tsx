@@ -198,10 +198,10 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                         Ultra-high conviction setups featuring immense Relative Strength and Institutional Flow.
                     </p>
 
-                    {/* Horizontal scroll for Pioneer cards to make them distinct from the vertical grid */}
-                    <div className="flex overflow-x-auto pb-4 gap-6 scrollbar-thin scrollbar-thumb-amber-200 snap-x">
+                    {/* Standard grid for Pioneer cards to avoid horizontal scrolling */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                         {displayPioneer.map((signal, idx) => (
-                            <div key={signal.symbol} className="min-w-[320px] md:min-w-[400px] snap-start">
+                            <div key={signal.symbol}>
                                 {renderCard(signal, idx)}
                             </div>
                         ))}
@@ -216,7 +216,7 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                     <h3 className="text-xl font-bold flex items-center gap-2 text-emerald-600">
                         <ArrowUpRight className="h-6 w-6" /> Standard Buys
                     </h3>
-                    <div className="space-y-4 max-h-[800px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-emerald-200">
+                    <div className="space-y-4 pr-2">
                         {displayBuys.length > 0 ? (
                             displayBuys.slice(0, 100).map((signal, idx) => renderCard(signal, idx + displayPioneer.length))
                         ) : (
@@ -230,7 +230,7 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                     <h3 className="text-xl font-bold flex items-center gap-2 text-amber-600">
                         <AlertTriangle className="h-6 w-6" /> Top 100 Holds
                     </h3>
-                    <div className="space-y-4 max-h-[800px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-amber-200">
+                    <div className="space-y-4 pr-2">
                         {displayHolds.length > 0 ? (
                             displayHolds.slice(0, 100).map((signal, idx) => renderCard(signal, idx))
                         ) : (
@@ -244,7 +244,7 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                     <h3 className="text-xl font-bold flex items-center gap-2 text-red-600">
                         <ArrowDownRight className="h-6 w-6" /> Top 100 Sells
                     </h3>
-                    <div className="space-y-4 max-h-[800px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-red-200">
+                    <div className="space-y-4 pr-2">
                         {displaySells.length > 0 ? (
                             displaySells.slice(0, 100).map((signal, idx) => renderCard(signal, idx))
                         ) : (

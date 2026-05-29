@@ -1,5 +1,9 @@
 import sys
 import os
+# PROXY BYPASS (Fix for yfinance hanging indefinitely on Windows proxies)
+os.environ['NO_PROXY'] = '*'
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
 import socket
 import io
 # Ensure backend dir is in path BEFORE other imports
@@ -35,6 +39,7 @@ from app.services.swing_engine import swing_engine as swing_scanner
 from app.services.worker_logger import get_worker_logger
 from app.utils.worker_lock import WorkerLock
 from app.services.paper_monitor import paper_monitor
+from app.services.kite_data import kite_data
 
 
 # Worker Mode Configuration
@@ -208,6 +213,10 @@ async def worker_loop():
                     await session.commit()
         except Exception as e:
             log(f"Startup Cleanup Error: {e}")
+
+        # Initialize Kite Data for background scans
+        log("🚀 Initializing Kite Connect Data Service...")
+        await kite_data.initialize()
 
         log("👷 Worker Ready. Waiting for Jobs...")
         

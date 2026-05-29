@@ -202,7 +202,7 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                                 <div className="space-y-3">
                                                     <div className="flex items-center gap-2 mb-2">
                                                         <div className="h-3 w-1 bg-blue-500 rounded-full" />
-                                                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">LAYER 1: Technical Foundation (Max 40pts)</span>
+                                                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">LAYER 1: Technical Foundation (Max 50pts)</span>
                                                     </div>
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                         {safeReasons.filter((r: any) => r.layer === 1).map((reason: any, idx: number) => (
@@ -225,7 +225,7 @@ export function AnalysisModal({ isOpen, onClose, data }: AnalysisModalProps) {
                                                 <div className="space-y-3">
                                                     <div className="flex items-center gap-2 mb-2">
                                                         <div className="h-3 w-1 bg-purple-500 rounded-full" />
-                                                        <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest">LAYER 2: Institutional Alpha Edge (Max 60pts)</span>
+                                                        <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest">LAYER 2: Institutional Alpha Edge (Max 50pts)</span>
                                                     </div>
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                         {safeReasons.filter((r: any) => r.layer === 2).map((reason: any, idx: number) => (

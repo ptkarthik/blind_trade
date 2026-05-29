@@ -80,7 +80,7 @@ class SwingEngine:
             if df_nifty is None or df_nifty.empty:
                 df_nifty = await self._fetch_swing_ohlc_with_evasion("NIFTYBEES.NS", period="1y", interval="1d")
                 if df_nifty is not None and not df_nifty.empty:
-                    print(f"🔄 [YAHOO FALLBACK] Fetched NIFTYBEES for market context ({len(df_nifty)} candles)", flush=True)
+                    print(f"[YAHOO FALLBACK] Fetched NIFTYBEES for market context ({len(df_nifty)} candles)", flush=True)
             
             if df_nifty is not None and not df_nifty.empty and len(df_nifty) > 50:
                 from ta.trend import SMAIndicator
@@ -368,6 +368,7 @@ class SwingEngine:
             conv_score = round((conviction / max(max_conviction, 1)) * 25)
             score += conv_score
             score_breakdown.append(f"Conviction: +{conv_score} ({conviction}/{max_conviction})")
+            selected.setdefault("reasons", []).append({"text": f"Core Conviction Score ({conviction}/{max_conviction})", "impact": conv_score, "layer": 1, "type": "positive"})
             
             # --- Component 2: Volume Quality (max 15) ---
             vol_ratio = selected.get("vol_ratio", 1.0)
@@ -383,6 +384,7 @@ class SwingEngine:
                 vol_score = 0
             score += vol_score
             score_breakdown.append(f"Vol: +{vol_score} ({round(vol_ratio, 1)}x)")
+            if vol_score > 0: selected.setdefault("reasons", []).append({"text": f"Volume Quality ({round(vol_ratio, 1)}x)", "impact": vol_score, "layer": 2, "type": "positive"})
             
             # --- Component 3: Relative Strength vs Nifty (max 10) ---
             stock_ret = selected.get("stock_20d_return", 0)
@@ -398,6 +400,7 @@ class SwingEngine:
                 rs_score = 1
             score += rs_score
             score_breakdown.append(f"RS: +{rs_score} (+{round(rs_spread, 1)}%)")
+            selected.setdefault("reasons", []).append({"text": f"Relative Strength vs Nifty (+{round(rs_spread, 1)}%)", "impact": rs_score, "layer": 2, "type": "positive"})
             
             # --- Component 4: Market Context Alignment (max 15, can penalize) ---
             mkt_score = 0
@@ -424,9 +427,11 @@ class SwingEngine:
             if is_market_exhausted and selected["strategy"] == "BREAKOUT":
                 mkt_score -= 10
                 score_breakdown.append("Exhaustion Penalty: -10")
+                selected.setdefault("reasons", []).append({"text": "Market Exhaustion Risk", "impact": -10, "layer": 3, "type": "negative"})
             
             score += max(-10, mkt_score)
             score_breakdown.append(f"Mkt: +{max(-10, mkt_score)}")
+            if mkt_score > 0: selected.setdefault("reasons", []).append({"text": "Market Context Alignment", "impact": mkt_score, "layer": 2, "type": "positive"})
             
             # --- Component 5: ADX Trend Strength (max 10) ---
             adx_val = selected.get("adx", 0)
@@ -440,6 +445,7 @@ class SwingEngine:
                 adx_score = 0
             score += adx_score
             score_breakdown.append(f"ADX: +{adx_score} ({round(adx_val, 1)})")
+            if adx_score > 0: selected.setdefault("reasons", []).append({"text": f"ADX Trend Strength ({round(adx_val, 1)})", "impact": adx_score, "layer": 1, "type": "positive"})
             
             # --- Component 6: Strategy-Specific Bonuses (max 15) ---
             strat_bonus = 0
@@ -467,6 +473,7 @@ class SwingEngine:
                 else:
                     strat_bonus += 3
             score += min(15, strat_bonus)
+            if strat_bonus > 0: selected.setdefault("reasons", []).append({"text": "Strategy Specific Bonuses", "impact": min(15, strat_bonus), "layer": 1, "type": "positive"})
             
             # --- Component 7: MACD/OBV Institutional Signals (max 10) ---
             inst_score = 0
@@ -478,6 +485,7 @@ class SwingEngine:
                 inst_score += 4
             score += inst_score
             score_breakdown.append(f"Inst: +{inst_score}")
+            if inst_score > 0: selected.setdefault("reasons", []).append({"text": "Institutional Flow (MACD/OBV)", "impact": inst_score, "layer": 2, "type": "positive"})
             
             # --- Final Score Normalization ---
             # [V44] Apply A/D and sector penalties from soft filters
@@ -485,6 +493,7 @@ class SwingEngine:
             final_score = round(min(100, max(0, score)), 1)
             if ad_penalty > 0 or sector_penalty > 0:
                 score_breakdown.append(f"Mkt Penalty: -{ad_penalty + sector_penalty}")
+                selected.setdefault("reasons", []).append({"text": "Breadth/Sector Penalty", "impact": -(ad_penalty + sector_penalty), "layer": 3, "type": "negative"})
             
             # Confidence Level (tighter thresholds for V3)
             confidence = "LOW"
@@ -560,6 +569,9 @@ class SwingEngine:
             return None
 
     async def run_scan(self, job_id: str, logger=None):
+        scan_results = []
+        trade_plan = []
+        total_stocks = 0
         self.start_job(job_id)
         
         # 0. Pre-Scan Risk Circuit Breakers
@@ -648,6 +660,46 @@ class SwingEngine:
             # Sort by score descending and cap at top 50
             trade_plan = sorted(scan_results, key=lambda x: x.get("score", 0), reverse=True)[:50]
 
+            # --- AI BRAIN: FINAL GATEKEEPER ---
+            from app.services.ai_brain import ai_brain
+            
+            top_5 = trade_plan[:5]
+            if top_5:
+                print(f"[AI BRAIN] Running Final Gatekeeper on Top {len(top_5)} setups...", flush=True)
+                ai_results = []
+                self.update_job_progress(job_id, total_stocks, total_stocks, "AI Gatekeeper analyzing Top 5 setups concurrently...", [s['symbol'] for s in top_5])
+                
+                async def analyze_single_setup(setup):
+                    indicators = {
+                        "setup_type": setup.get("setup_type"),
+                        "verdict": setup.get("verdict"),
+                        "engine_score": setup.get("score")
+                    }
+                    return await ai_brain.analyze_trade_setup(
+                        setup["symbol"], setup["strategy"], setup["price"], indicators, setup.get("reasons", [])
+                    )
+
+                ai_tasks = [analyze_single_setup(setup) for setup in top_5]
+                ai_results = await asyncio.gather(*ai_tasks)
+                
+                approved_setups = []
+                for setup, ai_res in zip(top_5, ai_results):
+                    setup["ai_confidence"] = ai_res.get("ai_confidence", 0)
+                    setup["ai_reason"] = ai_res.get("ai_reason", "AI Engine Error")
+                    setup["ai_approved"] = ai_res.get("approved", True)
+                    
+                    if not setup["ai_approved"]:
+                        print(f"  [X] AI VETOED {setup['symbol']}: {setup['ai_reason']}")
+                    else:
+                        print(f"  [OK] AI APPROVED {setup['symbol']} (Confidence: {setup['ai_confidence']})")
+                        approved_setups.append(setup)
+                        
+                # Replace trade_plan with only the approved setups from the top 5
+                # and any setups that were beyond the top 5 (which weren't evaluated by AI)
+                # Wait, usually we only want to trade the top 5 anyway. Let's just keep the approved ones
+                # plus the rest of the plan if needed. Let's just filter the whole trade plan.
+                trade_plan = approved_setups + trade_plan[5:]
+                
         except asyncio.CancelledError:
             pass
         except Exception as e:

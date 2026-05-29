@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     MARKET_DATA_PROVIDER: str = "twelvedata" # default
 
     # -----------------------------------------------------------------------
+    # AI INTELLIGENCE (GEMINI)
+    # -----------------------------------------------------------------------
+    GEMINI_API_KEY: str | None = None
+
+    # -----------------------------------------------------------------------
     # ZERODHA KITE CONNECT
     # -----------------------------------------------------------------------
     KITE_API_KEY: str | None = None

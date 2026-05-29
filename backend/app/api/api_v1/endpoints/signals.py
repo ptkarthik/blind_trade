@@ -212,6 +212,10 @@ async def get_sector_signals(
         # [V3 KITE LTP] Enrich all signals with real-time prices before serving
         await enrich_with_live_ltp(data)
         
+        # [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
+        def sort_key(x): return (x.get("score", 0), -(x.get("analysis_index", 0)))
+        data = sorted(data, key=sort_key, reverse=True)
+        
         # Dynamic Aggregation
         response = {}
         for stock_data in data:
