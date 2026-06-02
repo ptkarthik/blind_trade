@@ -1161,7 +1161,7 @@ class IntradayTechnicalAnalysis:
                 "candle_hold_count": candle_hold_count,
                 "reclaim_vol_avg": round(reclaim_vol_avg, 1),
                 "rvol": round(rvol, 2),
-                "tag": "[⚠ FAILED BREAKOUT]" if fake_breakout_flag else ("[⚠ Liquidity Sweep Trap]" if liquidity_sweep and not price_reclaim else "")
+                "tag": "[ FAILED BREAKOUT]" if fake_breakout_flag else ("[ Liquidity Sweep Trap]" if liquidity_sweep and not price_reclaim else "")
             }
         except Exception as e:
             print(f"Error in Sweep Detection: {e}")

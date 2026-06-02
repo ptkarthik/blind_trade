@@ -1,22 +1,13 @@
-
-import sqlite3
+import asyncio
+from app.db.session import AsyncSessionLocal
+from app.models.job import Job
 import uuid
-import datetime
 
-def trigger_job():
-    try:
-        conn = sqlite3.connect('blind_trade.db')
-        cursor = conn.cursor()
-        job_id = uuid.uuid4().hex
-        cursor.execute(
-            "INSERT INTO jobs (id, type, status, created_at) VALUES (?, ?, ?, ?)",
-            (job_id, "full_scan", "pending", datetime.datetime.now())
-        )
-        conn.commit()
-        conn.close()
-        print(f"Job Triggered: {job_id}")
-    except Exception as e:
-        print(f"Error: {e}")
+async def main():
+    async with AsyncSessionLocal() as session:
+        job = Job(id=str(uuid.uuid4()), type="intraday", status="pending", trigger_source="manual")
+        session.add(job)
+        await session.commit()
+        print(f"Created job {job.id}")
 
-if __name__ == "__main__":
-    trigger_job()
+asyncio.run(main())

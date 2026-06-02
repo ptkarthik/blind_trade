@@ -2154,12 +2154,6 @@
         "industry": "General"
     },
     {
-        "symbol": "ECOSMOBLTY.NS",
-        "name": "Ecos (India) Mobility & Hospitality Limited",
-        "raw_symbol": "ECOSMOBLTY",
-        "industry": "General"
-    },
-    {
         "symbol": "EDELWEISS.NS",
         "name": "Edelweiss Financial Services Limited",
         "raw_symbol": "EDELWEISS",
@@ -4428,12 +4422,6 @@
         "industry": "General"
     },
     {
-        "symbol": "KOPRAN.NS",
-        "name": "Kopran Limited",
-        "raw_symbol": "KOPRAN",
-        "industry": "General"
-    },
-    {
         "symbol": "KOTAKBANK.NS",
         "name": "Kotak Mahindra Bank Limited",
         "raw_symbol": "KOTAKBANK",
@@ -5517,12 +5505,6 @@
         "symbol": "NIITMTS.NS",
         "name": "NIIT Learning Systems Limited",
         "raw_symbol": "NIITMTS",
-        "industry": "General"
-    },
-    {
-        "symbol": "NIMBSPROJ.NS",
-        "name": "Nimbus Projects Limited",
-        "raw_symbol": "NIMBSPROJ",
         "industry": "General"
     },
     {

@@ -57,14 +57,14 @@ class KiteMarginService:
                     if (now - ts) < timedelta(hours=24):
                         self.allowed_symbols = cache_data.get("symbols", {})
                         self.last_updated = ts
-                        logger.info(f"🛡️ KiteMarginService: Loaded {len(self.allowed_symbols)} symbols from cache.")
+                        logger.info(f"️ KiteMarginService: Loaded {len(self.allowed_symbols)} symbols from cache.")
                         return
             except Exception as e:
-                logger.warning(f"⚠️ KiteMarginService: Cache corrupt, re-fetching. {e}")
+                logger.warning(f"️ KiteMarginService: Cache corrupt, re-fetching. {e}")
 
         # 2. Fetch fresh from Zerodha
         try:
-            logger.info("📡 KiteMarginService: Synchronizing with Zerodha Margin API...")
+            logger.info(" KiteMarginService: Synchronizing with Zerodha Margin API...")
             headers = {"User-Agent": "Mozilla/5.0"}
             response = requests.get(self.margin_url, headers=headers, timeout=15)
             
@@ -89,11 +89,11 @@ class KiteMarginService:
                         "symbols": mapping
                     }, f)
                 
-                logger.info(f"✅ KiteMarginService: Synchronized {len(mapping)} symbols (Source: Zerodha).")
+                logger.info(f" KiteMarginService: Synchronized {len(mapping)} symbols (Source: Zerodha).")
             else:
-                logger.error(f"❌ KiteMarginService: Failed fetch ({response.status_code})")
+                logger.error(f" KiteMarginService: Failed fetch ({response.status_code})")
         except Exception as e:
-            logger.error(f"❌ KiteMarginService: Sync Error: {e}")
+            logger.error(f" KiteMarginService: Sync Error: {e}")
 
     def get_tradability(self, symbol: str) -> dict:
         """

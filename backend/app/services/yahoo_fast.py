@@ -3,11 +3,11 @@ import pandas as pd
 import json
 import random
 from datetime import datetime
-from curl_cffi import requests
+import requests
 from typing import Dict, List, Any
 
 class YahooFast:
-    """[V12.4] Hyper-Speed Browser-Mimicry Data Provider."""
+    """[V12.4] Hyper-Speed Data Provider (Standard Requests to prevent Windows deadlocks)."""
     
     def __init__(self):
         self.user_agents = [
@@ -15,24 +15,9 @@ class YahooFast:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0"
         ]
-        self.session = None
-
-    async def _get_session(self):
-        if self.session is None:
-            # We use AsyncSession for persistent keep-alive connections
-            self.session = requests.AsyncSession(
-                impersonate="chrome120",
-                headers={
-                    "Accept": "*/*",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Origin": "https://finance.yahoo.com",
-                    "Referer": "https://finance.yahoo.com/",
-                }
-            )
-        return self.session
 
     async def fetch_ohlc(self, symbol: str, period: str = "7d", interval: str = "15m") -> pd.DataFrame:
-        """Fetches OHLC data directly from Yahoo Chart API with Browser Mimicry (No Proxies)."""
+        """Fetches OHLC data directly from Yahoo Chart API with standard requests."""
         params = {
             "range": period,
             "interval": interval,
@@ -41,19 +26,18 @@ class YahooFast:
         }
         
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        session = await self._get_session()
-        
-        req_kwargs = {"params": params, "timeout": 15}
+        headers = {
+            "User-Agent": random.choice(self.user_agents),
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://finance.yahoo.com",
+            "Referer": "https://finance.yahoo.com/",
+        }
         
         try:
-            # Mimic a real browser request
-            resp = await session.get(url, **req_kwargs)
+            resp = await asyncio.to_thread(requests.get, url, params=params, headers=headers, timeout=15)
             if resp.status_code != 200:
-                # Fallback to standard requests if curl_cffi is blocked
-                import requests as std_requests
-                resp = await asyncio.to_thread(std_requests.get, url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-                if resp.status_code != 200:
-                    return pd.DataFrame()
+                return pd.DataFrame()
             
             data = resp.json()
             chart = data.get("chart", {}).get("result", [None])[0]

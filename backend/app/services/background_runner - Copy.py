@@ -21,7 +21,7 @@ class BackgroundRunner:
         
     async def start(self):
         # self.running = True
-        print("🚀 Background Runner: Auto-Mode DISABLED (User Control Only)")
+        print(" Background Runner: Auto-Mode DISABLED (User Control Only)")
         # while self.running:
         #     try:
         #         # Update BOTH modes in PARALLEL
@@ -40,7 +40,7 @@ class BackgroundRunner:
         Iterates through all sectors for a specific MODE.
         Strict separation of logic.
         """
-        print(f"🔄 Background: Starting {mode.upper()} Market Scan...")
+        print(f" Background: Starting {mode.upper()} Market Scan...")
         start_time = time.time()
         
         sectors = ["Banking", "Finance", "IT", "Auto", "Pharma", "Energy", "FMCG", "Metal", "Infrastructure", "Realty", "Services"]
@@ -203,6 +203,6 @@ class BackgroundRunner:
                 GLOBAL_SECTOR_CACHE[mode][name] = data
                 
         duration = time.time() - start_time
-        print(f"✅ Background: {mode.upper()} Complete in {round(duration, 2)}s.")
+        print(f" Background: {mode.upper()} Complete in {round(duration, 2)}s.")
 
 runner = BackgroundRunner()

@@ -61,7 +61,7 @@ class PaperMonitor:
                 
                 if today_pnl < -(CIRCUIT_BREAKER_CAPITAL * CIRCUIT_BREAKER_PCT):
                     if not getattr(self, '_circuit_breaker_logged', False):
-                        logger.warning(f"🚨 [CIRCUIT BREAKER] Daily loss ₹{today_pnl:,.0f} exceeds "
+                        logger.warning(f" [CIRCUIT BREAKER] Daily loss ₹{today_pnl:,.0f} exceeds "
                                       f"-{CIRCUIT_BREAKER_PCT*100}% threshold. "
                                       f"Active position management SUSPENDED for today.")
                         self._circuit_breaker_logged = True
@@ -145,7 +145,7 @@ class PaperMonitor:
                         if is_stale_trade:
                             close_it = True
                             reason = "EOD_RESET" # Purged as yesterday's leftover
-                            logger.info(f"🧹 [PAPER] {trade.symbol} Stale Position (from {trade_ist_date}) purged at {current_price}")
+                            logger.info(f" [PAPER] {trade.symbol} Stale Position (from {trade_ist_date}) purged at {current_price}")
 
                         # 2. ADVANCED EXIT EVALUATION (V24 FIX #8)
                         # Instead of just basic SL/TP, use the engine's evaluate_exit
@@ -171,7 +171,7 @@ class PaperMonitor:
                                 if exit_eval["action"] == "EXIT":
                                     close_it = True
                                     reason = exit_eval.get("reason", "Advanced Exit Signal")
-                                    logger.info(f"🧠 [PAPER] {trade.symbol} Advanced Exit: {reason}")
+                                    logger.info(f" [PAPER] {trade.symbol} Advanced Exit: {reason}")
                                 elif exit_eval["action"] == "PARTIAL_EXIT":
                                     # [V40 GAP#6 FIX] Book 50% profit, trail remainder to breakeven
                                     exit_qty = max(1, trade.qty // 2)
@@ -185,7 +185,7 @@ class PaperMonitor:
                                         new_target = exit_eval.get("new_target")
                                         if new_target:
                                             trade.target = new_target
-                                        logger.info(f"📊 [PAPER] {trade.symbol} Partial: {exit_qty} sold, {remaining_qty} remain, SL→{trade.stop_loss}")
+                                        logger.info(f" [PAPER] {trade.symbol} Partial: {exit_qty} sold, {remaining_qty} remain, SL→{trade.stop_loss}")
                                     else:
                                         close_it = True
                                         reason = exit_eval.get("reason", "Partial (full close)")
@@ -196,7 +196,7 @@ class PaperMonitor:
                                         valid_trail = (new_stop < trade.stop_loss) if is_short_pos else (new_stop > trade.stop_loss)
                                         if valid_trail:
                                             trade.stop_loss = new_stop
-                                            logger.info(f"🛡️ [PAPER] {trade.symbol} Trailing Stop updated to {new_stop}")
+                                            logger.info(f"️ [PAPER] {trade.symbol} Trailing Stop updated to {new_stop}")
                             except Exception as e:
                                 logger.error(f"Advanced Exit Eval Failed for {trade.symbol}: {e}")
                                 # Fallback to basic SL/TP if data fetch fails
@@ -205,19 +205,19 @@ class PaperMonitor:
                                     if sl_hit:
                                         close_it = True
                                         reason = "STOP_LOSS"
-                                        logger.info(f"🚨 [PAPER] {trade.symbol} SL hit at {current_price} (SL: {trade.stop_loss})")
+                                        logger.info(f" [PAPER] {trade.symbol} SL hit at {current_price} (SL: {trade.stop_loss})")
                                 if not close_it and trade.target:
                                     tgt_hit = current_price <= trade.target if is_short_pos else current_price >= trade.target
                                     if tgt_hit:
                                         close_it = True
                                         reason = "TARGET"
-                                        logger.info(f"🎯 [PAPER] {trade.symbol} Target hit at {current_price} (Tgt: {trade.target})")
+                                        logger.info(f" [PAPER] {trade.symbol} Target hit at {current_price} (Tgt: {trade.target})")
 
                         # 3. EOD EXIT (Late Afternoon)
                         elif is_eod_time and trade.product_type == "MIS":
                             close_it = True
                             reason = "EOD"
-                            logger.info(f"🕒 [PAPER] {trade.symbol} EOD Square-off at {current_price}")
+                            logger.info(f" [PAPER] {trade.symbol} EOD Square-off at {current_price}")
 
                         if close_it:
                             await self._close_trade(session, trade, current_price, reason)
@@ -251,7 +251,7 @@ class PaperMonitor:
             account.balance += partial_proceeds
             account.total_pnl += pnl
         
-        logger.info(f"✅ [PAPER] {trade.symbol} Partial Close ({reason}): {exit_qty} units at {exit_price}, P&L: {round(pnl, 2)}")
+        logger.info(f" [PAPER] {trade.symbol} Partial Close ({reason}): {exit_qty} units at {exit_price}, P&L: {round(pnl, 2)}")
 
     async def _close_trade(self, session, trade, price, reason):
         """
@@ -282,6 +282,6 @@ class PaperMonitor:
             
             account.balance += proceeds
             account.total_pnl += pnl
-            logger.info(f"✅ [PAPER] {trade.symbol} Closed ({reason}). P&L: {round(pnl, 2)}")
+            logger.info(f" [PAPER] {trade.symbol} Closed ({reason}). P&L: {round(pnl, 2)}")
 
 paper_monitor = PaperMonitor()

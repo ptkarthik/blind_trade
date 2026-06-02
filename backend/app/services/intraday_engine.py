@@ -25,10 +25,11 @@ def safe_scalar(x):
     return float(np.nan_to_num(val, nan=0.0))
 
 class IntradayEngine:
-    """
-    [V11 RESTORED] Ultra-Sync Institutional Engine.
-    Restores the full 12-point Audit Grid with V10 Pulse Concurrency (2200+ Symbols).
-    """
+    @property
+    def semaphore(self):
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.CONFIG.get("concurrency", 25))
+        return self._semaphore
 
     def __init__(self):
         # [V13] CENTRALIZED INSTITUTIONAL CONFIG
@@ -42,7 +43,7 @@ class IntradayEngine:
             "min_gate_atr": 0.3,
 
             "score_floor": 65,
-            "top_n_cap": 50,
+            "top_n_cap": 10,
             "ers_reject_normal": 60,
             "ers_reject_trend": 55,
             "ers_degrade_normal": 75,
@@ -52,8 +53,15 @@ class IntradayEngine:
             "max_capital_pct_per_trade": 0.20,    # [V31 GAP#2] Never more than 20% in one trade
         }
         
-        # 🛰️ Pulse-Fire Concurrency
-        self.semaphore = asyncio.Semaphore(self.CONFIG.get("concurrency", 50)) 
+        # [PHASE 94]: Hard memory/concurrency constraints
+        self.CONFIG.update({
+            "max_concurrent_jobs": 2,
+            "concurrency": 25,  # Max tasks
+            "chunk_size": 25,   # Reduced size per chunk
+            "throttle_ms": 100  # Phase 94: Soft throttle between symbol chunks
+        })
+        
+        self._semaphore = None
         self.job_states = {}
 
         # [V13] SYSTEM STATE CONTROLLER
@@ -703,7 +711,7 @@ class IntradayEngine:
                     # Old rate created sub-1.0 RR targets after 12:30 PM → negative expectancy
                     time_decay_factor = max(0.5, 1.0 - ((current_hour - 10.0) * 0.10))
             except Exception as e:
-                print(f"⚠️ Time decay fallback error: {e}")
+                print(f"️ Time decay fallback error: {e}")
                 time_decay_factor = 1.0
 
             # Target: Nearest resistance/support level, capped by ATR extension
@@ -857,6 +865,8 @@ class IntradayEngine:
                 "timestamp": datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
             }
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {"symbol": sym, "skip_reason": f"System Error: {str(e)}"}
 
     def _get_indicators(self, df_15m, df_1h):
@@ -2292,28 +2302,50 @@ class IntradayEngine:
         # [V23 FIX #8] Liquidity Bootstrap Race Condition Fix
         # OLD: Entire bootstrap was fire-and-forget with 2s sleep — first 20% of scan got false -20 penalty
         # NEW: Synchronously bootstrap first 200 symbols, background the rest
+        
+        self.job_states[job_id] = {"results": [], "failed_symbols": [], "progress": 0, "is_running": True, "pause_requested": False, "main_task": asyncio.current_task()}
+        
+        # Move progress loop UP here so UI doesn't hang on INITIALIZING for 3 minutes during proxy validation
+        sync_task = asyncio.create_task(self._progress_loop(job_id, total))
+        
+        # Force a UI update to tell the user what's happening
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.models.job import Job
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                q = select(Job).where(Job.id == job_id)
+                res = await session.execute(q)
+                j = res.scalars().first()
+                if j:
+                    j.result = {"status_msg": "Bootstrapping Proxies & Liquidity (Takes ~1 min)...", "progress": 0, "total": total}
+                    await session.commit()
+        except: pass
+
         first_batch = all_symstr[:200]
         remaining_batch = all_symstr[200:]
         await liquidity_service.bulk_bootstrap(first_batch)
         if remaining_batch:
             asyncio.create_task(liquidity_service.bulk_bootstrap(remaining_batch))
-        
-        self.job_states[job_id] = {"results": [], "failed_symbols": [], "progress": 0, "is_running": True, "pause_requested": False, "main_task": asyncio.current_task()}
         index_ctx = await self._get_index_context()
         
         # [V18 FIX #6] Pre-compute sector heat ONCE globally (not per-batch)
         try:
             sector_heat_static = await market_service.get_sector_performances()
-            # Convert from percentage to decimal for compatibility with gating thresholds
-            sector_heat = {k: v / 100.0 for k, v in sector_heat_static.items()}
+            # [V2] get_sector_performances now returns {"1d": float, "5d": float} per sector
+            # Convert 1d percentage to decimal for compatibility with gating thresholds
+            sector_heat = {}
+            for k, v in sector_heat_static.items():
+                if isinstance(v, dict):
+                    sector_heat[k] = v.get("1d", 0.0) / 100.0
+                else:
+                    sector_heat[k] = v / 100.0  # Backward compatibility
         except Exception as e:
             print(f"[SECTOR] Failed to fetch global sector heat: {e}")
             sector_heat = {}
         
         # [V31 GAP#8] Track live sector changes from batch data to merge with static
         live_sector_returns = {}  # sector -> [list of intraday returns]
-        
-        sync_task = asyncio.create_task(self._progress_loop(job_id, total))
 
         # R4-8 FIX: Pre-build O(1) index lookup instead of O(n) symbols.index() per stock
         symbol_index_map = {(s["symbol"] if isinstance(s, dict) else s): i for i, s in enumerate(symbols)}
@@ -2321,25 +2353,26 @@ class IntradayEngine:
         try:
             # Process in Streaming Batches of 100
             chunk_size = 100
-            for i in range(0, total, chunk_size):
+            chunks = [symbols[i:i + chunk_size] for i in range(0, total, chunk_size)]
+            for i, chunk in enumerate(chunks):
                 if job_id in self.job_states and not self.job_states[job_id].get("is_running", True):
                     if logger: logger.warning(f"[STOP] [INTRA] Stop Signal Received. Terminating job {job_id} at {i}/{total}.")
                     break
 
-                # [V12.1 PAUSE CHECK] ⏸️
+                # [V12.1 PAUSE CHECK] ️
                 while job_id in self.job_states and self.job_states[job_id].get("pause_requested"):
                     if not self.job_states[job_id].get("is_running", True): break
                     await asyncio.sleep(1)
 
-                chunk = symbols[i:i + chunk_size]
-                chunk_syms = [s["symbol"] if isinstance(s, dict) else s for s in chunk]
-                
-                print(f"[BATCH] Pulse Batch: {i}/{total} ({len(chunk_syms)} symbols)")
+                if not self.job_states[job_id]["is_running"]: break
+
+                chunk_syms = [s['symbol'] if isinstance(s, dict) else s for s in chunk]
+                print(f"[SCAN] Pulse Scan: {len(chunk_syms)} symbols")
                 
                 # 1. Fetch data for this specific batch (with 120s HARD TIMEOUT)
-                # [AUDIT GAP-C] Add Kite market depth fetch in parallel — zero latency cost
                 try:
                     from app.services.kite_data import kite_data
+                    print(">> Awaiting asyncio.wait_for(gather(...))")
                     res_15m, res_1h, res_1d, res_prices, res_depth = await asyncio.wait_for(
                         asyncio.gather(
                             market_service.get_batch_ohlc(chunk_syms, interval="15m", period="7d"),
@@ -2350,20 +2383,27 @@ class IntradayEngine:
                         ),
                         timeout=120.0
                     )
+                    print(">> Finished asyncio.wait_for!")
                 except asyncio.TimeoutError:
                     print(f"[TIMEOUT] Batch {i} hung. Force-skipping to maintain engine flow.")
                     self.job_states[job_id]["progress"] += len(chunk)
                     continue
+                except Exception as e:
+                    print(f" [ENGINE] Batch {i} crashed: {e}")
+                    continue
+
+                print(">> Starting TA computation")
+                ta_start = time.time()
 
                 # [V21.1 FIX] Data Quality Audit Per Batch
                 empty_count = sum(1 for s in chunk_syms if res_15m.get(s) is None or (hasattr(res_15m.get(s), 'empty') and res_15m[s].empty))
                 short_count = sum(1 for s in chunk_syms if res_15m.get(s) is not None and hasattr(res_15m.get(s), '__len__') and 0 < len(res_15m[s]) < 100)
                 if empty_count > len(chunk_syms) * 0.3:
-                    print(f"⚠️ [DATA QUALITY] Batch {i}: {empty_count}/{len(chunk_syms)} symbols returned EMPTY 15m data!")
+                    print(f"️ [DATA QUALITY] Batch {i}: {empty_count}/{len(chunk_syms)} symbols returned EMPTY 15m data!")
                 if short_count > 0:
-                    print(f"⚠️ [DATA QUALITY] Batch {i}: {short_count} symbols have <100 15m candles (degraded indicators)")
+                    print(f"️ [DATA QUALITY] Batch {i}: {short_count} symbols have <100 15m candles (degraded indicators)")
                 if res_depth:
-                    print(f"📊 [KITE DEPTH] Batch {i}: {len(res_depth)} symbols with L2 order flow data")
+                    print(f" [KITE DEPTH] Batch {i}: {len(res_depth)} symbols with L2 order flow data")
 
                 batch_pulse = {}
                 for s in chunk_syms:
@@ -2411,7 +2451,7 @@ class IntradayEngine:
                             static_val = sector_heat.get(sec, 0.0)
                             sector_heat[sec] = (live_heat * 0.6) + (static_val * 0.4)
                     if i % 500 == 0:  # Log every 5th batch to avoid spam
-                        print(f"🌡️ [SECTOR HEAT] Live merge: {', '.join(f'{k}={v*100:.1f}%' for k,v in sector_heat.items() if v != 0)}")
+                        print(f"️ [SECTOR HEAT] Live merge: {', '.join(f'{k}={v*100:.1f}%' for k,v in sector_heat.items() if v != 0)}")
 
                 # 2. Analyze the batch immediately
                 async def sem_task(s_obj):
@@ -2454,8 +2494,8 @@ class IntradayEngine:
                                         logger.info(msg)
                                         # Institutional detail logging
                                         if catalysts or penalties:
-                                            print(f"   ├ 🚀 Catalysts: {', '.join(catalysts[:4])}") if catalysts else None
-                                            print(f"   ├ 🛡️ Penalties: {', '.join(penalties[:4])}") if penalties else None
+                                            print(f"   ├  Catalysts: {', '.join(catalysts[:4])}") if catalysts else None
+                                            print(f"   ├ ️ Penalties: {', '.join(penalties[:4])}") if penalties else None
                             else:
                                 if logger: logger.warning(f"[SKIP] {sym}: {res.get('skip_reason', 'Unknown')}")
                         except Exception as e:
@@ -2545,6 +2585,57 @@ class IntradayEngine:
         # NEW: Return ALL filtered results for UI display, but tag the top N as 'recommended'
         #      for execution priority. System state sync uses only recommended set.
         recommended = all_sorted[:top_n_target]
+        
+        # --- AI BRAIN: FINAL GATEKEEPER (INTRADAY MODE) ---
+        from app.services.ai_brain import ai_brain
+        if recommended and ai_brain.is_enabled:
+            approved_recommended = []
+            eval_index = 0
+            
+            async def analyze_single_setup(setup):
+                indicators = {
+                    "mode": setup.get("mode"),
+                    "regime": setup.get("regime"),
+                    "score": setup.get("score"),
+                    "l2_footprint": setup.get("flags", {}),
+                    "relative_volume": setup.get("liquidity", {}).get("rvol", 1.0)
+                }
+                return await ai_brain.analyze_trade_setup(
+                    setup["symbol"], setup.get("mode", "UNKNOWN"), setup["price"], indicators, setup.get("reasons", []), mode="intraday"
+                )
+
+            while len(approved_recommended) < 10 and eval_index < len(recommended):
+                needed = 10 - len(approved_recommended)
+                batch = recommended[eval_index:eval_index + needed]
+                
+                print(f"[AI BRAIN] Evaluating {len(batch)} setups (need {needed} more to reach 10)...", flush=True)
+                if logger: logger.info(f"[AI BRAIN] Evaluating {len(batch)} setups (need {needed} more to reach 10)...")
+                
+                ai_tasks = [analyze_single_setup(setup) for setup in batch]
+                ai_results = await asyncio.gather(*ai_tasks)
+                
+                for setup, ai_res in zip(batch, ai_results):
+                    setup["ai_confidence"] = ai_res.get("ai_confidence", 0)
+                    setup["ai_reason"] = ai_res.get("ai_reason", "AI Engine Error")
+                    setup["ai_approved"] = ai_res.get("approved", True)
+                    
+                    if not setup["ai_approved"]:
+                        print(f"  [X] AI VETOED {setup['symbol']}: {setup['ai_reason']}", flush=True)
+                        if logger: logger.warning(f"[X] AI VETOED {setup['symbol']}: {setup['ai_reason']}")
+                        setup["reasons"].append({"text": f"[AI REJECTED] {setup['ai_reason']}", "impact": -30, "layer": 3, "type": "negative"})
+                        setup["score"] = max(0, setup["score"] - 30) # Demote score
+                        # Re-calculate signal to ensure it drops out of the BUY category
+                        setup["signal"] = self._get_signal(setup["score"], setup.get("mode", "NONE"))
+                    else:
+                        print(f"  [] AI APPROVED {setup['symbol']}: {setup['ai_confidence']}/100", flush=True)
+                        if logger: logger.info(f"[] AI APPROVED {setup['symbol']}: {setup['ai_confidence']}/100")
+                        approved_recommended.append(setup)
+                
+                eval_index += len(batch)
+            
+            # Reconstruct recommended: all AI approved + any remaining setups that were NOT sent to the AI
+            recommended = approved_recommended + recommended[eval_index:]
+        
         recommended_symbols = {r["symbol"] for r in recommended}
         
         for r in all_sorted:
@@ -2605,7 +2696,7 @@ class IntradayEngine:
                 async with AsyncSessionLocal() as session:
                     job = await session.get(Job, job_id)
                     if job:
-                        # [V12.1 EXTERNAL CANCEL CHECK] 🛑
+                        # [V12.1 EXTERNAL CANCEL CHECK] 
                         if job.status in ["failed", "cancelled", "stopped"]:
                             state["is_running"] = False
                             # [V12.2] Explicitly cancel the main execution task
@@ -2614,7 +2705,7 @@ class IntradayEngine:
                                 main_task.cancel()
                             break
                         
-                        # [V12.1 EXTERNAL PAUSE CHECK] ⏸️
+                        # [V12.1 EXTERNAL PAUSE CHECK] ️
                         if job.status == "paused":
                             state["pause_requested"] = True
                         elif state.get("pause_requested") and job.status == "processing":

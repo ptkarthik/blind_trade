@@ -47,7 +47,7 @@ class MarketDataService:
         # Initialize Kite Connect (loads saved session or prompts login)
         await kite_data.initialize()
         kite_status = "CONNECTED" if kite_data.is_ready else "FALLBACK (Yahoo)"
-        print(f"📦 MarketDataService: Systems Online ({len(self.stock_master)} symbols). Data: {kite_status}")
+        print(f" MarketDataService: Systems Online ({len(self.stock_master)} symbols). Data: {kite_status}")
 
     def _load_master_list(self):
         """[V11 RESTORED] Loads Nifty 500+ Universe."""
@@ -140,7 +140,7 @@ class MarketDataService:
                 if results:
                     return results
         except Exception as e:
-            print(f"⚠️ [SEARCH] Kite search failed: {e}")
+            print(f"️ [SEARCH] Kite search failed: {e}")
             
         # Fallback
         for item in self.stock_master:
@@ -214,9 +214,9 @@ class MarketDataService:
                     results.update(kite_results)
                     remaining_symbols = [s for s in remaining_symbols if s not in kite_results]
                     if len(kite_results) > 0:
-                        print(f"✅ [DATA SOURCE] Fetched Historical OHLC for {len(kite_results)} symbols from KITE")
+                        print(f" [DATA SOURCE] Fetched Historical OHLC for {len(kite_results)} symbols from KITE")
             except Exception as e:
-                print(f"⚠️ [KITE] Batch fetch failed, falling back to Yahoo: {e}")
+                print(f"️ [KITE] Batch fetch failed, falling back to Yahoo: {e}")
         
         # ── TIER 2: Yahoo Fast (Fallback for failures) ──
         if remaining_symbols:
@@ -237,20 +237,31 @@ class MarketDataService:
                         batch_results = await yahoo_fast.fetch_batch(chunk, interval=interval, period=period, concurrency=10)
                         
                         if not batch_results and self.td and i == 0:
-                            print(f"🆘 [YAHOO BLOCKED] Invoking TwelveData Failover for batch...")
-                            for s in chunk:
-                                try:
-                                    td_df = self.td.time_series(symbol=s, interval=interval, outputsize=50).as_pandas()
-                                    if not td_df.empty:
-                                        td_df.columns = [c.lower() for c in td_df.columns]
-                                        batch_results[s] = td_df
-                                except Exception as e:
-                                    print(f"⚠️ [TD FAILOVER] {s}: {e}")
-                                    continue
+                            # [V12.5 FIX] TwelveData has 8 req/min limit. Do not use for bulk failover, it hangs the system.
+                            if len(chunk) <= 5:
+                                print(f" [YAHOO BLOCKED] Invoking TwelveData Failover for small batch...")
+                                async def _td_fallback(s):
+                                    try:
+                                        def _fetch_td():
+                                            return self.td.time_series(symbol=s, interval=interval, outputsize=50).as_pandas()
+                                        td_df = await asyncio.to_thread(_fetch_td)
+                                        if not td_df.empty:
+                                            td_df.columns = [c.lower() for c in td_df.columns]
+                                            return s, td_df
+                                    except Exception as e:
+                                        print(f" [TD FAILOVER] {s}: {e}")
+                                    return s, None
+                                    
+                                td_results = await asyncio.gather(*[_td_fallback(s) for s in chunk])
+                                for s, df in td_results:
+                                    if df is not None:
+                                        batch_results[s] = df
+                            else:
+                                print(f" [YAHOO BLOCKED] Batch too large for TwelveData failover ({len(chunk)}). Skipping failover.")
                         
                         return batch_results
                     except Exception as e:
-                        print(f"❌ [API FAIL] Batch fetch failed. Error: {str(e)}")
+                        print(f" [API FAIL] Batch fetch failed. Error: {str(e)}")
                         import traceback
                         traceback.print_exc()
                         return {}
@@ -261,7 +272,7 @@ class MarketDataService:
                 for b_res in batch_outputs:
                     results.update(b_res)
                     if b_res:
-                        print(f"🔄 [DATA SOURCE] Fetched Historical OHLC for {len(b_res)} symbols from YAHOO")
+                        print(f" [DATA SOURCE] Fetched Historical OHLC for {len(b_res)} symbols from YAHOO")
                 
                 await asyncio.sleep(1.5)
             
@@ -283,9 +294,9 @@ class MarketDataService:
                 if kite_prices:
                     results.update(kite_prices)
                     remaining = [s for s in symbols if s not in kite_prices]
-                    print(f"✅ [DATA SOURCE] Fetched Live Prices (LTP) for {len(kite_prices)} symbols from KITE")
+                    print(f" [DATA SOURCE] Fetched Live Prices (LTP) for {len(kite_prices)} symbols from KITE")
             except Exception as e:
-                print(f"⚠️ [KITE] LTP fetch failed: {e}")
+                print(f"️ [KITE] LTP fetch failed: {e}")
         
         # ── TIER 2: Yahoo (Fallback) ──
         if remaining:
@@ -298,7 +309,7 @@ class MarketDataService:
                         return yf.download(
                             chunk, period="1d", interval="15m", 
                             group_by='ticker', progress=False, threads=True, 
-                            proxy=proxy, session=self.session
+                            proxy=proxy, session=self.session, timeout=15
                         )
                     df_batch = await asyncio.to_thread(_batch)
                     for s in chunk:
@@ -313,7 +324,7 @@ class MarketDataService:
                                 results[s] = {"price": p, "change_percent": round(((p-op)/op)*100 if op else 0, 2)}
                         except: continue
                     if results:
-                        print(f"🔄 [DATA SOURCE] Fetched Live Prices for {len(chunk)} symbols from YAHOO")
+                        print(f" [DATA SOURCE] Fetched Live Prices for {len(chunk)} symbols from YAHOO")
                     await asyncio.sleep(0.3)
                 except: continue
         return results
@@ -418,7 +429,7 @@ class MarketDataService:
                 "timestamp": time.time()
             }
         except Exception as e: 
-            print(f"⚠️ [MARKET_STATUS] Failed to fetch: {e}")
+            print(f"️ [MARKET_STATUS] Failed to fetch: {e}")
             return {"status": "OPEN", "nifty_50": 0.0, "india_vix": 15.0}
 
     async def get_ohlc(self, symbol: str, period: str = "30d", interval: str = "1d", fast_fail: bool=False):
@@ -452,7 +463,7 @@ class MarketDataService:
                     td_df.columns = [c.lower() for c in td_df.columns]
                     return td_df
             except Exception as e:
-                print(f"⚠️ [OHLC] TwelveData failover also failed for {symbol}: {e}")
+                print(f"[OHLC] TwelveData failover also failed for {symbol}: {e}")
             
         return pd.DataFrame()
 

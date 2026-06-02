@@ -66,8 +66,8 @@ class InstitutionalIntel:
         score = max(0, min(100, score))
         
         action = "Neutral"
-        if score > 70: action = "Accumulation 🟢"
-        elif score < 30: action = "Distribution 🔴"
+        if score > 70: action = "Accumulation "
+        elif score < 30: action = "Distribution "
         
         return {"action": action, "score": score}
 

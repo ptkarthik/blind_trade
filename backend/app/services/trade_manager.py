@@ -41,9 +41,9 @@ class TradeManager:
                 self.trade_history = [self._model_to_dict(t) for t in hist_result.scalars().all()]
                 
                 self._initialized = True
-                logger.info(f"♻️ Trade Manager: Restored {len(self.active_trades)} active trades from DB.")
+                logger.info(f"️ Trade Manager: Restored {len(self.active_trades)} active trades from DB.")
             except Exception as e:
-                logger.error(f"❌ Failed to sync TradeManager from DB: {e}")
+                logger.error(f" Failed to sync TradeManager from DB: {e}")
 
     def _model_to_dict(self, model: SwingTrade) -> Dict[str, Any]:
         """Helper to convert DB model to dictionary format used by services."""
@@ -73,7 +73,7 @@ class TradeManager:
         
         # Ensure duplicate symbols are not added to active monitoring
         if any(t["symbol"] == symbol for t in self.active_trades):
-            logger.warning(f"⚠️ Trade Manager: {symbol} is already an active trade.")
+            logger.warning(f"️ Trade Manager: {symbol} is already an active trade.")
             return
 
         # Enrich trade with lifecycle metadata for DB
@@ -109,9 +109,9 @@ class TradeManager:
         
         if order_res.get("status") == "success":
             trade_entry["kite_order_id"] = order_res.get("order_id")
-            logger.info(f"⚡ REAL TRADE EXECUTED for {symbol}: Order ID {trade_entry['kite_order_id']}")
+            logger.info(f" REAL TRADE EXECUTED for {symbol}: Order ID {trade_entry['kite_order_id']}")
         else:
-            logger.error(f"❌ Failed to execute real trade for {symbol}: {order_res.get('message')}")
+            logger.error(f" Failed to execute real trade for {symbol}: {order_res.get('message')}")
             # If real trade fails, we might still want to track it as PAPER or abort. 
             # For now, let's track it but log the failure.
 
@@ -140,10 +140,10 @@ class TradeManager:
                 # Add the ID from DB
                 trade_entry["id"] = db_trade.id
                 self.active_trades.append(trade_entry)
-                logger.info(f"🚀 Trade Manager: Monitoring started for {symbol} (Saved to DB).")
+                logger.info(f" Trade Manager: Monitoring started for {symbol} (Saved to DB).")
             except Exception as e:
                 await session.rollback()
-                logger.error(f"❌ Failed to persist new trade {symbol}: {e}")
+                logger.error(f" Failed to persist new trade {symbol}: {e}")
 
     def get_active_trades(self) -> List[Dict[str, Any]]:
         """Returns all currently open trades."""
@@ -188,7 +188,7 @@ class TradeManager:
                     new_be_sl = trade["entry"] + (0.1 * R)
                     if new_be_sl > trade["stop_loss"]:
                         trade["stop_loss"] = round(new_be_sl, 2)
-                        logger.info(f"🛡️ PULLBACK BE DEFENSE: {symbol} hit 1.0R. SL moved to {trade['stop_loss']}.")
+                        logger.info(f"️ PULLBACK BE DEFENSE: {symbol} hit 1.0R. SL moved to {trade['stop_loss']}.")
             
             elif trade["strategy"] == "BREAKOUT":
                 # Breakouts use Hybrid Trailing Logic
@@ -214,7 +214,7 @@ class TradeManager:
                     )
                     await session.commit()
                 except Exception as e:
-                    logger.error(f"❌ Failed to sync update for {symbol} to DB: {e}")
+                    logger.error(f" Failed to sync update for {symbol} to DB: {e}")
 
     async def enforce_time_stop(self, trade: Dict[str, Any], current_date: datetime, current_price: float):
         """
@@ -242,7 +242,7 @@ class TradeManager:
                 await self.close_trade(trade["symbol"], current_price, "MAX_DURATION_EXIT")
                 
         except Exception as e:
-            logger.error(f"❌ Error in time-based exit for {trade['symbol']}: {e}")
+            logger.error(f" Error in time-based exit for {trade['symbol']}: {e}")
 
     async def manage_breakout_exit(self, trade: Dict[str, Any], latest_ohlc: Dict[str, Any]):
         """
@@ -268,7 +268,7 @@ class TradeManager:
             new_be_sl = entry + (0.1 * R)
             if new_be_sl > trade.get("stop_loss", 0):
                 trade["stop_loss"] = round(new_be_sl, 2)
-                logger.info(f"🛡️ BREAKOUT BE DEFENSE: {trade['symbol']} hit 1.0R. SL moved to {trade['stop_loss']}.")
+                logger.info(f"️ BREAKOUT BE DEFENSE: {trade['symbol']} hit 1.0R. SL moved to {trade['stop_loss']}.")
 
         # 2. Check for Partial Profit Booking (1.5R)
         target_1_5R = entry + (1.5 * R)
@@ -284,7 +284,7 @@ class TradeManager:
             new_sl = max(entry + (0.5 * R), trade["stop_loss"])
             trade["stop_loss"] = round(new_sl, 2)
             
-            logger.info(f"💰 PARTIAL PROFIT: {trade['symbol']} hit 1.5R (@{round(target_1_5R, 2)}). "
+            logger.info(f" PARTIAL PROFIT: {trade['symbol']} hit 1.5R (@{round(target_1_5R, 2)}). "
                         f"Sold 50%. New Qty: {new_qty}. SL protected at {trade['stop_loss']}.")
 
         # 3. Dynamic Trailing Stop (Post-Partial Exit)
@@ -309,7 +309,7 @@ class TradeManager:
             new_sl = max(old_sl, round(ema_value, 2))
             if new_sl > old_sl:
                 trade["stop_loss"] = new_sl
-                logger.info(f"🛰️ BREAKOUT TRAIL: {trade['symbol']} SL moved up to {new_sl} (EMA 9).")
+                logger.info(f"️ BREAKOUT TRAIL: {trade['symbol']} SL moved up to {new_sl} (EMA 9).")
 
         # 2. Pullback Logic (Conservative Trailing to protect larger gains)
         elif trade["strategy"] == "PULLBACK":
@@ -318,7 +318,7 @@ class TradeManager:
             new_sl = max(old_sl, round(ema_value, 2))
             if new_sl > old_sl:
                  trade["stop_loss"] = new_sl
-                 logger.info(f"🛰️ PULLBACK TRAIL: {trade['symbol']} SL moved up to {new_sl} (EMA 20).")
+                 logger.info(f"️ PULLBACK TRAIL: {trade['symbol']} SL moved up to {new_sl} (EMA 20).")
 
     async def calculate_today_pnl(self) -> float:
         """
@@ -356,7 +356,7 @@ class TradeManager:
         total_daily_drawdown = realized_pnl + unrealized_pnl
         
         if total_daily_drawdown < 0 and abs(total_daily_drawdown) >= (total_capital * 0.02):
-            logger.warning(f"🛑 DAILY LOSS LIMIT BREACHED: Net Drawdown ({round(total_daily_drawdown, 2)} | Realized: {round(realized_pnl, 2)}, Unrealized: {round(unrealized_pnl, 2)}) "
+            logger.warning(f" DAILY LOSS LIMIT BREACHED: Net Drawdown ({round(total_daily_drawdown, 2)} | Realized: {round(realized_pnl, 2)}, Unrealized: {round(unrealized_pnl, 2)}) "
                          f"is >= 2% of capital. STOP_TRADING initiated.")
             return "STOP_TRADING"
             
@@ -382,7 +382,7 @@ class TradeManager:
         """
         risk_pct = await self.calculate_total_risk(total_capital)
         if risk_pct >= 5.0:
-            logger.warning(f"🛡️ PORTFOLIO RISK LIMIT: {round(risk_pct, 1)}% risk exposure. Blocking new trades.")
+            logger.warning(f"️ PORTFOLIO RISK LIMIT: {round(risk_pct, 1)}% risk exposure. Blocking new trades.")
             return True
         return False
 
@@ -392,7 +392,7 @@ class TradeManager:
         """
         trade = self.get_trade_by_symbol(symbol)
         if not trade:
-            logger.error(f"❌ Trade Manager: Cannot close {symbol}. Position not found.")
+            logger.error(f" Trade Manager: Cannot close {symbol}. Position not found.")
             return
 
         # Calculate P&L and Performance Metrics
@@ -409,9 +409,9 @@ class TradeManager:
             product=product_type
         )
         if order_res.get("status") == "success":
-            logger.info(f"⚡ REAL TRADE CLOSED for {symbol}: Order ID {order_res.get('order_id')}")
+            logger.info(f" REAL TRADE CLOSED for {symbol}: Order ID {order_res.get('order_id')}")
         else:
-            logger.error(f"❌ Failed to execute closing trade for {symbol}: {order_res.get('message')}")
+            logger.error(f" Failed to execute closing trade for {symbol}: {order_res.get('message')}")
 
         
         # Risk-Adjusted Return (R-Multiple)
@@ -440,9 +440,9 @@ class TradeManager:
                 )
                 await session.execute(stmt)
                 await session.commit()
-                logger.info(f"✅ Trade Manager: Persisted closure of {symbol} to DB.")
+                logger.info(f" Trade Manager: Persisted closure of {symbol} to DB.")
             except Exception as e:
-                logger.error(f"❌ Failed to persist closure for {symbol}: {e}")
+                logger.error(f" Failed to persist closure for {symbol}: {e}")
 
         # Update in-memory state
         trade.update({
@@ -466,7 +466,7 @@ class TradeManager:
         except Exception as e:
             logger.error(f"Failed to sync NAV after closing {symbol}: {e}")
         
-        logger.info(f"📉 Trade Manager: Closed {symbol} at {exit_price}. Reason: {reason}. "
+        logger.info(f" Trade Manager: Closed {symbol} at {exit_price}. Reason: {reason}. "
                     f"P&L: {trade['pnl_percentage']}% | R-Multiple: {trade['r_multiple']}")
 
 trade_manager = TradeManager()

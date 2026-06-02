@@ -172,7 +172,7 @@ class LongTermScannerEngine:
             tasks = [sem_task(sym, i) for i, sym in enumerate(symbols)]
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
-            print(f"🛑 Engine: Job {job_id} CANCELLED via Task Cancellation")
+            print(f" Engine: Job {job_id} CANCELLED via Task Cancellation")
 
         # 2.5 Stop background sync and wait for it
         if job_id in self.job_states:
@@ -236,7 +236,7 @@ class LongTermScannerEngine:
             # Unpack with safety checks
             df = primary_results[0] if not isinstance(primary_results[0], Exception) else pd.DataFrame()
             if df is None or df.empty or len(df) < 50:
-                if not job_id: print(f"⚠️ Skipping {sym}: Insufficient historical data.")
+                if not job_id: print(f"️ Skipping {sym}: Insufficient historical data.")
                 return None
                 
             price_data = primary_results[1] if not isinstance(primary_results[1], Exception) else {}
@@ -272,13 +272,13 @@ class LongTermScannerEngine:
             print(f"DEBUG: {sym} -> Price: {real_price} (Valid: {is_valid_price}), OHLC Rows: {len(df)} (Valid: {is_valid_df}), MCap: {market_cap}")
 
             if not is_valid_df or not is_valid_price or not is_valid_mcap: 
-                print(f"⚠️ [DEBUG] {sym}: Data Unavailable or Junk Filter Failed (OHLC: {len(df)}, Price: {real_price}, MCap: {market_cap})")
+                print(f"️ [DEBUG] {sym}: Data Unavailable or Junk Filter Failed (OHLC: {len(df)}, Price: {real_price}, MCap: {market_cap})")
                 return None
 
             # 3. TA Analysis
             ta_res = await asyncio.to_thread(ta_longterm.analyze_stock, df)
             if not ta_res: 
-                print(f"⚠️ [DEBUG] {sym}: TA Analysis Failed")
+                print(f"️ [DEBUG] {sym}: TA Analysis Failed")
                 return None
             
             fund_res = await asyncio.to_thread(fundamental_engine.analyze, fund_data, hist_financials)
@@ -312,7 +312,7 @@ class LongTermScannerEngine:
                 # 2. VCP Pattern (Minervini)
                 if inst_data.get("vcp_detected", False):
                     inst_score += 15
-                    print(f"💎 VCP PATTERN DETECTED: {sym}")
+                    print(f" VCP PATTERN DETECTED: {sym}")
                     
                 # 3. Sponsorship
                 spon_action = inst_data.get("institutional_action", "Neutral")
@@ -328,7 +328,7 @@ class LongTermScannerEngine:
                               macro_adjustment + \
                               inst_score
             except Exception as e:
-                print(f"⚠️ Scoring Logic Error for {sym}: {e}")
+                print(f"️ Scoring Logic Error for {sym}: {e}")
                 # Fallback to a neutral/safe score
                 final_score = 50 
                 fund_score = 50
@@ -348,7 +348,7 @@ class LongTermScannerEngine:
             if is_near_high and rel_vol > 1.5:
                 # This is a Category A Breakout Candidate
                 # We boost it to ensuring it bubbles up even if Fundamentals are average
-                print(f"🚀 BREAKOUT DETECTED: {sym} (RelVol: {rel_vol})")
+                print(f" BREAKOUT DETECTED: {sym} (RelVol: {rel_vol})")
                 final_score += 15 
             elif is_near_high:
                 final_score += 5
@@ -481,12 +481,12 @@ class LongTermScannerEngine:
             # --- PROFESSIONAL TAGS ---
             stage2_tag = ""
             trend_template = ta_res.get("trend_template", {})
-            if trend_template.get("passed"): stage2_tag = " [🚀 STAGE 2 UPTREND]"
+            if trend_template.get("passed"): stage2_tag = " [ STAGE 2 UPTREND]"
             
             # Re-calculate volume behavior for specific tagging
             vol_behavior = ta_longterm.analyze_volume_behavior(df)
             dryup_tag = ""
-            if vol_behavior.get("dry_up"): dryup_tag = " [💧 VOL DRY-UP]"
+            if vol_behavior.get("dry_up"): dryup_tag = " [ VOL DRY-UP]"
             
             if moat_score > 7:
                 verdict += f" High pricing power (Stable Margins) suggests a strong competitive moat."
@@ -592,19 +592,19 @@ class LongTermScannerEngine:
                 
                 # Special Highlight for Short-Term "High Potential" plays
                 if "Momentum" in holding.get('label', '') or "High-Potential" in play:
-                    verdict += f" [🔥 MOMENTUM] {play}. HIGH potential indicated over {period}. Target: ₹{targets.get('3_year_target')} ({targets.get('projected_cagr')}% expected ROI)."
+                    verdict += f" [ MOMENTUM] {play}. HIGH potential indicated over {period}. Target: ₹{targets.get('3_year_target')} ({targets.get('projected_cagr')}% expected ROI)."
                 elif "suggested hold" not in verdict.lower():
                     verdict += f" [Advisor] {play} Play. Suggested hold: {period}. Target: ₹{targets.get('3_year_target')} ({targets.get('projected_cagr')}% expected ROI)."
                 
                 # Add Smart Entry Rationale
                 entry_analysis = advisory.get("entry_analysis", {})
                 if entry_analysis:
-                    verdict += f" [💡 ENTRY] {entry_analysis.get('rationale')}"
+                    verdict += f" [ ENTRY] {entry_analysis.get('rationale')}"
 
             # --- RISK MANAGEMENT CALCULATION ---
             trade_params = risk_engine.calculate_trade_params(real_price, stop_loss_val, target_val)
             if trade_params.get("is_good_rr"):
-                verdict += f" [⚖️ R:R {trade_params['rr_ratio']}]"
+                verdict += f" [️ R:R {trade_params['rr_ratio']}]"
 
             return {
                 "symbol": sym,
@@ -683,7 +683,7 @@ class LongTermScannerEngine:
 
         except Exception as e:
             import traceback
-            print(f"❌ Error analyzing {sym}: {e}")
+            print(f" Error analyzing {sym}: {e}")
             traceback.print_exc()
             return None
 
@@ -692,7 +692,7 @@ class LongTermScannerEngine:
         Single Background Task to sync progress.
         Prevents multiple concurrent DB writes and SQLite locks.
         """
-        print(f"📡 Progress Sync Loop started for Job {job_id}")
+        print(f" Progress Sync Loop started for Job {job_id}")
         while job_id in self.job_states and self.job_states[job_id].get("is_running"):
             try:
                 state = self.job_states.get(job_id)
@@ -710,7 +710,7 @@ class LongTermScannerEngine:
                     if job_obj:
                         # --- DATABASE SIGNAL CHECK (Phase 67: Immediate Stop/Pause) ---
                         if job_obj.status == "stopped":
-                            print(f"🛑 [SYNC] Stop signal detected for {job_id} in DB.")
+                            print(f" [SYNC] Stop signal detected for {job_id} in DB.")
                             state["stop_requested"] = True
                             state["is_running"] = False
                             # Cancel the main task if it's still running
@@ -756,7 +756,7 @@ class LongTermScannerEngine:
                             current_result["sectors"] = self._group_by_sector(current_result["data"])
                             state["last_data_sync"] = current_count
                             state["last_sync_time"] = current_time
-                            # print(f"📊 [SYNC] Partial Data Sync for {job_id}: {current_count} results")
+                            # print(f" [SYNC] Partial Data Sync for {job_id}: {current_count} results")
 
                         job_obj.result = self.sanitize(current_result)
                         flag_modified(job_obj, "result")
@@ -781,7 +781,7 @@ class LongTermScannerEngine:
                     flag_modified(job_obj, "result")
                     await session.commit()
         except: pass
-        print(f"📡 Progress Sync Loop stopped for Job {job_id}")
+        print(f" Progress Sync Loop stopped for Job {job_id}")
 
     async def _detect_market_regime(self) -> dict:
         """
@@ -866,20 +866,20 @@ class LongTermScannerEngine:
     async def stop_job(self, job_id: str):
         """Instant Stop Signal."""
         if job_id in self.job_states:
-            print(f"🛑 STOPPING Job {job_id}...")
+            print(f" STOPPING Job {job_id}...")
             self.job_states[job_id]["stop_requested"] = True
             self.job_states[job_id]["is_running"] = False
             
             # Cancel the Main Task if stored
             main_task = self.job_states[job_id].get("main_task")
             if main_task:
-                print(f"🛑 Cancelling Main Task for Job {job_id}")
+                print(f" Cancelling Main Task for Job {job_id}")
                 main_task.cancel()
 
     async def pause_job(self, job_id: str):
         """Pause Signal."""
         if job_id in self.job_states:
-            print(f"⏸️ PAUSING Job {job_id}...")
+            print(f"️ PAUSING Job {job_id}...")
             self.job_states[job_id]["pause_requested"] = True
 
     async def resume_job(self, job_id: str):

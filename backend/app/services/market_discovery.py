@@ -65,11 +65,11 @@ class MarketDiscoveryService:
                 if len(tradable_stocks) > 100:
                     stocks = tradable_stocks
             except Exception as e:
-                print(f"⚠️ MarketDiscovery: Kite MIS Sync Failed, proceeding with raw list: {e}")
+                print(f"[WARN] MarketDiscovery: Kite MIS Sync Failed, proceeding with raw list: {e}")
                 
             return stocks
         except Exception as e:
-            print(f"⚠️ MarketDiscovery: Fetch failed (Network/NSE): {e}")
+            print(f"[WARN] MarketDiscovery: Fetch failed (Network/NSE): {e}")
             return []
         finally:
             session.close()
@@ -90,7 +90,7 @@ class MarketDiscoveryService:
                 except: pass
         
         # 2. Fetch Fresh
-        print("📡 MarketDiscovery: Fetching fresh NSE equity list...")
+        print("[DISCOVERY] MarketDiscovery: Fetching fresh NSE equity list...")
         import asyncio
         stocks = await asyncio.to_thread(self._fetch_nse_list)
         
@@ -152,11 +152,11 @@ class MarketDiscoveryService:
                 filtered.append(stock)
             
             if removed_count > 0:
-                print(f"🧹 [GAP#14] Filtered {removed_count} dead/illiquid stocks ({original_count} → {len(filtered)})")
+                print(f"[GAP#14] Filtered {removed_count} dead/illiquid stocks ({original_count} -> {len(filtered)})")
             
             return filtered
         except Exception as e:
-            print(f"⚠️ MarketDiscovery: Dead stock filter failed: {e}")
+            print(f"[WARN] MarketDiscovery: Dead stock filter failed: {e}")
             return stocks  # Fail-open: return all stocks if filter crashes
 
 market_discovery = MarketDiscoveryService()

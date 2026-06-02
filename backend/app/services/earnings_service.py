@@ -65,12 +65,38 @@ class EarningsService:
             
         return False
 
+    def get_days_since_earnings(self, symbol: str) -> int:
+        """
+        Returns the number of days since the most recent earnings announcement.
+        If the announcement is in the future, or data is missing, returns -1.
+        """
+        if symbol not in self.cache:
+            return -1
+
+        try:
+            earnings_ts = self.cache[symbol].get("timestamp")
+            if not earnings_ts:
+                return -1
+
+            earnings_date = datetime.utcfromtimestamp(earnings_ts)
+            now = datetime.utcnow()
+
+            delta = now - earnings_date
+
+            if delta.days >= 0:
+                return delta.days
+                
+        except Exception as e:
+            logger.error(f"Earnings format error for {symbol}: {e}")
+            
+        return -1
+
     async def update_cache(self, symbols: list):
         """
         Background maintenance task. 
         Fetches earnings softly over time. Must never be run synchronously within scan loop.
         """
-        logger.info(f"📅 Starting Earnings Calendar sync for {len(symbols)} symbols...")
+        logger.info(f" Starting Earnings Calendar sync for {len(symbols)} symbols...")
         import yfinance as yf
         updated_count = 0
         
@@ -96,9 +122,9 @@ class EarningsService:
                     }
                     return True
             except asyncio.TimeoutError:
-                logger.debug(f"⏳ Earnings fetch timeout for {sym}")
+                logger.debug(f" Earnings fetch timeout for {sym}")
             except Exception as e:
-                logger.debug(f"⚠️ Earnings fetch error for {sym}: {e}")
+                logger.debug(f"️ Earnings fetch error for {sym}: {e}")
             return False
 
         # Concurrency of 5 to not overwhelm IP
@@ -118,7 +144,7 @@ class EarningsService:
             if r is True: updated_count += 1
 
         self._save_cache()
-        logger.info(f"✅ Earnings Calendar Sync Complete. {updated_count} symbols updated.")
+        logger.info(f" Earnings Calendar Sync Complete. {updated_count} symbols updated.")
         return updated_count
 
 earnings_service = EarningsService()

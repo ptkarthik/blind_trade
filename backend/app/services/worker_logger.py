@@ -63,7 +63,7 @@ class WorkerLogger:
 
         # 2. Stdout
         try:
-            print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] ⚠️ {msg}", flush=True)
+            print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] ️ {msg}", flush=True)
         except UnicodeEncodeError:
             print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] WARN: {msg.encode('ascii', 'ignore').decode('ascii')}", flush=True)
 
@@ -77,7 +77,7 @@ class WorkerLogger:
 
         # 2. Stdout
         try:
-            print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] ❌ {msg}", flush=True)
+            print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}]  {msg}", flush=True)
         except UnicodeEncodeError:
             print(f"[{timestamp}] [{self.worker_type.upper()}] [ID-{self.worker_id}] ERR: {msg.encode('ascii', 'ignore').decode('ascii')}", flush=True)
 
@@ -104,7 +104,7 @@ class WorkerLogger:
             with open(local_path, "w", encoding="utf-8") as f:
                 f.write(log_content)
             
-            self.info(f"💾 Local log saved: {local_path}")
+            self.info(f" Local log saved: {local_path}")
             return local_path
         except Exception as e:
             self.error(f"Failed to save local log: {str(e)}")
@@ -149,7 +149,7 @@ class WorkerLogger:
             sftp.close()
             transport.close()
             
-            self.info(f"✅ Log uploaded to SFTP: {remote_path}")
+            self.info(f" Log uploaded to SFTP: {remote_path}")
             
         except Exception as e:
             self.error(f"Failed to upload log to SFTP: {str(e)}")

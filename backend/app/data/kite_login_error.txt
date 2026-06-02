@@ -1,0 +1,86 @@
+Error: Message: unknown error: net::ERR_INTERNET_DISCONNECTED
+  (Session info: MicrosoftEdge=148.0.3967.83)
+Stacktrace:
+	msedgedriver!GetHandleVerifier [0x7ff6b367e305+e0f5]
+	msedgedriver!GetHandleVerifier [0x7ff6b367e364+e154]
+	msedgedriver!GetHandleVerifier [0x7ff6b39f8c2a+388a1a]
+	msedgedriver!(No symbol) [0x7ff6b33a85fc]
+	msedgedriver!(No symbol) [0x7ff6b339db5f]
+	msedgedriver!(No symbol) [0x7ff6b339f17e]
+	msedgedriver!(No symbol) [0x7ff6b339ddcf]
+	msedgedriver!(No symbol) [0x7ff6b339d9d0]
+	msedgedriver!(No symbol) [0x7ff6b339d735]
+	msedgedriver!(No symbol) [0x7ff6b339b831]
+	msedgedriver!(No symbol) [0x7ff6b339beb2]
+	msedgedriver!(No symbol) [0x7ff6b33ae1f8]
+	msedgedriver!(No symbol) [0x7ff6b342f694]
+	msedgedriver!(No symbol) [0x7ff6b34141ba]
+	msedgedriver!(No symbol) [0x7ff6b33eaaa7]
+	msedgedriver!(No symbol) [0x7ff6b342f0b2]
+	msedgedriver!(No symbol) [0x7ff6b33ea2ec]
+	msedgedriver!(No symbol) [0x7ff6b33e9546]
+	msedgedriver!(No symbol) [0x7ff6b33ea113]
+	msedgedriver!(No symbol) [0x7ff6b34b2519]
+	msedgedriver!(No symbol) [0x7ff6b34aec93]
+	msedgedriver!(No symbol) [0x7ff6b34bf182]
+	msedgedriver!GetHandleVerifier [0x7ff6b369aad8+2a8c8]
+	msedgedriver!GetHandleVerifier [0x7ff6b36a3366+33156]
+	msedgedriver!GetHandleVerifier [0x7ff6b3685794+15584]
+	msedgedriver!GetHandleVerifier [0x7ff6b36858b5+156a5]
+	msedgedriver!GetHandleVerifier [0x7ff6b3672bd3+29c3]
+	KERNEL32!BaseThreadInitThunk [0x7ffe6de1e8d7+17]
+	ntdll!RtlUserThreadStart [0x7ffe6eeec3fc+2c]
+
+
+Traceback:
+Traceback (most recent call last):
+  File "C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\app\services\kite_data.py", line 123, in _auto_login
+    result = await asyncio.to_thread(
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\concurrent\futures\thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\app\services\kite_data.py", line 163, in _run_selenium_login
+    driver.get(login_url)
+  File "C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\venv\Lib\site-packages\selenium\webdriver\remote\webdriver.py", line 488, in get
+    self.execute(Command.GET, {"url": url})
+  File "C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\venv\Lib\site-packages\selenium\webdriver\remote\webdriver.py", line 468, in execute
+    self.error_handler.check_response(response)
+  File "C:\Users\Karthik\.gemini\antigravity\scratch\blind_trade\backend\venv\Lib\site-packages\selenium\webdriver\remote\errorhandler.py", line 232, in check_response
+    raise exception_class(message, screen, stacktrace)
+selenium.common.exceptions.WebDriverException: Message: unknown error: net::ERR_INTERNET_DISCONNECTED
+  (Session info: MicrosoftEdge=148.0.3967.83)
+Stacktrace:
+	msedgedriver!GetHandleVerifier [0x7ff6b367e305+e0f5]
+	msedgedriver!GetHandleVerifier [0x7ff6b367e364+e154]
+	msedgedriver!GetHandleVerifier [0x7ff6b39f8c2a+388a1a]
+	msedgedriver!(No symbol) [0x7ff6b33a85fc]
+	msedgedriver!(No symbol) [0x7ff6b339db5f]
+	msedgedriver!(No symbol) [0x7ff6b339f17e]
+	msedgedriver!(No symbol) [0x7ff6b339ddcf]
+	msedgedriver!(No symbol) [0x7ff6b339d9d0]
+	msedgedriver!(No symbol) [0x7ff6b339d735]
+	msedgedriver!(No symbol) [0x7ff6b339b831]
+	msedgedriver!(No symbol) [0x7ff6b339beb2]
+	msedgedriver!(No symbol) [0x7ff6b33ae1f8]
+	msedgedriver!(No symbol) [0x7ff6b342f694]
+	msedgedriver!(No symbol) [0x7ff6b34141ba]
+	msedgedriver!(No symbol) [0x7ff6b33eaaa7]
+	msedgedriver!(No symbol) [0x7ff6b342f0b2]
+	msedgedriver!(No symbol) [0x7ff6b33ea2ec]
+	msedgedriver!(No symbol) [0x7ff6b33e9546]
+	msedgedriver!(No symbol) [0x7ff6b33ea113]
+	msedgedriver!(No symbol) [0x7ff6b34b2519]
+	msedgedriver!(No symbol) [0x7ff6b34aec93]
+	msedgedriver!(No symbol) [0x7ff6b34bf182]
+	msedgedriver!GetHandleVerifier [0x7ff6b369aad8+2a8c8]
+	msedgedriver!GetHandleVerifier [0x7ff6b36a3366+33156]
+	msedgedriver!GetHandleVerifier [0x7ff6b3685794+15584]
+	msedgedriver!GetHandleVerifier [0x7ff6b36858b5+156a5]
+	msedgedriver!GetHandleVerifier [0x7ff6b3672bd3+29c3]
+	KERNEL32!BaseThreadInitThunk [0x7ffe6de1e8d7+17]
+	ntdll!RtlUserThreadStart [0x7ffe6eeec3fc+2c]
+
