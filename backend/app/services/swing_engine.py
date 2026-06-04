@@ -715,6 +715,32 @@ class SwingEngine:
             except Exception as e:
                 logger.debug(f"V2 Distribution check failed for {sym}: {e}")
             
+            # --- Archetype Detection: Hidden Alpha Support Bounce ---
+            is_hidden_alpha_divergence = False
+            if selected.get("strategy") == "PULLBACK":
+                # Strong volume accumulation
+                if vol_ratio >= 1.4 and vol_5d >= 1.4:
+                    # Diverging relative strength
+                    if rs_spread >= 3.0:
+                        # Sector is dragging it down
+                        if sector_penalty > 0 or ad_penalty > 0:
+                            is_hidden_alpha_divergence = True
+
+            if is_hidden_alpha_divergence:
+                # Refund the macro penalties because the micro-signals override them
+                rebate = ad_penalty + sector_penalty
+                score += rebate
+                score_breakdown.append(f"HiddenAlpha Rebate: +{rebate}")
+                selected.setdefault("reasons", []).append({
+                    "text": "Hidden Alpha Divergence (Institutional Volume + RS overriding Sector Weakness)", 
+                    "impact": rebate, 
+                    "layer": 2, 
+                    "type": "positive"
+                })
+                # Zero out the penalties so they don't drag down the final calculation
+                ad_penalty = 0
+                sector_penalty = 0
+
             # --- Final Score Normalization ---
             # [V44] Apply A/D and sector penalties from soft filters
             # [V2] Apply new anti-trap penalties
