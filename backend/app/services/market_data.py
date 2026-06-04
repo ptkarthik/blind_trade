@@ -276,6 +276,50 @@ class MarketDataService:
                 
                 await asyncio.sleep(1.5)
             
+        # [V45.5 ROBUSTNESS] Patch missing current day for daily interval using Bhavcopy
+        if interval == "1d":
+            try:
+                from app.services.delivery_service import delivery_service, CACHE_DIR
+                import os
+                import pandas as pd
+                
+                target_date = delivery_service._get_last_trading_day()
+                date_str = target_date.strftime('%Y%m%d')
+                cache_file = os.path.join(CACHE_DIR, f"delivery_{date_str}.csv")
+                
+                if os.path.exists(cache_file):
+                    bhav_df = pd.read_csv(cache_file)
+                    cols = [c.strip().upper() for c in bhav_df.columns]
+                    bhav_df.columns = cols
+                    
+                    if 'SYMBOL' in cols and 'CLOSE_PRICE' in cols:
+                        bhav_df['SYMBOL'] = bhav_df['SYMBOL'].astype(str).str.strip().str.upper()
+                        bhav_map = bhav_df.set_index('SYMBOL').to_dict('index')
+                        target_ts = pd.Timestamp(target_date.date())
+                        
+                        patched_count = 0
+                        for sym, df in results.items():
+                            if df is None or df.empty: continue
+                            clean_sym = sym.replace('.NS', '').replace('.BO', '').upper()
+                            last_ts = pd.to_datetime(df.index[-1]).normalize()
+                            
+                            if last_ts < target_ts and clean_sym in bhav_map:
+                                row = bhav_map[clean_sym]
+                                new_row = pd.DataFrame([{
+                                    'open': float(row.get('OPEN_PRICE', 0)),
+                                    'high': float(row.get('HIGH_PRICE', 0)),
+                                    'low': float(row.get('LOW_PRICE', 0)),
+                                    'close': float(row.get('CLOSE_PRICE', 0)),
+                                    'volume': float(row.get('TTL_TRD_QNTY', 0))
+                                }], index=[target_ts])
+                                results[sym] = pd.concat([df, new_row])
+                                patched_count += 1
+                        
+                        if patched_count > 0:
+                            print(f" [OHLC PATCH] Successfully patched missing EOD candle from Bhavcopy for {patched_count} symbols")
+            except Exception as e:
+                print(f" [OHLC PATCH] Failed to patch EOD data: {e}")
+
         return results
 
     async def get_batch_prices(self, symbols: list[str]) -> Dict[str, Dict[str, Any]]:

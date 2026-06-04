@@ -210,7 +210,31 @@ class DeliveryService:
         logger.info(f"Loaded delivery data for {date_str}: {len(cache)} symbols")
 
     async def _download_bhavcopy(self, date: datetime) -> Optional[pd.DataFrame]:
-        """Download NSE Bhavcopy CSV for a specific date."""
+        """Download NSE Bhavcopy CSV for a specific date using jugaad-data."""
+        import tempfile
+        import asyncio
+        import traceback
+        
+        def _sync_download():
+            try:
+                from jugaad_data.nse import full_bhavcopy_save
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    # full_bhavcopy_save returns the path to the saved CSV file
+                    path = full_bhavcopy_save(date, tmpdirname)
+                    if path and os.path.exists(path):
+                        df = pd.read_csv(path)
+                        return df
+            except Exception as e:
+                logger.debug(f"jugaad-data download failed: {e}")
+                logger.debug(traceback.format_exc())
+            return None
+
+        # Run the synchronous jugaad-data fetch in a separate thread
+        df = await asyncio.to_thread(_sync_download)
+        if df is not None and not df.empty:
+            return df
+            
+        # Fallback to the original method if jugaad-data fails
         import aiohttp
         
         # NSE Bhavcopy URL format
@@ -241,7 +265,7 @@ class DeliveryService:
         # Fallback: try requests (sync, in thread)
         try:
             import requests
-            def _sync_download():
+            def _sync_download_fallback():
                 for url in urls:
                     try:
                         r = requests.get(url, headers=self._headers, timeout=10, verify=False)
@@ -251,7 +275,7 @@ class DeliveryService:
                     except Exception:
                         continue
                 return None
-            return await asyncio.to_thread(_sync_download)
+            return await asyncio.to_thread(_sync_download_fallback)
         except Exception as e:
             logger.debug(f"Sync bhavcopy download also failed: {e}")
         
