@@ -18,6 +18,7 @@ class AIBrain:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY")
         self.is_enabled = bool(self.api_key)
+        self._semaphore = asyncio.Semaphore(1)  # Sequential execution to protect free tier limits
         
         if self.is_enabled:
             # Using flash-lite which maintains the 1500/day free tier quota!
@@ -44,55 +45,65 @@ class AIBrain:
         else:
             prompt = self._build_prompt(symbol, strategy, current_price, indicators, engine_reasons)
         
-        try:
-            def run_sync_ai():
-                import google.generativeai as genai
-                from google.generativeai.types import HarmCategory, HarmBlockThreshold
-                import json
+        async with self._semaphore:
+            try:
+                def run_sync_ai():
+                    import google.generativeai as genai
+                    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                    import json
+                    
+                    genai.configure(api_key=self.api_key)
+                    model = genai.GenerativeModel(self.model_name)
+                    
+                    # Using the official SDK which handles rate limits and backoffs internally
+                    response = model.generate_content(
+                        prompt,
+                        generation_config=genai.types.GenerationConfig(
+                            temperature=0.2,
+                            response_mime_type="application/json",
+                        ),
+                        safety_settings={
+                            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                        }
+                    )
+                    
+                    return json.loads(response.text)
                 
-                genai.configure(api_key=self.api_key)
-                model = genai.GenerativeModel(self.model_name)
+                # Small delay to prevent burst limit triggers on free tier
+                await asyncio.sleep(2)
+                data = await asyncio.to_thread(run_sync_ai)
                 
-                # Using the official SDK which handles rate limits and backoffs internally
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.2,
-                        response_mime_type="application/json",
-                    ),
-                    safety_settings={
-                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                    }
-                )
+                # Ensure required fields exist
+                ai_confidence = data.get("ai_confidence_score", 50)
+                ai_reason = data.get("reasoning", "No reason provided by AI.")
+                approved = data.get("approved", False)
                 
-                return json.loads(response.text)
-            
-            import asyncio
-            data = await asyncio.to_thread(run_sync_ai)
-            
-            # Ensure required fields exist
-            ai_confidence = data.get("ai_confidence_score", 50)
-            ai_reason = data.get("reasoning", "No reason provided by AI.")
-            approved = data.get("approved", False)
-            
-            logger.info(f"[AI] AI Analysis for {symbol} | Approved: {approved} | Score: {ai_confidence}")
-            
-            return {
-                "status": "success",
-                "ai_confidence": ai_confidence,
-                "ai_reason": ai_reason,
-                "approved": approved
-            }
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"[ERROR] AI Brain JSON Parsing Error for {symbol}: {e}\nResponse text: {response.text}")
-            return {"status": "error", "ai_confidence": 0, "ai_reason": "Failed to parse AI response.", "approved": True}
-        except Exception as e:
-            logger.error(f"[ERROR] AI Brain API Error for {symbol}: {e}")
-            return {"status": "error", "ai_confidence": 0, "ai_reason": f"API Error: {str(e)}", "approved": True}
+                logger.info(f"[AI] AI Analysis for {symbol} | Approved: {approved} | Score: {ai_confidence}")
+                
+                return {
+                    "status": "success",
+                    "ai_confidence": ai_confidence,
+                    "ai_reason": ai_reason,
+                    "approved": approved
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"[ERROR] AI Brain JSON Parsing Error for {symbol}: {e}")
+                return {"status": "error", "ai_confidence": 0, "ai_reason": "Failed to parse AI response.", "approved": True}
+            except Exception as e:
+                error_str = str(e)
+                logger.error(f"[ERROR] AI Brain API Error for {symbol}: {error_str}")
+                
+                # Graceful handling of Quota/Rate Limit errors
+                if "429" in error_str or "Quota" in error_str:
+                    clean_reason = "AI Analysis Skipped: Gemini Free Tier Quota Exceeded."
+                else:
+                    clean_reason = "AI Analysis temporarily unavailable."
+                    
+                return {"status": "error", "ai_confidence": 0, "ai_reason": clean_reason, "approved": True}
 
     def _build_prompt(self, symbol: str, strategy: str, current_price: float, indicators: Dict[str, Any], engine_reasons: list) -> str:
         """
