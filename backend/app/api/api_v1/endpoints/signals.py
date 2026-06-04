@@ -70,7 +70,8 @@ def get_job_pulse_stats(job: Job):
         "started_at": "",
         "finished_at": "",
         "duration": "",
-        "status": job.status if job else "unknown"
+        "status": job.status if job else "unknown",
+        "delivery_date": job.result.get("delivery_date") if job and job.result else None
     }
     if not job:
         return stats

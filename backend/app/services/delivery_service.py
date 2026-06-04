@@ -56,6 +56,7 @@ class DeliveryService:
 
         # Check memory cache
         if date_str in self._cache:
+            self.last_used_date = date_str
             return self._cache[date_str].get(clean_sym)
 
         # Check file cache
@@ -64,6 +65,7 @@ class DeliveryService:
             try:
                 df = pd.read_csv(cache_file)
                 self._load_cache_from_df(df, date_str)
+                self.last_used_date = date_str
                 return self._cache.get(date_str, {}).get(clean_sym)
             except Exception:
                 pass
@@ -74,9 +76,35 @@ class DeliveryService:
             if df is not None and not df.empty:
                 df.to_csv(cache_file, index=False)
                 self._load_cache_from_df(df, date_str)
+                self.last_used_date = date_str
                 return self._cache.get(date_str, {}).get(clean_sym)
         except Exception as e:
             logger.debug(f"Delivery data unavailable for {date_str}: {e}")
+
+        # [V45.3 ROBUSTNESS FIX] Fallback to the most recent cached file if download fails
+        try:
+            files = [f for f in os.listdir(CACHE_DIR) if f.startswith("delivery_") and f.endswith(".csv")]
+            if files:
+                files.sort(reverse=True)
+                latest_file = files[0]
+                fallback_date_str = latest_file.replace("delivery_", "").replace(".csv", "")
+                
+                # Format fallback_date_str from YYYYMMDD to YYYY-MM-DD for memory cache keys
+                if len(fallback_date_str) == 8:
+                    fallback_date_str = f"{fallback_date_str[:4]}-{fallback_date_str[4:6]}-{fallback_date_str[6:]}"
+                
+                if fallback_date_str in self._cache:
+                    self.last_used_date = fallback_date_str
+                    return self._cache[fallback_date_str].get(clean_sym)
+                    
+                cache_file = os.path.join(CACHE_DIR, latest_file)
+                df = pd.read_csv(cache_file)
+                self._load_cache_from_df(df, fallback_date_str)
+                logger.info(f"Fell back to cached delivery data from {fallback_date_str}")
+                self.last_used_date = fallback_date_str
+                return self._cache.get(fallback_date_str, {}).get(clean_sym)
+        except Exception as e:
+            logger.debug(f"Fallback to older delivery data failed: {e}")
 
         return None
 
@@ -194,8 +222,9 @@ class DeliveryService:
         
         for url in urls:
             try:
+                # [V45.4] Increased timeout to 30s as NSE can be very slow to respond
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=self._headers, timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
+                    async with session.get(url, headers=self._headers, timeout=aiohttp.ClientTimeout(total=30), ssl=False) as resp:
                         if resp.status == 200:
                             content = await resp.text()
                             if ',' in content and len(content) > 100:
@@ -203,6 +232,8 @@ class DeliveryService:
                                 df = pd.read_csv(StringIO(content))
                                 if len(df) > 10:
                                     return df
+                        else:
+                            logger.debug(f"NSE returned {resp.status} for {url}")
             except Exception as e:
                 logger.debug(f"Bhavcopy download failed from {url}: {e}")
                 continue

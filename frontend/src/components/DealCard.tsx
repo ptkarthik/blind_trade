@@ -78,6 +78,7 @@ export interface Signal {
     scan_price?: number;
     ltp_source?: string;
     ltp_change_pct?: number;
+    delivery_pct?: number;
 }
 
 interface DealCardProps {
@@ -226,7 +227,7 @@ export function DealCard({ signal, rank, onClick }: DealCardProps) {
 
                 {/* Middle Section: Price Info */}
                 <div className="border-t border-b border-slate-200/40 py-4 mt-2 mb-2 bg-white/30 backdrop-blur-[2px] rounded-2xl">
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 px-4">
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 px-4">
                         {/* Current (LTP) */}
                         <div className="flex flex-col text-left">
                             <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase mb-1">LTP</span>
@@ -242,6 +243,16 @@ export function DealCard({ signal, rank, onClick }: DealCardProps) {
                                 ₹{typeof signal.entry === 'number' ? signal.entry.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : 'N/A'}
                             </span>
                         </div>
+
+                        {/* Delivery % */}
+                        {signal.delivery_pct !== undefined ? (
+                            <div className="flex flex-col text-left lg:border-l lg:border-slate-200/30 lg:pl-4">
+                                <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase mb-1">DELIVERY</span>
+                                <span className={`text-xl font-black tabular-nums tracking-tighter ${signal.delivery_pct >= 60 ? 'text-emerald-500' : signal.delivery_pct >= 45 ? 'text-blue-500' : signal.delivery_pct < 25 ? 'text-destructive' : 'text-slate-500'}`}>
+                                    {signal.delivery_pct}%
+                                </span>
+                            </div>
+                        ) : <div className="hidden lg:block"></div>}
 
                         {/* Stop Loss (or Virtual SL for Intraday) */}
                         <div className="flex flex-col text-left lg:border-l lg:border-slate-200/30 lg:pl-4">

@@ -783,6 +783,7 @@ class SwingEngine:
                 "is_hybrid": selected.get("is_hybrid_exit", False),
                 "hold_duration": "2 to 21 Days",
                 "priority": final_score,
+                "delivery_pct": selected.get("delivery_pct"),
                 "reasons": selected.get("reasons", []),
                 # --- Position Sizing & Portfolio Metadata ---
                 "risk_per_trade_pct": portfolio_engine.risk_per_trade_pct, 
@@ -945,12 +946,14 @@ class SwingEngine:
             if 'sync_task' in locals(): await sync_task
 
         # Return the finalized Trade Plan
+        from app.services.delivery_service import delivery_service
         final_payload = {
             "total_scanned": total_stocks,
             "raw_signal_count": len(scan_results),
             "trade_plan_count": len(trade_plan),
             "data": trade_plan,
-            "status_msg": f"Swing Scan Complete: {len(trade_plan)} high-conviction trades identified from {total_stocks} stocks."
+            "status_msg": f"Swing Scan Complete: {len(trade_plan)} high-conviction trades identified from {total_stocks} stocks.",
+            "delivery_date": getattr(delivery_service, "last_used_date", "Unknown")
         }
         
         if job_id in self.job_states: del self.job_states[job_id]
