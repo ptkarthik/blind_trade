@@ -26,7 +26,7 @@ class AdvisorEngine:
             return self._generate_longterm_advice(sym, current_price, metrics, ta_data, risk_data, sector_data, portfolio_context)
 
     # =========================================================================
-    # 🟢 LONG TERM STRATEGY ENGINE (Wealth Creation)
+    #  LONG TERM STRATEGY ENGINE (Wealth Creation)
     # Focus: ROI, CAGR, Compounding, Weeks-to-Years
     # =========================================================================
     def _generate_longterm_advice(self, sym: str, price: float, metrics: Dict, ta: Dict, risk: Dict, sector: Dict, portfolio_context: Dict) -> Dict:
@@ -207,7 +207,7 @@ class AdvisorEngine:
         }
 
     # =========================================================================
-    # 🟠 INTRADAY STRATEGY ENGINE (Income Generation)
+    #  INTRADAY STRATEGY ENGINE (Income Generation)
     # Focus: Daily Pivots, VWAP, Liquidity, Hours
     # =========================================================================
     def _generate_intraday_advice(self, sym, price, ta, risk, sector):
@@ -268,7 +268,7 @@ class AdvisorEngine:
         }
 
     # =========================================================================
-    # 🟡 SHARED UTILITIES (Smart Entry & Scenarios)
+    #  SHARED UTILITIES (Smart Entry & Scenarios)
     # =========================================================================
 
     def _determine_smart_entry(self, price, ta, mode="longterm", driver="QUALITY", metrics=None):

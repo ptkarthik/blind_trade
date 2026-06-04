@@ -76,7 +76,7 @@ def log(msg):
         print(output.encode('ascii', 'ignore').decode('ascii'), flush=True)
 
 log("="*60)
-log(f"🛠️  Worker Initialized")
+log(f"️  Worker Initialized")
 log(f"Handling: {', '.join(ALLOWED_JOB_TYPES)}")
 log("="*60)
 
@@ -114,7 +114,7 @@ async def manage_recurring_scans():
                 # Max intraday scan time is ~15 mins. If job is older than 25 mins, it is dead.
                 elapsed = (datetime.utcnow() - active_job.updated_at).total_seconds() / 60.0
                 if elapsed > 25:
-                    log(f"💀 [REAPER] Reaping zombie job {active_job.id} ({job_type}) stuck in {active_job.status} for {elapsed:.1f}m")
+                    log(f" [REAPER] Reaping zombie job {active_job.id} ({job_type}) stuck in {active_job.status} for {elapsed:.1f}m")
                     active_job.status = "failed"
                     active_job.error_details = "System Error: Reaped by Zombie Process Monitor"
                     session.add(active_job)
@@ -138,7 +138,7 @@ async def manage_recurring_scans():
                     if elapsed > timedelta(minutes=5):
                         should_trigger = True
                     else:
-                        msg = f"⏳ [SCHEDULER] {job_type}: Cooldown active. {5 - (elapsed.total_seconds()/60):.1f}m left."
+                        msg = f" [SCHEDULER] {job_type}: Cooldown active. {5 - (elapsed.total_seconds()/60):.1f}m left."
                         if int(time.time()) % 60 < 2: log(msg) # Log once per minute roughly
             else:
                 # Standard 10min recurrence for others
@@ -161,7 +161,7 @@ async def manage_recurring_scans():
                 new_job = Job(type=job_type, status="pending", trigger_source="auto", is_hidden=hidden)
                 session.add(new_job)
                 await session.commit()
-                log(f"⏰ [SCHEDULER] Auto-triggered {job_type}")
+                log(f" [SCHEDULER] Auto-triggered {job_type}")
 
 async def update_market_context():
     """Background task to keep index_context up-to-date every 30 seconds."""
@@ -183,15 +183,15 @@ async def update_market_context():
         await asyncio.sleep(30)
 
 async def worker_loop():
-    log(f"👷 Worker Process Started. PID: {os.getpid()}")
+    log(f" Worker Process Started. PID: {os.getpid()}")
     
     # --- PHASE 95: Worker PID Lock (Process Isolation) ---
     lock = WorkerLock(WORKER_TYPE)
     if not lock.acquire():
-        log(f"🚫 [FATAL] Another worker of type '{WORKER_TYPE}' is already running. Exiting...")
+        log(f" [FATAL] Another worker of type '{WORKER_TYPE}' is already running. Exiting...")
         sys.exit(1)
     
-    log(f"✅ Lock Acquired for Type: {WORKER_TYPE}")
+    log(f" Lock Acquired for Type: {WORKER_TYPE}")
     
     try:
         # 0. Startup Cleanup (Reset Interrupted Jobs)
@@ -206,7 +206,7 @@ async def worker_loop():
                 res = await session.execute(q)
                 stuck_jobs = res.scalars().all()
                 if stuck_jobs:
-                    log(f"⚠️ Flushing {len(stuck_jobs)} legacy {WORKER_TYPE} jobs (Pending/Processing).")
+                    log(f"️ Flushing {len(stuck_jobs)} legacy {WORKER_TYPE} jobs (Pending/Processing).")
                     for j in stuck_jobs:
                         j.status = "failed"
                         j.error_details = f"Worker Started - Queue Flushed for {WORKER_TYPE}"
@@ -215,10 +215,10 @@ async def worker_loop():
             log(f"Startup Cleanup Error: {e}")
 
         # Initialize Kite Data for background scans
-        log("🚀 Initializing Kite Connect Data Service...")
+        log(" Initializing Kite Connect Data Service...")
         await kite_data.initialize()
 
-        log("👷 Worker Ready. Waiting for Jobs...")
+        log(" Worker Ready. Waiting for Jobs...")
         
         # Start the market context background refresher
         asyncio.create_task(update_market_context())
@@ -238,7 +238,7 @@ async def worker_loop():
                     last_paper_check = now
 
                 if now - last_heartbeat > 30:
-                    log(f"💓 Worker Heartbeat (Type: {WORKER_TYPE}, Id: {WORKER_ID})")
+                    log(f" Worker Heartbeat (Type: {WORKER_TYPE}, Id: {WORKER_ID})")
                     last_heartbeat = now
 
                 # 0. Manage Recurring Scans (Check every loop iteration, manage_recurring_scans handles timing)
@@ -261,7 +261,7 @@ async def worker_loop():
                     
                     for job in processing_jobs:
                         if job.trigger_source == "auto" and job.type in pending_manual_types:
-                            log(f"⚡ [PREEMPTION] Manual {job.type} job detected. Cancelling auto-job {job.id}...")
+                            log(f" [PREEMPTION] Manual {job.type} job detected. Cancelling auto-job {job.id}...")
                             # 1. Update DB status
                             job.status = "failed"
                             job.error_details = "Preempted by manual UI request."
@@ -278,7 +278,7 @@ async def worker_loop():
                         
                         # Phase 105: Manual STOP Check Detection
                         if job.status == "stopped":
-                            log(f"🛑 [STOP] Job {job.id} marked as STOPPED in DB. Terminating...")
+                            log(f" [STOP] Job {job.id} marked as STOPPED in DB. Terminating...")
                             if job.type == "intraday":
                                  await intra_scanner.stop_job(job.id)
                             elif job.type == "swing_scan":
@@ -300,7 +300,7 @@ async def worker_loop():
                     job = result.scalars().first()
                     
                     if job:
-                        log(f"📦 Found Job {job.id} ({job.type}). Launching Task...")
+                        log(f" Found Job {job.id} ({job.type}). Launching Task...")
                         
                         # 3. Mark Processing IMMEDIATELY
                         from datetime import datetime
@@ -308,13 +308,9 @@ async def worker_loop():
                         job.updated_at = datetime.utcnow()
                         await session.commit()
                         
-                        # --- V16.1 PROXY HEALTH PRE-CHECK ---
-                        from app.services.proxy_manager import proxy_manager
-                        proxies = await proxy_manager.get_proxy()
-                        if not proxies:
-                            log(f"⚠️ [SAFETY] No Healthy Proxies available. Delaying job {job.id}...")
-                            await asyncio.sleep(10)
-                            continue
+                        # --- V16.1 PROXY HEALTH PRE-CHECK (DISABLED) ---
+                        # Removed: This was permanently blocking jobs when proxy cache was empty.
+                        # Kite Connect does not need proxies, and scan engines handle fallbacks internally.
 
                         # 4. Launch Background Task (Non-Blocking)
                         task = asyncio.create_task(process_job_task(job.id, job.type))
@@ -333,7 +329,7 @@ async def worker_loop():
     finally:
         # Ensure the lock is released when the worker_loop exits
         lock.release()
-        log(f"🔒 Lock Released for Type: {WORKER_TYPE}")
+        log(f" Lock Released for Type: {WORKER_TYPE}")
 
 
 async def process_job_task(job_id, job_type):
@@ -342,15 +338,18 @@ async def process_job_task(job_id, job_type):
     Runs concurrently with WorkerLogger and SFTP upload.
     """
     logger = get_worker_logger(job_id, WORKER_ID, job_type)
-    logger.info(f"🚀 Starting Task for Job {job_id} [{job_type}]")
+    logger.info(f" Starting Task for Job {job_id} [{job_type}]")
     
     try:
+        print(f"[WORKER DEBUG] >>> Entering run_scan for {job_type} job {job_id}", flush=True)
         if job_type == "intraday":
                 data = await intra_scanner.run_scan(job_id, logger=logger)
         elif job_type == "swing_scan":
                 data = await swing_scanner.run_scan(job_id, logger=logger)
         else:
                 data = await longterm_scanner.run_scan(job_id, mode=job_type, logger=logger)
+        
+        print(f"[WORKER DEBUG] >>> run_scan returned for {job_id}", flush=True)
         
         # Mark Complete
         async with AsyncSessionLocal() as session:
@@ -364,10 +363,14 @@ async def process_job_task(job_id, job_type):
                 job.updated_at = datetime.utcnow()
                 job.result = sanitize_data(data)
                 await session.commit()
-                logger.info(f"✅ Job {job_id} Completed Successfully.")
+                logger.info(f" Job {job_id} Completed Successfully.")
 
     except Exception as e:
-        logger.error(f"❌ Job {job_id} failed with critical error: {str(e)}")
+        import traceback
+        err_trace = traceback.format_exc()
+        print(f"[WORKER CRITICAL] >>> Job {job_id} CRASHED: {e}", flush=True)
+        print(f"[WORKER CRITICAL] >>> Traceback:\n{err_trace}", flush=True)
+        logger.error(f" Job {job_id} failed with critical error: {str(e)}")
         try:
             async with AsyncSessionLocal() as session:
                 q = select(Job).where(Job.id == job_id)
@@ -400,14 +403,14 @@ async def cleanup_stuck_jobs():
             res = await session.execute(q)
             stuck_jobs = res.scalars().all()
             if stuck_jobs:
-                log(f"🧹 Found {len(stuck_jobs)} stuck jobs. Resetting to failed...")
+                log(f" Found {len(stuck_jobs)} stuck jobs. Resetting to failed...")
                 for job in stuck_jobs:
                     job.status = "failed"
                     job.error_details = "Worker restarted during processing."
                     job.updated_at = datetime.utcnow()
                 await session.commit()
         except Exception as e:
-            log(f"⚠️  Cleanup failed: {e}")
+            log(f"️  Cleanup failed: {e}")
 
 if __name__ == "__main__":
     try:

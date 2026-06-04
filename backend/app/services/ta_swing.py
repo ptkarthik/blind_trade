@@ -117,8 +117,13 @@ class SwingTechnicalAnalysis:
         recent_high_20d = safe_scalar(df['high'].iloc[-21:-1].max())
         drawdown_pct = ((recent_high_20d - close) / recent_high_20d) * 100 if recent_high_20d > 0 else 0
         
-        if drawdown_pct > 12:
-             return {"match": False, "reason": f"Deep Correction ({round(drawdown_pct, 1)}% > 12%)", "pullback_quality": "DEEP"}
+        # [V45] Adaptive drawdown limit: 15% default, 18% if strong trend + relative strength
+        adx_check = safe_scalar(ctx['adx'].iloc[-1])
+        max_drawdown = 15
+        if adx_check > 25 and stock_20d_ret > nifty_20d_ret:
+            max_drawdown = 18  # Strong trend + outperforming = allow deeper pullback
+        if drawdown_pct > max_drawdown:
+             return {"match": False, "reason": f"Deep Correction ({round(drawdown_pct, 1)}% > {max_drawdown}%)", "pullback_quality": "DEEP"}
 
         # --- V3.2: MTF Weekly Structure Gate (Softened to Conviction Modifier) ---
         mtf_penalty = False
@@ -179,15 +184,15 @@ class SwingTechnicalAnalysis:
                 l_low = safe_scalar(df['low'].iloc[i])
                 ema_20_i = safe_scalar(ctx['ema_20'].iloc[i])
                 sma_50_i = safe_scalar(ctx['sma_50'].iloc[i])
-                if l_low <= (ema_20_i * 1.03): ema_20_touched = True
-                if l_low <= (sma_50_i * 1.035): sma_50_touched = True
+                if l_low <= (ema_20_i * 1.015): ema_20_touched = True  # [V45] Tightened from 3% to 1.5%
+                if l_low <= (sma_50_i * 1.02): sma_50_touched = True  # [V45] Tightened from 3.5% to 2%
         else:
             c_l = safe_scalar(latest['low'])
-            ema_20_touched = (c_l <= (ema_20 * 1.03))
-            sma_50_touched = (c_l <= (sma_50 * 1.035))
+            ema_20_touched = (c_l <= (ema_20 * 1.015))  # [V45] Tightened from 3% to 1.5%
+            sma_50_touched = (c_l <= (sma_50 * 1.02))  # [V45] Tightened from 3.5% to 2%
         
-        ema_20_bounce = ema_20_touched and (close >= (ema_20 * 0.99))
-        sma_50_bounce = sma_50_touched and (close >= (sma_50 * 0.99))
+        ema_20_bounce = ema_20_touched and (close >= ema_20)  # [V45] Must close AT or ABOVE support
+        sma_50_bounce = sma_50_touched and (close >= sma_50)  # [V45] No more 1% below tolerance
         
         if not (ema_20_bounce or sma_50_bounce):
             return {"match": False, "reason": "Did not touch/hold Support Zone cleanly in last 5 days"}
@@ -205,8 +210,8 @@ class SwingTechnicalAnalysis:
         c_range = c_h - c_l
         if c_range > 0:
             close_pos = (c_c - c_l) / c_range
-            if close_pos < 0.5: # Not in top 50%
-                return {"match": False, "reason": f"Weak Close ({round(close_pos*100)}% of range)"}
+            if close_pos < 0.6: # [V45] Not in top 40% (was 50% — too loose for pullback reversals)
+                return {"match": False, "reason": f"Weak Close ({round(close_pos*100)}% of range — need top 40%)"}
         
         # Pattern Detection
         body = abs(c_c - c_o)
@@ -246,6 +251,9 @@ class SwingTechnicalAnalysis:
         is_green = c_c > c_o
         if not is_green and not is_pin:
             return {"match": False, "reason": "Red Candle — No Turnaround Confirmed (no pin bar)"}
+        # [V45] Minimum body size for green candles (exclude pin bars which have their own logic)
+        if is_green and not is_pin and body_pct < 0.3:
+            return {"match": False, "reason": f"Weak Green Candle (body {round(body_pct, 2)}% < 0.3% min)"}
         
         # Rule 2: Structural Pivot — today's high must pierce yesterday's high
         prev_high = safe_scalar(prev['high'])
@@ -276,6 +284,9 @@ class SwingTechnicalAnalysis:
             return {"match": False, "reason": "No Volume Surge or Rising Trend"}
             
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
+        # [V45.1] Relative Volume Persistence — institutional accumulation persists for sessions
+        vol_3d_avg = safe_scalar(vol_s.iloc[-3:].mean()) / max(vol_ma, 1) if len(vol_s) >= 3 else vol_ratio
+        vol_5d_avg = safe_scalar(vol_s.iloc[-5:].mean()) / max(vol_ma, 1) if len(vol_s) >= 5 else vol_ratio
         reasons.append({"text": "Volume Health Confirmed", "type": "positive", "label": "VOLUME", "value": f"{round(vol_ratio, 1)}x"})
 
         # --- V3: MACD Confluence Gate ---
@@ -354,6 +365,8 @@ class SwingTechnicalAnalysis:
             "rsi": rsi,
             "adx": adx,
             "vol_ratio": vol_ratio,
+            "vol_3d_avg": round(vol_3d_avg, 2),
+            "vol_5d_avg": round(vol_5d_avg, 2),
             "conviction": conviction,
             "macd_bullish": macd_bullish,
             "macd_recovering": macd_recovering,
@@ -362,7 +375,8 @@ class SwingTechnicalAnalysis:
             "relative_strength": "OUTPERFORM",
             "stock_20d_return": round(stock_20d_ret, 2),
             "pullback_quality": "HEALTHY",
-            "drawdown_pct": round(drawdown_pct, 2)
+            "drawdown_pct": round(drawdown_pct, 2),
+            "consol_days": 0  # Pullbacks don't have a consolidation base
         }
 
     @staticmethod
@@ -401,14 +415,18 @@ class SwingTechnicalAnalysis:
         is_breakout = False
         high_20_val = 0.0
         if len(df) >= 21:
-            # Check last 3 days (including today) for a breakout
-            for i in range(-3, 0):
+            # [V45] Check last 2 days only (was 3 — stale breakouts were passing)
+            for i in range(-2, 0):
                 end_idx = len(df) + i
                 start_idx = end_idx - 20
                 if start_idx < 0: start_idx = 0
                 past_high_20 = safe_scalar(df['high'].iloc[start_idx:end_idx].max())
                 past_close = safe_scalar(df['close'].iloc[i])
                 if past_close > past_high_20 and c_c > past_high_20:
+                    # [V45] Freshness check: current close must be within 2% of breakout day high
+                    breakout_day_high = safe_scalar(df['high'].iloc[i])
+                    if breakout_day_high > 0 and ((breakout_day_high - c_c) / breakout_day_high) > 0.02:
+                        continue  # Stale — price faded from breakout high
                     is_breakout = True
                     high_20_val = past_high_20
                     break
@@ -475,13 +493,29 @@ class SwingTechnicalAnalysis:
         else:
             is_squeeze_breakout = False
 
+        # --- V45.2: Consolidation Duration (Base Length) ---
+        # Count how many days before breakout the stock was in a tight range.
+        # Longer consolidation = stronger breakout (more energy stored).
+        # A day is "consolidating" if its daily range < 1.5x ATR.
+        consol_days = 0
+        atr_consol = safe_scalar(ctx['atr'].iloc[-1])
+        if atr_consol > 0 and len(df) >= 30:
+            for j in range(2, min(61, len(df))):
+                day_range = safe_scalar(df['high'].iloc[-j]) - safe_scalar(df['low'].iloc[-j])
+                if day_range < (atr_consol * 1.5):
+                    consol_days += 1
+                else:
+                    break  # First wide-range day = consolidation ended
+
         reasons.append({"text": "Bullish Momentum Supported", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
         # [V44] Volume lowered from 1.8x to 1.5x — large-cap institutional flow is quieter
         vol_s = ctx['vol_s']
         vol_ma = ctx['vol_ma'].iloc[-1]
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
-        
+        # [V45.1] Relative Volume Persistence — institutional accumulation persists for sessions
+        vol_3d_avg = safe_scalar(vol_s.iloc[-3:].mean()) / max(vol_ma, 1) if len(vol_s) >= 3 else vol_ratio
+        vol_5d_avg = safe_scalar(vol_s.iloc[-5:].mean()) / max(vol_ma, 1) if len(vol_s) >= 5 else vol_ratio
         if vol_ratio < 1.5:
              return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.5x min)"}
 
@@ -510,19 +544,21 @@ class SwingTechnicalAnalysis:
         macd_bullish = macd_line > macd_signal_val
         macd_expanding = macd_hist > macd_hist_prev
         
-        # Hard gate: Breakout MUST have MACD confirmation
+        # [V45] MACD: Conviction penalty instead of hard gate (MACD lags Day-1 breakouts from tight bases)
+        bo_macd_penalty = False
         if not macd_bullish:
-            return {"match": False, "reason": f"MACD Bearish (Line {round(macd_line, 2)} < Signal {round(macd_signal_val, 2)})"}
-        
-        reasons.append({"text": f"MACD Bullish{' (Expanding)' if macd_expanding else ''}", "type": "positive", "label": "MACD", "value": "CONFIRMED"})
+            bo_macd_penalty = True
+            reasons.append({"text": f"MACD Lagging (Penalty -5)", "type": "caution", "label": "MACD", "value": "LAGGING"})
+        else:
+            reasons.append({"text": f"MACD Bullish{' (Expanding)' if macd_expanding else ''}", "type": "positive", "label": "MACD", "value": "CONFIRMED"})
 
         # 4. Candle Strength (Top 50%)
         c_h = safe_scalar(latest['high'])
         c_l = safe_scalar(latest['low'])
         c_range = c_h - c_l
         close_pos = (c_c - c_l) / c_range if c_range > 0 else 1.0
-        if close_pos < 0.5:
-            return {"match": False, "reason": "Weak Breakout Close (Profit taking in wicks)"}
+        if close_pos < 0.65:  # [V45] Top 35% required (was 50% — letting too many weak closes through)
+            return {"match": False, "reason": f"Weak Breakout Close ({round(close_pos*100)}% of range — need top 35%)"}
 
         # --- V3: Adaptive ATR Stop & Target ---
         atr = safe_scalar(ctx['atr'].iloc[-1])
@@ -559,8 +595,10 @@ class SwingTechnicalAnalysis:
         # [V44] Soft penalties for slope/macro
         if bo_slope_penalty: conviction -= 2
         if bo_macro_penalty: conviction -= 2
+        # [V45] MACD lag penalty (Day-1 breakouts from tight bases)
+        if bo_macd_penalty: conviction -= 5
         conviction = max(0, conviction)
-        # Range: 0-13
+        # Range: 0-13 (can be reduced by penalties)
         
         # Determine setup quality
         setup_type = "SQUEEZE_BREAKOUT" if is_squeeze_breakout else "MOMENTUM_BREAKOUT"
@@ -578,6 +616,8 @@ class SwingTechnicalAnalysis:
             "rsi": rsi,
             "adx": adx,
             "vol_ratio": vol_ratio,
+            "vol_3d_avg": round(vol_3d_avg, 2),
+            "vol_5d_avg": round(vol_5d_avg, 2),
             "conviction": conviction,
             "macd_bullish": macd_bullish,
             "macd_expanding": macd_expanding,
@@ -588,7 +628,8 @@ class SwingTechnicalAnalysis:
             "relative_strength": "OUTPERFORM",
             "stock_20d_return": round(stock_20d_ret, 2),
             "breakout_strength": "STRONG",
-            "volatility_ratio": round(current_range / max(avg_range_10d, 0.1), 2)
+            "volatility_ratio": round(current_range / max(avg_range_10d, 0.1), 2),
+            "consol_days": consol_days
         }
 
     @staticmethod

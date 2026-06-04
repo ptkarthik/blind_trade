@@ -24,7 +24,7 @@ class ProxyManager:
         self.blacklist_set = set()
         self.last_refresh = 0
         self.REFRESH_INTERVAL = 1800 # 30 minutes
-        self.lock = asyncio.Lock()
+        self._lock = None
         
         # Public Proxy Sources (HTTP/HTTPS)
         self.sources = [
@@ -36,6 +36,12 @@ class ProxyManager:
         
         self.cache_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "proxy_cache.json")
         self._load_cache()
+
+    @property
+    def lock(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def _load_cache(self):
         """Loads proxies from a local cache file."""
@@ -90,7 +96,7 @@ class ProxyManager:
         if proxy in self.proxies:
             self.proxies.remove(proxy)
             self.blacklist_set.add(proxy)
-            # print(f"🚫 Proxy Blacklisted: {proxy}")
+            # print(f" Proxy Blacklisted: {proxy}")
 
     async def _refresh_proxies(self):
         """

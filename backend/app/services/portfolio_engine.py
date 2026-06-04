@@ -38,7 +38,7 @@ class PortfolioEngine:
         max_capital = self.total_capital * (self.max_capital_per_trade_pct / 100.0)
         
         if capital_used > max_capital:
-            logger.info(f"🛡️ Capital Limit Triggered: Capping allocation at {self.max_capital_per_trade_pct}% of portfolio.")
+            logger.info(f"️ Capital Limit Triggered: Capping allocation at {self.max_capital_per_trade_pct}% of portfolio.")
             return math.floor(max_capital / entry_price)
             
         return quantity
@@ -86,7 +86,7 @@ class PortfolioEngine:
         
         # 3. Decision
         if (current_sector_capital + proposed_capital) > max_sector_cap:
-            logger.warning(f"🚫 Sector Risk: Allocation to {sector} already at limit. Skipping {trade.get('symbol')}.")
+            logger.warning(f" Sector Risk: Allocation to {sector} already at limit. Skipping {trade.get('symbol')}.")
             return False
             
         return True
@@ -115,12 +115,12 @@ class PortfolioEngine:
         available_slots = self.get_available_slots()
         
         if available_slots <= 0:
-            logger.info("⚠️ Portfolio is full. No new trades selected.")
+            logger.info("️ Portfolio is full. No new trades selected.")
             return []
 
         selected_trades = sorted_results[:available_slots]
         
-        logger.info(f"✅ Selected {len(selected_trades)} best trades from {len(scan_results)} options.")
+        logger.info(f" Selected {len(selected_trades)} best trades from {len(scan_results)} options.")
         return selected_trades
 
     def build_trade_plan(self, selected_trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -146,7 +146,7 @@ class PortfolioEngine:
             qty = sizing.get("quantity", 0)
             
             if qty <= 0:
-                logger.warning(f"⏩ Skipping {symbol}: No valid quantity calculated.")
+                logger.warning(f" Skipping {symbol}: No valid quantity calculated.")
                 continue
 
             # Add sizing info to trade for sector check
@@ -154,7 +154,7 @@ class PortfolioEngine:
 
             # 2. Sector Exposure Check
             if not self.check_sector_exposure(trade, temp_active_positions):
-                logger.warning(f"⏩ Skipping {symbol}: Sector limit reached.")
+                logger.warning(f" Skipping {symbol}: Sector limit reached.")
                 continue
 
             # 3. Construct Final Trade Object without destroying rich UI card data
@@ -169,7 +169,7 @@ class PortfolioEngine:
             # Update temporary tracking to account for this new candidate
             temp_active_positions.append(plan)
 
-        logger.info(f"📦 Trade Plan Built: {len(final_plans)} executable orders generated.")
+        logger.info(f" Trade Plan Built: {len(final_plans)} executable orders generated.")
         return final_plans
 
     def get_portfolio_summary(self, active_positions: List[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -206,9 +206,9 @@ class PortfolioEngine:
                 "sector": new_trade.get("sector")
             }
             self.active_positions.append(pos)
-            logger.info(f"📈 Portfolio Updated: Added position in {symbol}.")
+            logger.info(f" Portfolio Updated: Added position in {symbol}.")
         else:
-            logger.warning(f"⚠️ Position in {symbol} already exists in portfolio.")
+            logger.warning(f"️ Position in {symbol} already exists in portfolio.")
 
     def add_realized_pnl(self, realized_amount: float):
         """
@@ -216,7 +216,7 @@ class PortfolioEngine:
         """
         old_capital = self.total_capital
         self.total_capital += realized_amount
-        logger.info(f"🔄 Portfolio Engine NAV Update: PnL {round(realized_amount, 2)} applied. New Total Capital: {round(self.total_capital, 2)} (was {round(old_capital, 2)}).")
+        logger.info(f" Portfolio Engine NAV Update: PnL {round(realized_amount, 2)} applied. New Total Capital: {round(self.total_capital, 2)} (was {round(old_capital, 2)}).")
 
     def sync_active_positions(self, active_trades: List[Dict[str, Any]]):
         """
@@ -225,13 +225,13 @@ class PortfolioEngine:
         self.active_positions = []
         for trade in active_trades:
             self.update_active_positions(trade)
-        logger.info(f"♻️ Portfolio Engine: Synced {len(self.active_positions)} positions from TradeManager.")
+        logger.info(f"️ Portfolio Engine: Synced {len(self.active_positions)} positions from TradeManager.")
 
     def close_position(self, symbol: str):
         """
         Removes a position from tracking (called when trade hits SL/TP).
         """
         self.active_positions = [p for p in self.active_positions if p["symbol"] != symbol]
-        logger.info(f"📉 Portfolio Updated: Closed position in {symbol}.")
+        logger.info(f" Portfolio Updated: Closed position in {symbol}.")
 
 portfolio_engine = PortfolioEngine()

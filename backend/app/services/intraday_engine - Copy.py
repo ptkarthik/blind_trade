@@ -290,7 +290,7 @@ class IntradayEngine:
             
             if df_hist is None or df_hist.empty or len(df_hist) < 100:
                 reason = "Insufficient historical data (15m)"
-                print(f"⚠️ Intraday Analysis skipped for {sym}: {reason}")
+                print(f"️ Intraday Analysis skipped for {sym}: {reason}")
                 return {"symbol": sym, "skip_reason": reason}
             
             # Attach symbol for ta_intraday to use in LiquidityService lookups
@@ -303,7 +303,7 @@ class IntradayEngine:
             
             if df_5m is None or df_5m.empty or len(df_5m) < 40:
                 reason = "Insufficient data (5m)"
-                print(f"⚠️ Intraday Analysis skipped for {sym}: {reason}")
+                print(f"️ Intraday Analysis skipped for {sym}: {reason}")
                 return {"symbol": sym, "skip_reason": reason}
             
             # Use Live price if valid, else fallback to latest candle close
@@ -693,13 +693,13 @@ class IntradayEngine:
             
             final_score_pre_timing = base_score_weighted + m1_8_bonus_total + m1_8_penalty_total
             
-            # 🔥 REGIME PENALTY (User Logic)
+            #  REGIME PENALTY (User Logic)
             # Ensure hard block for critical bearish regimes
             if regime == "Strong Bearish":
                 block_trade  = True
                 block_reason = "Market Regime: Strong Bearish"
 
-            # 🔥 STRONG SIGNAL VALIDATION (User Logic)
+            #  STRONG SIGNAL VALIDATION (User Logic)
             # Require minimum relative volume for high conviction scores
             if final_score_pre_timing > 90 and rvol_val < 1.5:
                 final_score_pre_timing -= 10
@@ -713,7 +713,7 @@ class IntradayEngine:
             if rvol_val < 1.0 and final_score_pre_timing >= 78:
                 block_trade, block_reason = True, "Volume Validation Block"
 
-            # 🔥 RISK REWARD FILTER (User Logic)
+            #  RISK REWARD FILTER (User Logic)
             # Validates that the potential upside justifies the stop loss risk
             target_val = ta_15m.get("resistance", real_price * 1.02)
             stop_val = ta_15m.get("support", real_price * 0.98)
@@ -732,7 +732,7 @@ class IntradayEngine:
                 # Module 13: Time-of-Day Beta / Optimal Window
                 scan_window  = self._is_optimal_window(now_timing)
                 
-                # 🔥 ENTRY TIMING FILTER (User Logic)
+                #  ENTRY TIMING FILTER (User Logic)
                 # Avoid chasing massive moves outside of optimal windows
                 if scan_window == "NORMAL" and day_change_pct > 5:
                     block_trade  = True
@@ -743,11 +743,11 @@ class IntradayEngine:
                 
                 # Module 9: Signal Hierarchy
                 # Maps final scores to senior specialist signal types
-                if   final_score >= 105: signal_type = "PIONEER PRIME 🏆"
-                elif final_score >= 92:  signal_type = "HIGH CONVICTION BUY 👑"
-                elif final_score >= 78:  signal_type = "BUY SETUP ✅"
-                elif final_score >= 67:  signal_type = "WATCHLIST ⚖"
-                else:                    signal_type = "IGNORE 🚫"
+                if   final_score >= 105: signal_type = "PIONEER PRIME "
+                elif final_score >= 92:  signal_type = "HIGH CONVICTION BUY "
+                elif final_score >= 78:  signal_type = "BUY SETUP "
+                elif final_score >= 67:  signal_type = "WATCHLIST "
+                else:                    signal_type = "IGNORE "
 
                 confidence_label = f"{round(final_score/1.6,1)}% Probability"
                 logic_signal     = "BUY" if final_score >= 78 else "NEUTRAL"
@@ -755,23 +755,23 @@ class IntradayEngine:
                 
                 # Full Log Integration for Worker UI
                 if logger:
-                    logger.info(f"📊 {sym.ljust(12)} | Score: {str(final_score).ljust(5)} | Signal: {signal_type}")
+                    logger.info(f" {sym.ljust(12)} | Score: {str(final_score).ljust(5)} | Signal: {signal_type}")
                 
             # --- Blocking & Result Mapping ---
             if block_trade:
-                signal_type, final_score = "IGNORE 🚫", 0
+                signal_type, final_score = "IGNORE ", 0
                 confidence_label, logic_signal = block_reason, "NEUTRAL"
                 msg = f"DEBUG: {sym} | Score: 0 | BLOCKED by {block_reason} | ADX: {round(adx_val,1)}\n"
                 if logger:
-                    logger.info(f"🛑 {sym.ljust(12)} | BLOCKED: {block_reason}")
+                    logger.info(f" {sym.ljust(12)} | BLOCKED: {block_reason}")
             
             with open("intraday_debug.log", "a", encoding='utf-8') as f: f.write(msg)
             
             target_val = ta_15m.get("resistance", real_price * 1.02)
             stop_val = ta_15m.get("support", real_price * 0.99)
             setup_tag = ""
-            if "PRIME" in signal_type: setup_tag += " [💎 PRIME]"
-            if mtf_ctx.get("is_bullish"): setup_tag += " [🌀 1H ALIGN]"
+            if "PRIME" in signal_type: setup_tag += " [ PRIME]"
+            if mtf_ctx.get("is_bullish"): setup_tag += " [ 1H ALIGN]"
 
             return {
                 "symbol": sym, "price": real_price, "score": final_score,
@@ -894,7 +894,7 @@ class IntradayEngine:
             await asyncio.gather(*tasks)
             
         except asyncio.CancelledError:
-            print(f"🛑 Intraday Job {job_id} CANCELLED via Task Cancellation")
+            print(f" Intraday Job {job_id} CANCELLED via Task Cancellation")
             
         finally:
             # SIGNAL LOOP TO STOP
@@ -913,11 +913,11 @@ class IntradayEngine:
             
             # Tier 1: Ultra High Conviction Symbols (Diamonds/Traps)
             conviction_weight = 0
-            if "👑" in tags: conviction_weight += 100 # Top Priority: Pioneer Prime
-            if "💎" in tags: conviction_weight += 60 # Priority to RECLAIMS and SQUEEZES
-            if "🌀" in tags: conviction_weight += 30
-            if "⚖️" in tags: conviction_weight += 20
-            if "📈 BULLISH DIV" in tags: conviction_weight += 20
+            if "" in tags: conviction_weight += 100 # Top Priority: Pioneer Prime
+            if "" in tags: conviction_weight += 60 # Priority to RECLAIMS and SQUEEZES
+            if "" in tags: conviction_weight += 30
+            if "️" in tags: conviction_weight += 20
+            if " BULLISH DIV" in tags: conviction_weight += 20
             
             return (conviction_weight + base_score)
 
@@ -1025,7 +1025,7 @@ class IntradayEngine:
         Pause Signal.
         """
         if job_id in self.job_states:
-            print(f"⏸️ PAUSING Intraday Job {job_id}...")
+            print(f"️ PAUSING Intraday Job {job_id}...")
             self.job_states[job_id]["pause_requested"] = True
 
     async def resume_job(self, job_id: str):

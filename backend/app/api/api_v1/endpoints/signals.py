@@ -50,13 +50,13 @@ async def enrich_with_live_ltp(signals: list) -> list:
                         signal["scan_price"] = signal.get("price", 0)
                     signal["price"] = round(live_price, 2)
                     signal["ltp_source"] = "kite_live"
-                    signal["ltp_change_pct"] = live_data.get("change_percent", 0)
+                    signal["ltp_change_pct"] = round(((live_price - signal.get("scan_price", signal.get("entry", live_price))) / max(signal.get("scan_price", signal.get("entry", live_price)), 0.01)) * 100, 2)
                     enriched_count += 1
         
         if enriched_count > 0:
-            print(f"⚡ [LIVE LTP] Enriched {enriched_count}/{len(signals)} signals with Kite real-time prices", flush=True)
+            print(f" [LIVE LTP] Enriched {enriched_count}/{len(signals)} signals with Kite real-time prices", flush=True)
     except Exception as e:
-        print(f"⚠️ [LIVE LTP] Enrichment failed (non-critical): {e}", flush=True)
+        print(f"️ [LIVE LTP] Enrichment failed (non-critical): {e}", flush=True)
     
     return signals
 
@@ -70,7 +70,8 @@ def get_job_pulse_stats(job: Job):
         "started_at": "",
         "finished_at": "",
         "duration": "",
-        "status": job.status if job else "unknown"
+        "status": job.status if job else "unknown",
+        "delivery_date": job.result.get("delivery_date") if job and job.result else None
     }
     if not job:
         return stats
@@ -154,7 +155,7 @@ async def get_todays_signals(
         def sort_key(x): return (x.get("score", 0), -(x.get("analysis_index", 0)))
         
         buys = sorted([s for s in data if s.get("signal") in ["BUY", "BUY_STRONG"]], key=sort_key, reverse=True)[:100]
-        sells = sorted([s for s in data if s.get("signal") in ["SELL", "SELL_STRONG"]], key=sort_key, reverse=True)[:100]
+        sells = sorted([s for s in data if s.get("signal") in ["SELL", "SELL_STRONG", "SELL_SHORT"]], key=sort_key, reverse=True)[:100]
         holds = sorted([s for s in data if s.get("signal") in ["NEUTRAL", "HOLD"]], key=sort_key, reverse=True)[:100]
         
         return sanitize_json_data({
@@ -232,7 +233,7 @@ async def get_sector_signals(
                 signal = stock_data.get("signal")
                 if signal in ["BUY", "BUY_STRONG"]:
                     response[sector]["buys"].append(stock_data)
-                elif signal in ["SELL", "SELL_STRONG"]:
+                elif signal in ["SELL", "SELL_STRONG", "SELL_SHORT"]:
                     response[sector]["sells"].append(stock_data)
                 elif signal in ["NEUTRAL", "HOLD"]:
                     response[sector]["holds"].append(stock_data)
@@ -286,7 +287,7 @@ async def analyze_stock(symbol: str, mode: str = "longterm"):
         else:
             candidates = [sym]
         
-    print(f"📡 Real-Time Analysis: {sym} in {mode} mode")
+    print(f" Real-Time Analysis: {sym} in {mode} mode")
     analysis = None
     
     for s in candidates:

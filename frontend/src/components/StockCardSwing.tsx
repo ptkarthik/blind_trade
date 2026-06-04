@@ -79,6 +79,20 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
 
                 <div className="h-8 w-px bg-border/50 mx-2" />
 
+                {signal.delivery_pct !== undefined && (
+                    <>
+                        <div className="flex flex-col items-center">
+                            <span className="text-[9px] uppercase font-black tracking-widest text-muted-foreground mb-0.5">
+                                DELIVERY
+                            </span>
+                            <span className={`text-xl font-black tracking-tighter ${signal.delivery_pct >= 60 ? 'text-emerald-500' : signal.delivery_pct >= 45 ? 'text-blue-500' : signal.delivery_pct < 25 ? 'text-destructive' : 'text-slate-500'}`}>
+                                {signal.delivery_pct}%
+                            </span>
+                        </div>
+                        <div className="h-8 w-px bg-border/50 mx-2" />
+                    </>
+                )}
+
                 <div className="flex flex-col text-right">
                     <span className="text-[9px] uppercase font-black tracking-widest text-primary flex items-center justify-end gap-1 mb-0.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-primary" /> SMART ENTRY

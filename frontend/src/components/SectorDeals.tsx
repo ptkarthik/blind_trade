@@ -135,8 +135,13 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                             </span>
                         )}
                         {stats?.duration && (
-                            <span className="text-[10px] text-muted-foreground font-mono font-bold uppercase tracking-wider">
+                            <span className="text-[10px] text-muted-foreground uppercase font-black tracking-widest flex items-center gap-1.5">
                                 Duration: <span className="text-amber-500">{stats.duration}</span>
+                            </span>
+                        )}
+                        {stats?.delivery_date && stats.delivery_date !== 'Unknown' && (
+                            <span className="text-[10px] text-muted-foreground uppercase font-black tracking-widest flex items-center gap-1.5">
+                                Delivery Data: <span className="text-emerald-500">{stats.delivery_date}</span>
                             </span>
                         )}
                         {currentData.last_updated && !stats?.finished_at && (

@@ -47,9 +47,15 @@ class KiteDataService:
         self._is_ready = False
         self._callback_server = None
 
-        # Rate limiting: Kite allows 10 req/sec for historical, 1 req/sec for quotes
-        self._hist_semaphore = asyncio.Semaphore(3)  # Conservative: 3 parallel historical
-        self._quote_semaphore = asyncio.Semaphore(5)  # 5 parallel quote calls
+        self._hist_semaphore = None
+        self._quote_semaphore = None
+        self._quote_lock = None
+
+    def _ensure_locks(self):
+        if self._hist_semaphore is None:
+            self._hist_semaphore = asyncio.Semaphore(1)  # Fully serialize to prevent requests.Session thread deadlocks
+            self._quote_semaphore = asyncio.Semaphore(1)  # Fully serialize
+            self._quote_lock = asyncio.Lock()
 
     @property
     def is_ready(self) -> bool:
@@ -68,39 +74,37 @@ class KiteDataService:
         api_secret = settings.KITE_API_SECRET
 
         if not api_key or not api_secret:
-            logger.warning("⚠️ [KITE] No API key/secret in .env — Kite disabled, using Yahoo fallback")
+            print("️ [KITE] No API key/secret in .env — Kite disabled, using Yahoo fallback")
             return
 
         try:
             from kiteconnect import KiteConnect
-            self._kite = KiteConnect(api_key=api_key)
+            self._kite = KiteConnect(api_key=api_key, timeout=10)
         except ImportError:
-            logger.error("❌ [KITE] kiteconnect package not installed. Run: pip install kiteconnect")
+            print(" [KITE] kiteconnect package not installed. Run: pip install kiteconnect")
             return
 
+        print("Testing _load_session")
         # Try loading existing session
         if await self._load_session():
-            logger.info("✅ [KITE] Restored session from cache")
+            print(" [KITE] Restored session from cache")
+            print("Testing _load_instruments")
             await self._load_instruments()
             self._is_ready = True
+            print("Kite ready")
             return
 
+        print("Testing _auto_login")
         # Try automated login (no browser needed)
         if await self._auto_login():
-            logger.info("✅ [KITE] Auto-login successful!")
+            print(" [KITE] Auto-login successful!")
             await self._load_instruments()
             self._is_ready = True
             return
 
         # Fallback: manual browser login
         login_url = self._kite.login_url()
-        logger.info(f"[KITE] Auto-login failed. Open this URL manually:")
-        logger.info(f"   {login_url}")
-        _safe_print(f"\n{'='*70}")
-        _safe_print(f"[KITE] LOGIN REQUIRED (auto-login failed)")
-        _safe_print(f"Open this URL in your browser to authenticate:")
-        _safe_print(f"\n  {login_url}\n")
-        _safe_print(f"{'='*70}\n")
+        print(f"[KITE] Auto-login failed. Open this URL manually: {login_url}")
         self._start_callback_server()
 
     async def _auto_login(self) -> bool:
@@ -114,11 +118,11 @@ class KiteDataService:
         api_secret = settings.KITE_API_SECRET
 
         if not all([user_id, password, totp_secret, api_key, api_secret]):
-            logger.info("⚠️ [KITE] Auto-login skipped — missing KITE_USER_ID/PASSWORD/TOTP_SECRET in .env")
+            logger.info("️ [KITE] Auto-login skipped — missing KITE_USER_ID/PASSWORD/TOTP_SECRET in .env")
             return False
 
         try:
-            logger.info("🤖 [KITE] Attempting automated login via headless browser...")
+            logger.info(" [KITE] Attempting automated login via headless browser...")
             import asyncio
             result = await asyncio.to_thread(
                 self._run_selenium_login,
@@ -219,7 +223,7 @@ class KiteDataService:
                         "user_id": data.get("user_id", user_id)
                     }, f)
 
-                logger.info(f"✅ [KITE] Auto-login successful! User: {data.get('user_id', user_id)}")
+                logger.info(f" [KITE] Auto-login successful! User: {data.get('user_id', user_id)}")
                 return True
             else:
                 logger.error(f"[KITE] Auto-login failed: Did not find request_token in URL {final_url[:100]}")
@@ -275,14 +279,14 @@ class KiteDataService:
             try:
                 server = HTTPServer(("127.0.0.1", 5000), CallbackHandler)
                 server.timeout = 300  # 5 min timeout for login
-                logger.info("🌐 [KITE] Callback server listening on http://127.0.0.1:5000/callback")
+                logger.info(" [KITE] Callback server listening on http://127.0.0.1:5000/callback")
                 server.handle_request()  # Handle single request then stop
                 server.server_close()
             except OSError as e:
                 if "address already in use" in str(e).lower() or "10048" in str(e):
-                    logger.warning("⚠️ [KITE] Port 5000 busy — callback server skipped")
+                    logger.warning("️ [KITE] Port 5000 busy — callback server skipped")
                 else:
-                    logger.error(f"❌ [KITE] Callback server error: {e}")
+                    logger.error(f" [KITE] Callback server error: {e}")
 
         thread = Thread(target=run_server, daemon=True)
         thread.start()
@@ -304,7 +308,7 @@ class KiteDataService:
                     "user_id": data.get("user_id", "")
                 }, f)
 
-            logger.info(f"✅ [KITE] Login successful! User: {data.get('user_id', 'unknown')}")
+            logger.info(f" [KITE] Login successful! User: {data.get('user_id', 'unknown')}")
 
             # Load instruments synchronously (we're in a thread)
             self._load_instruments_sync()
@@ -312,7 +316,7 @@ class KiteDataService:
             return True
 
         except Exception as e:
-            logger.error(f"❌ [KITE] Login failed: {e}")
+            logger.error(f" [KITE] Login failed: {e}")
             return False
 
     async def _load_session(self) -> bool:
@@ -329,7 +333,7 @@ class KiteDataService:
 
             # Kite sessions are valid for ~6-8 hours (one trading day)
             if age_hours > 8:
-                logger.info("⏰ [KITE] Session expired (>8h old)")
+                logger.info(" [KITE] Session expired (>8h old)")
                 return False
 
             self._access_token = session["access_token"]
@@ -338,14 +342,14 @@ class KiteDataService:
             # Validate by making a simple API call
             try:
                 profile = await asyncio.to_thread(self._kite.profile)
-                logger.info(f"✅ [KITE] Session valid — User: {profile.get('user_id', 'unknown')}")
+                logger.info(f" [KITE] Session valid — User: {profile.get('user_id', 'unknown')}")
                 return True
             except Exception as e:
-                logger.warning(f"⚠️ [KITE] Saved session invalid: {e}")
+                logger.warning(f"️ [KITE] Saved session invalid: {e}")
                 return False
 
         except Exception as e:
-            logger.warning(f"⚠️ [KITE] Session file corrupt: {e}")
+            logger.warning(f"️ [KITE] Session file corrupt: {e}")
             return False
 
     # =========================================================================
@@ -361,7 +365,7 @@ class KiteDataService:
                 if (time.time() - mtime) < 86400:  # 24h cache
                     with open(self._instruments_file, "r") as f:
                         self._instruments = json.load(f)
-                    logger.info(f"✅ [KITE] Loaded {len(self._instruments)} instruments from cache")
+                    logger.info(f" [KITE] Loaded {len(self._instruments)} instruments from cache")
                     return
 
             # Fetch fresh from Kite
@@ -379,10 +383,10 @@ class KiteDataService:
             with open(self._instruments_file, "w") as f:
                 json.dump(mapping, f)
 
-            logger.info(f"✅ [KITE] Downloaded {len(mapping)} NSE instrument tokens")
+            logger.info(f" [KITE] Downloaded {len(mapping)} NSE instrument tokens")
 
         except Exception as e:
-            logger.error(f"❌ [KITE] Instrument fetch failed: {e}")
+            logger.error(f" [KITE] Instrument fetch failed: {e}")
 
     async def _load_instruments(self):
         """Async wrapper for instrument loading."""
@@ -426,6 +430,7 @@ class KiteDataService:
         }
         kite_interval = interval_map.get(interval, "15minute")
 
+        self._ensure_locks()
         async with self._hist_semaphore:
             try:
                 records = await asyncio.to_thread(
@@ -449,7 +454,7 @@ class KiteDataService:
             except Exception as e:
                 # Token expired or rate limited
                 if "TokenException" in type(e).__name__ or "403" in str(e):
-                    logger.warning(f"🔑 [KITE] Session expired during fetch — marking as not ready")
+                    logger.warning(f" [KITE] Session expired during fetch — marking as not ready")
                     self._is_ready = False
                 else:
                     logger.debug(f"[KITE] Historical fetch failed for {symbol}: {e}")
@@ -508,7 +513,9 @@ class KiteDataService:
             all_quotes = {}
             for i in range(0, len(nse_tokens), 500):
                 batch = nse_tokens[i:i+500]
-                quotes = await asyncio.to_thread(self._kite.quote, batch)
+                self._ensure_locks()
+                async with self._quote_lock:
+                    quotes = await asyncio.to_thread(self._kite.quote, batch)
                 all_quotes.update(quotes)
 
             result = {}
@@ -528,16 +535,16 @@ class KiteDataService:
                     }
                     
             if result:
-                logger.info(f"⚡ [KITE DATA] Live Prices (LTP) successfully fetched for {len(result)} symbols")
+                logger.info(f" [KITE DATA] Live Prices (LTP) successfully fetched for {len(result)} symbols")
 
             return result
 
         except Exception as e:
             if "TokenException" in type(e).__name__:
                 self._is_ready = False
-                logger.warning("🔑 [KITE] Session expired during quote fetch")
+                logger.warning(" [KITE] Session expired during quote fetch")
             else:
-                logger.error(f"❌ [KITE] Quote fetch failed: {e}")
+                logger.error(f" [KITE] Quote fetch failed: {e}")
             return {}
 
     async def get_market_depth(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -574,7 +581,9 @@ class KiteDataService:
             all_quotes = {}
             for i in range(0, len(nse_tokens), 500):
                 batch = nse_tokens[i:i+500]
-                quotes = await asyncio.to_thread(self._kite.quote, batch)
+                self._ensure_locks()
+                async with self._quote_lock:
+                    quotes = await asyncio.to_thread(self._kite.quote, batch)
                 all_quotes.update(quotes)
 
             result = {}
@@ -625,7 +634,7 @@ class KiteDataService:
                     }
 
             if result:
-                logger.info(f"⚡ [KITE DATA] Level-2 Market Depth successfully fetched for {len(result)} symbols")
+                logger.info(f" [KITE DATA] Level-2 Market Depth successfully fetched for {len(result)} symbols")
 
             return result
 
@@ -681,7 +690,7 @@ class KiteDataService:
             return df.dropna()
 
         except Exception as e:
-            logger.error(f"❌ [KITE] Index OHLC failed for {index_symbol}: {e}")
+            logger.error(f" [KITE] Index OHLC failed for {index_symbol}: {e}")
             return pd.DataFrame()
 
     # =========================================================================

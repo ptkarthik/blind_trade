@@ -23,7 +23,7 @@ class NotificationService:
 
     def send_mobile_alert(self, message: str):
         """Sends the message to all configured notification channels."""
-        logger.info(f"📱 Sending Mobile Alert: {message}")
+        logger.info(f" Sending Mobile Alert: {message}")
         
         self.send_telegram_alert(message)
         self.send_whatsapp_alert(message)
@@ -41,11 +41,11 @@ class NotificationService:
             }
             response = requests.post(url, json=payload, timeout=5)
             if response.status_code == 200:
-                logger.info("✅ Telegram alert sent successfully.")
+                logger.info(" Telegram alert sent successfully.")
             else:
-                logger.error(f"❌ Failed to send Telegram alert: {response.text}")
+                logger.error(f" Failed to send Telegram alert: {response.text}")
         except Exception as e:
-            logger.error(f"❌ Error sending Telegram alert: {e}")
+            logger.error(f" Error sending Telegram alert: {e}")
 
     def send_whatsapp_alert(self, message: str):
         if not all([self.twilio_account_sid, self.twilio_auth_token, self.twilio_whatsapp_from, self.twilio_whatsapp_to]):
@@ -65,10 +65,10 @@ class NotificationService:
                 timeout=5
             )
             if response.status_code in [200, 201]:
-                logger.info("✅ WhatsApp alert sent successfully.")
+                logger.info(" WhatsApp alert sent successfully.")
             else:
-                logger.error(f"❌ Failed to send WhatsApp alert: {response.text}")
+                logger.error(f" Failed to send WhatsApp alert: {response.text}")
         except Exception as e:
-            logger.error(f"❌ Error sending WhatsApp alert: {e}")
+            logger.error(f" Error sending WhatsApp alert: {e}")
 
 notification_service = NotificationService()

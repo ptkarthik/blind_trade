@@ -118,9 +118,9 @@ class FundamentalAnalysisEngine:
                 details.append({"text": flag, "type": "negative", "label": "JUNK FILTER", "value": "Failed"})
 
         rating = "HOLD"
-        if final_score >= 80: rating = "STRONG BUY 💎"
-        elif final_score >= 65: rating = "BUY ✅"
-        elif final_score <= 30: rating = "SELL ❌"
+        if final_score >= 80: rating = "STRONG BUY "
+        elif final_score >= 65: rating = "BUY "
+        elif final_score <= 30: rating = "SELL "
         
         return {
             "score": round(final_score, 1),

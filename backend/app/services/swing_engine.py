@@ -71,9 +71,9 @@ class SwingEngine:
                 try:
                     df_nifty = await kite_data.get_index_ohlc("NIFTY 50", period="1y", interval="1d")
                     if df_nifty is not None and not df_nifty.empty:
-                        print(f"⚡ [KITE MARKET CONTEXT] Fetched NIFTY 50 index directly ({len(df_nifty)} candles)", flush=True)
+                        print(f" [KITE MARKET CONTEXT] Fetched NIFTY 50 index directly ({len(df_nifty)} candles)", flush=True)
                 except Exception as e:
-                    logger.warning(f"⚠️ Kite index fetch failed, falling back to Yahoo: {e}")
+                    logger.warning(f"️ Kite index fetch failed, falling back to Yahoo: {e}")
                     df_nifty = None
             
             # Fallback: Yahoo NIFTYBEES
@@ -102,14 +102,14 @@ class SwingEngine:
                     "nifty_20d_return": nifty_20d_return,
                     "nifty_change": nifty_price - safe_scalar(df_nifty['close'].iloc[-2])
                 }
-                logger.info(f"📊 Market Context: NIFTY {'Bullish' if self.market_context['nifty_bullish'] else 'Bearish'} (RSI: {round(nifty_rsi, 1)})")
+                logger.info(f" Market Context: NIFTY {'Bullish' if self.market_context['nifty_bullish'] else 'Bearish'} (RSI: {round(nifty_rsi, 1)})")
         except Exception as e:
             logger.error(f"Failed to refresh market context: {e}")
 
         try:
             sector_perf = await market_service.get_sector_performances()
             self.market_context["sector_performance"] = sector_perf
-            logger.info("🗺️ Sector Heatmap Refreshed.")
+            logger.info("️ Sector Heatmap Refreshed.")
         except Exception as e:
             self.market_context["sector_performance"] = {}
             logger.error(f"Failed to fetch sector performance: {e}")
@@ -117,7 +117,7 @@ class SwingEngine:
         try:
             ad_ratio = await market_service.get_advance_decline_ratio()
             self.market_context["ad_ratio"] = ad_ratio
-            logger.info(f"⚖️ Market Breadth (A/D Ratio): {round(ad_ratio, 2)}")
+            logger.info(f"️ Market Breadth (A/D Ratio): {round(ad_ratio, 2)}")
         except Exception as e:
             self.market_context["ad_ratio"] = 1.0
             logger.error(f"Failed to fetch A/D ratio: {e}")
@@ -150,12 +150,12 @@ class SwingEngine:
             try:
                 df = await kite_data.fetch_ohlc(sym, period=period, interval=interval)
                 if df is not None and not df.empty:
-                    logger.info(f"✅ Strategy Kite Success: {sym} ({len(df)} candles)")
-                    print(f"⚡ [KITE SWING DATA] Successfully fetched {len(df)} historical candles for {sym}", flush=True)
+                    logger.info(f" Strategy Kite Success: {sym} ({len(df)} candles)")
+                    print(f" [KITE SWING DATA] Successfully fetched {len(df)} historical candles for {sym}", flush=True)
                     return df
             except Exception as e:
-                logger.warning(f"⚠️ Strategy Kite Failed for {sym}: {e}")
-                print(f"⚠️ [KITE SWING DATA] Failed for {sym}: {e}", flush=True)
+                logger.warning(f"️ Strategy Kite Failed for {sym}: {e}")
+                print(f"️ [KITE SWING DATA] Failed for {sym}: {e}", flush=True)
 
         # Strategy 0: Direct NSE Fetch via jugaad-data (Bulletproof for Indian Equities)
         if sym.endswith('.NS'):
@@ -188,10 +188,10 @@ class SwingEngine:
                     df = df.set_index('date')
                     df = df.sort_index()
                     df = df[['open', 'high', 'low', 'close', 'volume']]
-                    logger.info(f"✅ Strategy 0 Success: {sym} via jugaad-data ({len(df)} candles)")
+                    logger.info(f" Strategy 0 Success: {sym} via jugaad-data ({len(df)} candles)")
                     return df
             except Exception as e:
-                logger.warning(f"⚠️ Strategy 0 Failed for {sym} via jugaad-data: {e}")
+                logger.warning(f"️ Strategy 0 Failed for {sym} via jugaad-data: {e}")
 
         # Strategy 1: Try with proxy + rotated UA (2 attempts)
         from app.services.proxy_manager import proxy_manager
@@ -248,7 +248,7 @@ class SwingEngine:
             # Minimum 60 candles (SMA 50 + buffer). SMA 200 is optional and handled gracefully.
             df_1d = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
             if df_1d is None or df_1d.empty or len(df_1d) < 60:
-                print(f"  ⛔ {sym}: DATA INSUFFICIENT ({len(df_1d) if df_1d is not None and not df_1d.empty else 0} candles < 60 min)", flush=True)
+                print(f"   {sym}: DATA INSUFFICIENT ({len(df_1d) if df_1d is not None and not df_1d.empty else 0} candles < 60 min)", flush=True)
                 return None
             
             candle_count = len(df_1d)
@@ -260,7 +260,7 @@ class SwingEngine:
                 if latest_date.tzinfo is not None:
                      latest_date = latest_date.tz_convert(None)
                 if datetime.utcnow() - latest_date > timedelta(hours=96):
-                    print(f"  ⛔ {sym}: STALE DATA (Last candle: {latest_date.strftime('%Y-%m-%d')})", flush=True)
+                    print(f"   {sym}: STALE DATA (Last candle: {latest_date.strftime('%Y-%m-%d')})", flush=True)
                     return None
             except Exception as e:
                 pass
@@ -280,29 +280,43 @@ class SwingEngine:
             bo_result = await asyncio.to_thread(ta_swing.analyze_breakout, df_1d, nifty_20d_ret, ctx, earnings_risk)
 
             # --- Diagnostic Log: Strategy Results ---
-            pb_status = "✅ MATCH" if pb_result.get("match") else f"❌ {pb_result.get('reason', 'No Match')}"
-            bo_status = "✅ MATCH" if bo_result.get("match") else f"❌ {bo_result.get('reason', 'No Match')}"
-            print(f"  📊 {sym} | ₹{real_price} | {candle_count}D | PB: {pb_status} | BO: {bo_status}", flush=True)
+            pb_status = " MATCH" if pb_result.get("match") else f" {pb_result.get('reason', 'No Match')}"
+            bo_status = " MATCH" if bo_result.get("match") else f" {bo_result.get('reason', 'No Match')}"
+            print(f"   {sym} | ₹{real_price} | {candle_count}D | PB: {pb_status} | BO: {bo_status}", flush=True)
 
             # --- [V44] Sector Dominance — converted from hard kills to score penalties ---
             # These now feed into the scoring matrix instead of zeroing out matches
             sector = market_service.get_sector_for_symbol(sym)
             sector_perf = self.market_context.get("sector_performance", {})
-            sector_return = sector_perf.get(sector, 0.0)
+            sector_data = sector_perf.get(sector, 0.0)
+            if isinstance(sector_data, dict):
+                sector_return = sector_data.get("1d", 0.0)
+                sector_return_5d = sector_data.get("5d", 0.0)
+            else:
+                sector_return = sector_data
+                sector_return_5d = sector_data
+                
             ad_penalty = 0
             sector_penalty = 0
             
             if bo_result.get("match"):
-                if sector_return < 0.0:
+                # [V45] Tiered sector penalty (was flat -15 for any negative — too harsh)
+                if sector_return < -2.0:
                     sector_penalty = 15
-                    print(f"    ⚠️ {sym}: Breakout sector penalty −15 ({sector}: {round(sector_return, 2)}%)", flush=True)
+                    print(f"    ️ {sym}: Breakout sector penalty −15 ({sector}: {round(sector_return, 2)}%)", flush=True)
+                elif sector_return < -1.0:
+                    sector_penalty = 8
+                    print(f"    ️ {sym}: Breakout sector penalty −8 ({sector}: {round(sector_return, 2)}%)", flush=True)
+                elif sector_return < 0.0:
+                    sector_penalty = 3
+                    print(f"    ️ {sym}: Breakout sector penalty −3 ({sector}: {round(sector_return, 2)}%)", flush=True)
                 if self.market_context.get("ad_ratio", 1.0) < 0.6:
                     ad_penalty = 10
-                    print(f"    ⚠️ {sym}: Breakout A/D penalty −10 (A/D < 0.6)", flush=True)
+                    print(f"    ️ {sym}: Breakout A/D penalty −10 (A/D < 0.6)", flush=True)
 
             if pb_result.get("match") and self.market_context.get("ad_ratio", 1.0) < 0.35:
                 ad_penalty = max(ad_penalty, 10)
-                print(f"    ⚠️ {sym}: Pullback A/D penalty −10 (A/D < 0.35)", flush=True)
+                print(f"    ️ {sym}: Pullback A/D penalty −10 (A/D < 0.35)", flush=True)
 
             # 3. Conflict Resolution & Selection
             selected = None
@@ -314,7 +328,7 @@ class SwingEngine:
                     selected = pb_result
                     selected["market_context"] = "OVERBOUGHT_RECOVERY"
                 else:
-                    print(f"    ⏭️ {sym}: SKIP (Market Exhausted, no Pullback)", flush=True)
+                    print(f"    ️ {sym}: SKIP (Market Exhausted, no Pullback)", flush=True)
                     return None
             
             high_20 = safe_scalar(df_1d['high'].iloc[-21:-1].max())
@@ -346,17 +360,21 @@ class SwingEngine:
             conviction = selected.get("conviction", 0)
             if conviction < 3:
                 # Minimum viable product check: skip low quality setups entirely
-                print(f"    ⏭️ {sym}: Conviction too low ({conviction}/12) — skipping", flush=True)
+                print(f"    ️ {sym}: Conviction too low ({conviction}/12) — skipping", flush=True)
                 return None
                 
             # Components:
             #   Conviction (from ta_swing)   : 0-25 pts
             #   Volume Quality               : 0-15 pts
+            #   Volume Persistence [V45.2]   : 0-5  pts (independent of quality)
             #   Relative Strength            : 0-10 pts
+            #   Momentum Acceleration [V45.2]: 0-5  pts
             #   Market Context Alignment     : 0-15 pts (-10 penalty possible)
             #   ADX Trend Strength           : 0-10 pts
             #   Strategy-Specific Bonus      : 0-15 pts
+            #   Consolidation Duration [V45.2]: 0-7 pts (breakout only)
             #   MACD/OBV Institutional       : 0-10 pts
+            #   NSE Delivery % [V45.2]       : -5 to +8 pts
             # ====================================================================
             score = 0
             score_breakdown = []
@@ -372,19 +390,43 @@ class SwingEngine:
             
             # --- Component 2: Volume Quality (max 15) ---
             vol_ratio = selected.get("vol_ratio", 1.0)
-            if vol_ratio > 2.5:
+            # [V45] Granular volume tiers (confirmation-weighted, not dominating)
+            if vol_ratio > 4.0:
                 vol_score = 15
+            elif vol_ratio > 3.0:
+                vol_score = 13
+            elif vol_ratio > 2.5:
+                vol_score = 11
             elif vol_ratio > 2.0:
-                vol_score = 12
+                vol_score = 9
             elif vol_ratio > 1.5:
-                vol_score = 8
+                vol_score = 6
             elif vol_ratio > 1.2:
-                vol_score = 5
+                vol_score = 3
             else:
                 vol_score = 0
             score += vol_score
             score_breakdown.append(f"Vol: +{vol_score} ({round(vol_ratio, 1)}x)")
             if vol_score > 0: selected.setdefault("reasons", []).append({"text": f"Volume Quality ({round(vol_ratio, 1)}x)", "impact": vol_score, "layer": 2, "type": "positive"})
+            
+            # --- Component 2.5: Volume Persistence Bonus (max 5) [V45.2] ---
+            # Institutional accumulation persists for 3-5 sessions. One-day spikes can be noise.
+            # [V45.2 FIX] INDEPENDENT scoring — persistence gets its own 5pt budget.
+            # Old cap at 15 combined killed persistence for stocks with high single-day volume.
+            # Example: INFOBEAN at 11.3x daily + 5d avg 3.0x got ZERO persistence. Fixed.
+            vol_3d = selected.get("vol_3d_avg", 1.0)
+            vol_5d = selected.get("vol_5d_avg", 1.0)
+            vol_persist_score = 0
+            if vol_5d > 2.0:
+                vol_persist_score = 5   # 5-day sustained heavy accumulation
+            elif vol_5d > 1.5:
+                vol_persist_score = 3   # 5-day moderate accumulation
+            elif vol_3d > 1.5:
+                vol_persist_score = 2   # 3-day short accumulation
+            score += vol_persist_score
+            if vol_persist_score > 0:
+                score_breakdown.append(f"VolPersist: +{vol_persist_score} (3d:{round(vol_3d, 1)}x, 5d:{round(vol_5d, 1)}x)")
+                selected.setdefault("reasons", []).append({"text": f"Sustained Volume ({round(vol_5d, 1)}x avg over 5d)", "impact": vol_persist_score, "layer": 2, "type": "positive"})
             
             # --- Component 3: Relative Strength vs Nifty (max 10) ---
             stock_ret = selected.get("stock_20d_return", 0)
@@ -402,6 +444,29 @@ class SwingEngine:
             score_breakdown.append(f"RS: +{rs_score} (+{round(rs_spread, 1)}%)")
             selected.setdefault("reasons", []).append({"text": f"Relative Strength vs Nifty (+{round(rs_spread, 1)}%)", "impact": rs_score, "layer": 2, "type": "positive"})
             
+            # --- Component 3.5: Momentum Acceleration Bonus (max 5) [V45.2] ---
+            # RS Spread is backward-looking (20 days). A stock with low RS but strong
+            # short-term momentum is STARTING to move — often the best entry point.
+            # Example: INFOBEAN had RS +0.8% (20d) but +3.45% today with 11.3x volume.
+            # This bonus detects that acceleration.
+            accel_bonus = 0
+            try:
+                if len(df_1d) >= 6:
+                    price_5d_ago = safe_scalar(df_1d['close'].iloc[-6])
+                    if price_5d_ago > 0:
+                        roc_5d = ((real_price - price_5d_ago) / price_5d_ago) * 100
+                        # Low 20d RS but strong 5d move with volume persistence = acceleration
+                        if rs_spread < 5 and roc_5d > 5 and vol_5d > 1.5:
+                            accel_bonus = 5
+                        elif rs_spread < 5 and roc_5d > 3 and vol_5d > 1.5:
+                            accel_bonus = 3
+                        if accel_bonus > 0:
+                            score += accel_bonus
+                            score_breakdown.append(f"Accel: +{accel_bonus} (5d ROC:{round(roc_5d, 1)}%, RS:{round(rs_spread, 1)}%, Vol5d:{round(vol_5d, 1)}x)")
+                            selected.setdefault("reasons", []).append({"text": f"Momentum Acceleration (5d: +{round(roc_5d, 1)}% with sustained volume)", "impact": accel_bonus, "layer": 2, "type": "positive"})
+            except Exception:
+                pass
+            
             # --- Component 4: Market Context Alignment (max 15, can penalize) ---
             mkt_score = 0
             nifty_rsi = self.market_context.get("nifty_rsi", 50)
@@ -417,33 +482,54 @@ class SwingEngine:
             elif ad_ratio >= 0.8:
                 mkt_score += 2
             
-            # Sector tailwind
-            if sector_return > 2.0:
+            # Sector tailwind [V2 Sector Momentum]
+            if sector_return_5d > 5.0:
+                mkt_score += 10
+            elif sector_return_5d > 2.0 or sector_return > 2.0:
                 mkt_score += 5
-            elif sector_return > 0:
+            elif sector_return_5d > 0 or sector_return > 0:
                 mkt_score += 2
                 
-            # Penalty: Exhausted market for breakouts
-            if is_market_exhausted and selected["strategy"] == "BREAKOUT":
-                mkt_score -= 10
-                score_breakdown.append("Exhaustion Penalty: -10")
-                selected.setdefault("reasons", []).append({"text": "Market Exhaustion Risk", "impact": -10, "layer": 3, "type": "negative"})
+            # [V45] Dynamic exhaustion penalty based on Nifty RSI severity
+            if selected["strategy"] == "BREAKOUT":
+                if nifty_rsi > 85:
+                    exhaust_pen = 8
+                elif nifty_rsi > 80:
+                    exhaust_pen = 5
+                elif nifty_rsi > 75:
+                    exhaust_pen = 3
+                else:
+                    exhaust_pen = 0
+                if exhaust_pen > 0:
+                    mkt_score -= exhaust_pen
+                    score_breakdown.append(f"Exhaustion Penalty: -{exhaust_pen} (Nifty RSI: {round(nifty_rsi, 1)})")
+                    selected.setdefault("reasons", []).append({"text": f"Market Exhaustion Risk (Nifty RSI: {round(nifty_rsi, 1)})", "impact": -exhaust_pen, "layer": 3, "type": "negative"})
             
             score += max(-10, mkt_score)
             score_breakdown.append(f"Mkt: +{max(-10, mkt_score)}")
             if mkt_score > 0: selected.setdefault("reasons", []).append({"text": "Market Context Alignment", "impact": mkt_score, "layer": 2, "type": "positive"})
             
-            # --- Component 5: ADX Trend Strength (max 10) ---
+            # --- Component 5: ADX Trend Strength (max 10) [V2: Exhaustion Tiers] ---
+            # Wilder's ADX theory: ADX > 40 signals trend exhaustion, not continuation.
+            # ADX > 50 = extremely overbought trend, high mean-reversion probability.
             adx_val = selected.get("adx", 0)
-            if adx_val >= 35:
-                adx_score = 10
+            adx_penalty = 0
+            if adx_val >= 50:
+                adx_score = 0
+                adx_penalty = 5  # Exhaustion penalty
+                score_breakdown.append(f"ADX Exhaustion: -5 ({round(adx_val, 1)} > 50)")
+                selected.setdefault("reasons", []).append({"text": f"ADX Exhaustion ({round(adx_val, 1)} > 50 = trend overheated)", "impact": -5, "layer": 3, "type": "negative"})
+            elif adx_val >= 40:
+                adx_score = 5  # Reduced from 10 — late-stage trend
+            elif adx_val >= 35:
+                adx_score = 10  # Healthy strong trend
             elif adx_val >= 30:
                 adx_score = 7
             elif adx_val >= 25:
                 adx_score = 4
             else:
                 adx_score = 0
-            score += adx_score
+            score += adx_score - adx_penalty
             score_breakdown.append(f"ADX: +{adx_score} ({round(adx_val, 1)})")
             if adx_score > 0: selected.setdefault("reasons", []).append({"text": f"ADX Trend Strength ({round(adx_val, 1)})", "impact": adx_score, "layer": 1, "type": "positive"})
             
@@ -475,6 +561,43 @@ class SwingEngine:
             score += min(15, strat_bonus)
             if strat_bonus > 0: selected.setdefault("reasons", []).append({"text": "Strategy Specific Bonuses", "impact": min(15, strat_bonus), "layer": 1, "type": "positive"})
             
+            # --- Component 6.3: Consolidation Duration Bonus (max 7, breakout only) [V45.2] ---
+            # Longer consolidation before breakout = stronger move. 
+            # 30+ days of tight range = massive energy stored. 10 days = weak base.
+            consol_days = selected.get("consol_days", 0)
+            consol_bonus = 0
+            if selected["strategy"] == "BREAKOUT" and consol_days > 0:
+                if consol_days >= 30:
+                    consol_bonus = 7   # Month+ base — institutional accumulation
+                elif consol_days >= 20:
+                    consol_bonus = 5   # Strong base
+                elif consol_days >= 15:
+                    consol_bonus = 3   # Decent base
+                elif consol_days >= 10:
+                    consol_bonus = 1   # Minimal base
+                if consol_bonus > 0:
+                    score += consol_bonus
+                    score_breakdown.append(f"Base: +{consol_bonus} ({consol_days}d consolidation)")
+                    selected.setdefault("reasons", []).append({"text": f"Consolidation Base ({consol_days} days — longer base = stronger breakout)", "impact": consol_bonus, "layer": 1, "type": "positive"})
+            
+            # --- Component 6.5: Post-Earnings Momentum Boost [V2] ---
+            pe_score = 0
+            try:
+                days_since_earnings = earnings_service.get_days_since_earnings(sym)
+                if 0 <= days_since_earnings <= 5:
+                    if len(df_1d) >= (days_since_earnings + 2):
+                        price_pre_earnings = safe_scalar(df_1d['close'].iloc[-(days_since_earnings + 2)])
+                        if price_pre_earnings > 0:
+                            post_earnings_return = ((real_price - price_pre_earnings) / price_pre_earnings) * 100
+                            if post_earnings_return > 5.0:
+                                pe_score = 10
+                                score += pe_score
+                                score_breakdown.append(f"Earn Boost: +10 (+{round(post_earnings_return, 1)}% post-ER)")
+                                selected.setdefault("reasons", []).append({"text": f"Post-Earnings Momentum Boost (+{round(post_earnings_return, 1)}% since earnings {days_since_earnings} days ago)", "impact": pe_score, "layer": 2, "type": "positive"})
+            except Exception as e:
+                logger.debug(f"Post-earnings check failed for {sym}: {e}")
+            
+            
             # --- Component 7: MACD/OBV Institutional Signals (max 10) ---
             inst_score = 0
             if selected.get("macd_bullish"):
@@ -487,9 +610,142 @@ class SwingEngine:
             score_breakdown.append(f"Inst: +{inst_score}")
             if inst_score > 0: selected.setdefault("reasons", []).append({"text": "Institutional Flow (MACD/OBV)", "impact": inst_score, "layer": 2, "type": "positive"})
             
+            # --- Component 7.5: NSE Delivery % (max 8, can penalize -5) [V45.2] ---
+            # Delivery % is the single best signal of institutional commitment.
+            # >60% = institutions TAKING DELIVERY (not day-trading) → +8
+            # >45% = moderate institutional interest → +4
+            # <25% with high volume = NOISE volume (intraday speculation) → -5
+            delivery_score = 0
+            try:
+                from app.services.delivery_service import delivery_service
+                delivery_pct = await delivery_service.get_delivery_pct(sym)
+                if delivery_pct is not None:
+                    selected["delivery_pct"] = delivery_pct
+                    if delivery_pct >= 60:
+                        delivery_score = 8
+                        score_breakdown.append(f"Delivery: +8 ({delivery_pct}% institutional)")
+                        selected.setdefault("reasons", []).append({"text": f"High Delivery ({delivery_pct}% — institutions taking delivery)", "impact": 8, "layer": 2, "type": "positive"})
+                    elif delivery_pct >= 45:
+                        delivery_score = 4
+                        score_breakdown.append(f"Delivery: +4 ({delivery_pct}%)")
+                        selected.setdefault("reasons", []).append({"text": f"Moderate Delivery ({delivery_pct}%)", "impact": 4, "layer": 2, "type": "positive"})
+                    elif delivery_pct >= 30:
+                        delivery_score = 1
+                        score_breakdown.append(f"Delivery: +1 ({delivery_pct}%)")
+                    elif delivery_pct < 25 and vol_ratio > 3.0:
+                        # High volume but very low delivery = noise, not accumulation
+                        delivery_score = -5
+                        score_breakdown.append(f"Delivery: -5 (NOISE — {delivery_pct}% delivery on {round(vol_ratio, 1)}x volume)")
+                        selected.setdefault("reasons", []).append({"text": f"Noise Volume Alert ({delivery_pct}% delivery on {round(vol_ratio, 1)}x volume — mostly intraday speculation)", "impact": -5, "layer": 3, "type": "negative"})
+                        print(f"     NOISE VOLUME: {sym} delivery only {delivery_pct}% on {round(vol_ratio, 1)}x volume", flush=True)
+                    score += delivery_score
+                else:
+                    score_breakdown.append("Delivery: N/A")
+            except Exception as e:
+                logger.debug(f"Delivery fetch failed for {sym}: {e}")
+            
+            # ====================================================================
+            # V2 SCORING PENALTIES — Anti-Trap Filters (from backtest forensics)
+            # ====================================================================
+            v2_penalty = 0
+            
+            # --- V2 Penalty 1: Parabolic Extension Detection ---
+            # If stock is >50% above its 60-day low, it's over-extended.
+            # KSHINTL was +120% → would have scored -25 here.
+            try:
+                if len(df_1d) >= 60:
+                    low_60d = safe_scalar(df_1d['low'].iloc[-60:].min())
+                else:
+                    low_60d = safe_scalar(df_1d['low'].min())
+                if low_60d > 0:
+                    extension_ratio = real_price / low_60d
+                    if extension_ratio > 2.0:
+                        ext_pen = 25
+                        v2_penalty += ext_pen
+                        score_breakdown.append(f"V2 Parabolic: -{ext_pen} ({round((extension_ratio-1)*100)}% above 60d low)")
+                        selected.setdefault("reasons", []).append({"text": f"️ Parabolic Extension ({round((extension_ratio-1)*100)}% above 60d low — extreme mean-reversion risk)", "impact": -ext_pen, "layer": 3, "type": "negative"})
+                        print(f"     V2 PARABOLIC TRAP: {sym} is {round((extension_ratio-1)*100)}% above 60d low — penalty -{ext_pen}", flush=True)
+                    elif extension_ratio > 1.5:
+                        ext_pen = 15
+                        v2_penalty += ext_pen
+                        score_breakdown.append(f"V2 Extended: -{ext_pen} ({round((extension_ratio-1)*100)}% above 60d low)")
+                        selected.setdefault("reasons", []).append({"text": f"️ Over-Extended ({round((extension_ratio-1)*100)}% above 60d low)", "impact": -ext_pen, "layer": 3, "type": "negative"})
+                        print(f"     V2 EXTENDED: {sym} is {round((extension_ratio-1)*100)}% above 60d low — penalty -{ext_pen}", flush=True)
+            except Exception as e:
+                logger.debug(f"V2 Extension check failed for {sym}: {e}")
+            
+            # --- V2 Penalty 2: Short-Term Chasing Detection ---
+            # If 5-day ROC > 15%, the stock has moved too fast too recently.
+            # KSHINTL had +20% in 2 days → would have scored -10 here.
+            # [V45.2 FIX] Waive penalty when volume persistence (5d avg) >= 2.0x.
+            # Sustained multi-day volume = institutional accumulation, NOT retail chasing.
+            # Example: INFOBEAN +15.1% ROC with 11.3x vol + 5d avg 3.0x = accumulation.
+            try:
+                if len(df_1d) >= 6:
+                    price_5d_ago = safe_scalar(df_1d['close'].iloc[-6])
+                    if price_5d_ago > 0:
+                        roc_5d = ((real_price - price_5d_ago) / price_5d_ago) * 100
+                        # [V45] Strategy-specific thresholds: breakouts need more momentum room
+                        chase_threshold = 20 if strategy_name == "BREAKOUT" else 15
+                        if roc_5d > chase_threshold:
+                            # [V45.2] If volume is sustained across 5 days, this is institutional — not chasing
+                            if vol_5d >= 2.0:
+                                score_breakdown.append(f"V2 Chasing: WAIVED (5d ROC: +{round(roc_5d, 1)}% but vol 5d avg {round(vol_5d, 1)}x = accumulation)")
+                                print(f"     V2 CHASING WAIVED: {sym} 5d ROC = +{round(roc_5d, 1)}% but vol persistence {round(vol_5d, 1)}x confirms accumulation", flush=True)
+                            else:
+                                chase_pen = 10
+                                v2_penalty += chase_pen
+                                score_breakdown.append(f"V2 Chasing: -{chase_pen} (5d ROC: +{round(roc_5d, 1)}% > {chase_threshold}%)")
+                                selected.setdefault("reasons", []).append({"text": f"Chasing Alert (5-day ROC: +{round(roc_5d, 1)}% > {chase_threshold}% threshold)", "impact": -chase_pen, "layer": 3, "type": "negative"})
+                                print(f"     V2 CHASING: {sym} 5d ROC = +{round(roc_5d, 1)}% > {chase_threshold}% — penalty -{chase_pen}", flush=True)
+            except Exception as e:
+                logger.debug(f"V2 Chasing check failed for {sym}: {e}")
+            
+            # --- V2 Penalty 3: Volume Distribution Detection ---
+            # High volume at >30% above 60d low = institutional distribution, not accumulation.
+            try:
+                # [V45] Distribution only on RED candles — green + high volume = accumulation
+                latest_candle_red = safe_scalar(df_1d['close'].iloc[-1]) < safe_scalar(df_1d['open'].iloc[-1])
+                if low_60d > 0 and extension_ratio > 1.3 and vol_ratio > 3.0 and latest_candle_red:
+                    dist_pen = 5
+                    v2_penalty += dist_pen
+                    score_breakdown.append(f"V2 Distribution: -{dist_pen} ({round(vol_ratio, 1)}x vol at {round((extension_ratio-1)*100)}% extended, RED candle)")
+                    selected.setdefault("reasons", []).append({"text": f"️ Distribution Volume ({round(vol_ratio, 1)}x on RED candle while {round((extension_ratio-1)*100)}% extended)", "impact": -dist_pen, "layer": 3, "type": "negative"})
+                    print(f"     V2 DISTRIBUTION: {sym} {round(vol_ratio, 1)}x volume at {round((extension_ratio-1)*100)}% extended (RED) — penalty -{dist_pen}", flush=True)
+            except Exception as e:
+                logger.debug(f"V2 Distribution check failed for {sym}: {e}")
+            
+            # --- Archetype Detection: Hidden Alpha Support Bounce ---
+            is_hidden_alpha_divergence = False
+            if selected.get("strategy") == "PULLBACK":
+                # Strong volume accumulation
+                if vol_ratio >= 1.4 and vol_5d >= 1.4:
+                    # Diverging relative strength
+                    if rs_spread >= 3.0:
+                        # Sector is dragging it down
+                        if sector_penalty > 0 or ad_penalty > 0:
+                            is_hidden_alpha_divergence = True
+
+            if is_hidden_alpha_divergence:
+                # Refund the macro penalties because the micro-signals override them
+                rebate = ad_penalty + sector_penalty
+                score += rebate
+                score_breakdown.append(f"HiddenAlpha Rebate: +{rebate}")
+                selected.setdefault("reasons", []).append({
+                    "text": "Hidden Alpha Divergence (Institutional Volume + RS overriding Sector Weakness)", 
+                    "impact": rebate, 
+                    "layer": 2, 
+                    "type": "positive"
+                })
+                # Zero out the penalties so they don't drag down the final calculation
+                ad_penalty = 0
+                sector_penalty = 0
+
             # --- Final Score Normalization ---
             # [V44] Apply A/D and sector penalties from soft filters
-            score -= (ad_penalty + sector_penalty)
+            # [V2] Apply new anti-trap penalties
+            total_penalty = ad_penalty + sector_penalty + v2_penalty
+            score -= total_penalty
             final_score = round(min(100, max(0, score)), 1)
             if ad_penalty > 0 or sector_penalty > 0:
                 score_breakdown.append(f"Mkt Penalty: -{ad_penalty + sector_penalty}")
@@ -509,8 +765,8 @@ class SwingEngine:
                 signal_type = "HOLD"  # Low-conviction: surface but don't recommend action
 
             # --- HIGH VISIBILITY MATCH LOG ---
-            icon = "🚀 BREAKOUT" if strategy_name == "BREAKOUT" else "📥 PULLBACK"
-            print(f"  ✅ {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) [{signal_type}] | {' | '.join(score_breakdown)}", flush=True)
+            icon = " BREAKOUT" if strategy_name == "BREAKOUT" else " PULLBACK"
+            print(f"   {icon} ━━ {sym} ━━ Score: {final_score} ({confidence}) [{signal_type}] | {' | '.join(score_breakdown)}", flush=True)
             print(f"     Entry: ₹{real_price} | SL: ₹{sl} | Target: ₹{target} | Risk/Share: ₹{round(abs(real_price - sl), 2)}", flush=True)
 
             # 5. Metadata & Advisory
@@ -553,6 +809,7 @@ class SwingEngine:
                 "is_hybrid": selected.get("is_hybrid_exit", False),
                 "hold_duration": "2 to 21 Days",
                 "priority": final_score,
+                "delivery_pct": selected.get("delivery_pct"),
                 "reasons": selected.get("reasons", []),
                 # --- Position Sizing & Portfolio Metadata ---
                 "risk_per_trade_pct": portfolio_engine.risk_per_trade_pct, 
@@ -565,7 +822,7 @@ class SwingEngine:
             }
 
         except Exception as e:
-            logger.error(f"❌ Swing Analyzer Error for {sym}: {e}")
+            logger.error(f" Swing Analyzer Error for {sym}: {e}")
             return None
 
     async def run_scan(self, job_id: str, logger=None):
@@ -580,11 +837,11 @@ class SwingEngine:
         total_cap = portfolio_engine.total_capital
         
         if await trade_manager.check_daily_loss(total_cap) == "STOP_TRADING":
-            self.update_job_progress(job_id, 100, 100, "⚠️ SCAN ABORTED: Daily Loss Limit Breached (2% Cap).")
+            self.update_job_progress(job_id, 100, 100, "️ SCAN ABORTED: Daily Loss Limit Breached (2% Cap).")
             return {"status": "ABORTED", "reason": "DAILY_LOSS_LIMIT"}
 
         if await trade_manager.is_risk_limit_reached(total_cap):
-            self.update_job_progress(job_id, 100, 100, "⚠️ SCAN ABORTED: Portfolio Risk Limit Reached (5% Cap).")
+            self.update_job_progress(job_id, 100, 100, "️ SCAN ABORTED: Portfolio Risk Limit Reached (5% Cap).")
             return {"status": "ABORTED", "reason": "RISK_LIMIT_REACHED"}
 
         await self.refresh_market_context()
@@ -621,7 +878,7 @@ class SwingEngine:
             async def sem_task(sym, idx):
                 if state.get("stop_requested"): return
 
-                # [V12.1 PAUSE CHECK] ⏸️
+                # [V12.1 PAUSE CHECK] ️
                 while job_id in self.job_states and state.get("pause_requested"):
                     if state.get("stop_requested"): return
                     await asyncio.sleep(1)
@@ -641,7 +898,7 @@ class SwingEngine:
                     
                     # Log to stdout for Debugging/Terminal Visibility
                     if idx % 50 == 0:
-                        print(f"📡 [SCANNER] Progress: {idx}/{total_stocks} stocks analyzed...", flush=True)
+                        print(f" [SCANNER] Progress: {idx}/{total_stocks} stocks analyzed...", flush=True)
                     
                     res = await self.analyze_stock(sym, job_id)
                     if res: self.add_job_result(job_id, res)
@@ -655,7 +912,7 @@ class SwingEngine:
             # portfolio_engine.select_trades/build_trade_plan are calibrated for Longterm format
             # and silently return empty on Swing data. Use raw scan_results directly.
             scan_results = state.get("results", [])
-            print(f"✅ [SWING SCAN COMPLETE] {len(scan_results)} qualified signals found from {total_stocks} scanned.", flush=True)
+            print(f" [SWING SCAN COMPLETE] {len(scan_results)} qualified signals found from {total_stocks} scanned.", flush=True)
             
             # Sort by score descending and cap at top 50
             trade_plan = sorted(scan_results, key=lambda x: x.get("score", 0), reverse=True)[:50]
@@ -715,12 +972,14 @@ class SwingEngine:
             if 'sync_task' in locals(): await sync_task
 
         # Return the finalized Trade Plan
+        from app.services.delivery_service import delivery_service
         final_payload = {
             "total_scanned": total_stocks,
             "raw_signal_count": len(scan_results),
             "trade_plan_count": len(trade_plan),
             "data": trade_plan,
-            "status_msg": f"Swing Scan Complete: {len(trade_plan)} high-conviction trades identified from {total_stocks} stocks."
+            "status_msg": f"Swing Scan Complete: {len(trade_plan)} high-conviction trades identified from {total_stocks} stocks.",
+            "delivery_date": getattr(delivery_service, "last_used_date", "Unknown")
         }
         
         if job_id in self.job_states: del self.job_states[job_id]
@@ -737,7 +996,7 @@ class SwingEngine:
         if not active_trades:
             return
 
-        logger.info(f"🛰️ Trade Manager: Updating {len(active_trades)} active positions...")
+        logger.info(f"️ Trade Manager: Updating {len(active_trades)} active positions...")
         all_symbols = [t["symbol"] for t in active_trades]
         
         market_stats = {}
@@ -770,7 +1029,7 @@ class SwingEngine:
 
         # Execute updates in bulk
         await trade_manager.update_trades(market_stats)
-        logger.info("✅ Trade Manager: Portfolio maintenance complete.")
+        logger.info(" Trade Manager: Portfolio maintenance complete.")
 
     async def execute_trade_suggestion(self, trade_data: Dict[str, Any]):
         """
@@ -783,7 +1042,7 @@ class SwingEngine:
             
         # 1. Final Risk Check
         if await trade_manager.is_risk_limit_reached(portfolio_engine.total_capital):
-            logger.warning(f"🚫 Cannot execute {symbol}: Portfolio risk limit reached.")
+            logger.warning(f" Cannot execute {symbol}: Portfolio risk limit reached.")
             return {"status": "BLOCKED", "message": "Risk limit reached."}
             
         # 2. Add to TradeManager (Lifecycle tracking starts)
@@ -818,7 +1077,7 @@ class SwingEngine:
                                 main_task.cancel()
                             break
                         
-                        # [V12.1 EXTERNAL PAUSE CHECK] ⏸️
+                        # [V12.1 EXTERNAL PAUSE CHECK] ️
                         if job_obj.status == "paused":
                             state["pause_requested"] = True
                         elif state.get("pause_requested") and job_obj.status == "processing":
@@ -836,19 +1095,19 @@ class SwingEngine:
                         flag_modified(job_obj, "result")
                         await session.commit()
             except Exception as e:
-                logger.error(f"⚠️ [SWING PROGRESS] DB write error: {e}")
+                logger.error(f"️ [SWING PROGRESS] DB write error: {e}")
             await asyncio.sleep(3.0)
 
     async def stop_job(self, job_id: str):
         if job_id in self.job_states:
             self.job_states[job_id]["stop_requested"] = True
             self.job_states[job_id]["is_running"] = False
-            print(f"🛑 [SWING] Stop Signal Received for {job_id}")
+            print(f" [SWING] Stop Signal Received for {job_id}")
 
     async def pause_job(self, job_id: str):
         if job_id in self.job_states:
             self.job_states[job_id]["pause_requested"] = True
-            print(f"⏸️ [SWING] Pause Signal Received for {job_id}")
+            print(f"️ [SWING] Pause Signal Received for {job_id}")
 
     async def resume_job(self, job_id: str):
         if job_id in self.job_states:

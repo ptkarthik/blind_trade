@@ -18,6 +18,7 @@ class AIBrain:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY")
         self.is_enabled = bool(self.api_key)
+        self._semaphore = asyncio.Semaphore(1)  # Sequential execution to protect free tier limits
         
         if self.is_enabled:
             # Using flash-lite which maintains the 1500/day free tier quota!
@@ -26,7 +27,7 @@ class AIBrain:
         else:
             logger.warning("[WARNING] AI Brain Disabled: No GEMINI_API_KEY found in environment.")
 
-    async def analyze_trade_setup(self, symbol: str, strategy: str, current_price: float, indicators: Dict[str, Any], engine_reasons: list) -> Dict[str, Any]:
+    async def analyze_trade_setup(self, symbol: str, strategy: str, current_price: float, indicators: Dict[str, Any], engine_reasons: list, mode: str = "swing") -> Dict[str, Any]:
         """
         Takes a highly scored technical setup and asks the AI to validate it.
         Returns a dictionary with an AI confidence score and reasoning.
@@ -39,57 +40,70 @@ class AIBrain:
                 "approved": True  # Default to true so math engine runs normally
             }
 
-        prompt = self._build_prompt(symbol, strategy, current_price, indicators, engine_reasons)
+        if mode == "intraday":
+            prompt = self._build_intraday_prompt(symbol, strategy, current_price, indicators, engine_reasons)
+        else:
+            prompt = self._build_prompt(symbol, strategy, current_price, indicators, engine_reasons)
         
-        try:
-            def run_sync_ai():
-                import google.generativeai as genai
-                from google.generativeai.types import HarmCategory, HarmBlockThreshold
-                import json
+        async with self._semaphore:
+            try:
+                def run_sync_ai():
+                    import google.generativeai as genai
+                    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                    import json
+                    
+                    genai.configure(api_key=self.api_key)
+                    model = genai.GenerativeModel(self.model_name)
+                    
+                    # Using the official SDK which handles rate limits and backoffs internally
+                    response = model.generate_content(
+                        prompt,
+                        generation_config=genai.types.GenerationConfig(
+                            temperature=0.2,
+                            response_mime_type="application/json",
+                        ),
+                        safety_settings={
+                            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                        }
+                    )
+                    
+                    return json.loads(response.text)
                 
-                genai.configure(api_key=self.api_key)
-                model = genai.GenerativeModel(self.model_name)
+                # Small delay to prevent burst limit triggers on free tier
+                await asyncio.sleep(2)
+                data = await asyncio.to_thread(run_sync_ai)
                 
-                # Using the official SDK which handles rate limits and backoffs internally
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.2,
-                        response_mime_type="application/json",
-                    ),
-                    safety_settings={
-                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                    }
-                )
+                # Ensure required fields exist
+                ai_confidence = data.get("ai_confidence_score", 50)
+                ai_reason = data.get("reasoning", "No reason provided by AI.")
+                approved = data.get("approved", False)
                 
-                return json.loads(response.text)
-            
-            import asyncio
-            data = await asyncio.to_thread(run_sync_ai)
-            
-            # Ensure required fields exist
-            ai_confidence = data.get("ai_confidence_score", 50)
-            ai_reason = data.get("reasoning", "No reason provided by AI.")
-            approved = data.get("approved", False)
-            
-            logger.info(f"[AI] AI Analysis for {symbol} | Approved: {approved} | Score: {ai_confidence}")
-            
-            return {
-                "status": "success",
-                "ai_confidence": ai_confidence,
-                "ai_reason": ai_reason,
-                "approved": approved
-            }
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"[ERROR] AI Brain JSON Parsing Error for {symbol}: {e}\nResponse text: {response.text}")
-            return {"status": "error", "ai_confidence": 0, "ai_reason": "Failed to parse AI response.", "approved": True}
-        except Exception as e:
-            logger.error(f"[ERROR] AI Brain API Error for {symbol}: {e}")
-            return {"status": "error", "ai_confidence": 0, "ai_reason": f"API Error: {str(e)}", "approved": True}
+                logger.info(f"[AI] AI Analysis for {symbol} | Approved: {approved} | Score: {ai_confidence}")
+                
+                return {
+                    "status": "success",
+                    "ai_confidence": ai_confidence,
+                    "ai_reason": ai_reason,
+                    "approved": approved
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"[ERROR] AI Brain JSON Parsing Error for {symbol}: {e}")
+                return {"status": "error", "ai_confidence": 0, "ai_reason": "Failed to parse AI response.", "approved": True}
+            except Exception as e:
+                error_str = str(e)
+                logger.error(f"[ERROR] AI Brain API Error for {symbol}: {error_str}")
+                
+                # Graceful handling of Quota/Rate Limit errors
+                if "429" in error_str or "Quota" in error_str:
+                    clean_reason = "AI Analysis Skipped: Gemini Free Tier Quota Exceeded."
+                else:
+                    clean_reason = "AI Analysis temporarily unavailable."
+                    
+                return {"status": "error", "ai_confidence": 0, "ai_reason": clean_reason, "approved": True}
 
     def _build_prompt(self, symbol: str, strategy: str, current_price: float, indicators: Dict[str, Any], engine_reasons: list) -> str:
         """
@@ -123,6 +137,43 @@ You MUST respond with ONLY a valid JSON object matching this schema. Do not incl
     "approved": boolean, // true if the trade looks mathematically sound, false if there is a major red flag.
     "ai_confidence_score": integer, // Score from 0 to 100 on how confident you are in this setup.
     "reasoning": string // A 1-2 sentence explanation of your decision for the user dashboard.
+}}
+"""
+        return prompt
+
+    def _build_intraday_prompt(self, symbol: str, strategy: str, current_price: float, indicators: Dict[str, Any], engine_reasons: list) -> str:
+        """
+        Constructs the context prompt for the LLM specifically for INTRADAY trades.
+        """
+        reasons_text = "\n".join([f"- {r.get('text', 'Unknown')} (Impact: {r.get('impact', 0)})" for r in engine_reasons])
+        
+        prompt = f"""
+You are an expert quantitative intraday day-trader and risk manager.
+Our mathematical intraday engine has flagged a momentum or breakout setup. I need you to act as the final gatekeeper to filter out "Morning Fakeouts" and low-probability chops.
+
+**Stock Symbol:** {symbol}
+**Strategy Type:** {strategy}
+**Current Price:** ₹{current_price}
+
+**Mathematical Engine Signals (Why it picked this and any warnings):**
+{reasons_text}
+
+**Raw Technical Indicators & Order Flow:**
+{json.dumps(indicators, indent=2)}
+
+**Your Task:**
+Analyze the technical footprint and reasons.
+1. **Time of Day Trap**: If it's between 9:30 AM and 10:15 AM, is this just an empty morning spike on low relative volume? If Relative Volume (RVOL) is low or average (< 1.5x), VETO it.
+2. **VWAP Extension**: If the stock is extended far away from VWAP without a massive institutional catalyst (RVOL > 2.5x), VETO it as it will likely mean-revert.
+3. **Contradictions**: If Kite L2 depth shows strong SELL pressure but the setup is a LONG breakout, VETO it.
+4. **Confluence**: Approve trades that show sustained volume, strong VWAP adherence, and clean momentum.
+
+**Output Format Requirements:**
+You MUST respond with ONLY a valid JSON object matching this schema. Do not include markdown formatting or extra text.
+{{
+    "approved": boolean, // true if the intraday setup looks like a genuine institutional move, false if it looks like a fakeout/trap.
+    "ai_confidence_score": integer, // Score from 0 to 100 on how confident you are.
+    "reasoning": string // A 1-2 sentence explanation of your decision.
 }}
 """
         return prompt

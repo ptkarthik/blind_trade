@@ -26,14 +26,14 @@ class ExecutionEngine:
         product: "MIS" (Intraday) or "CNC" (Delivery)
         """
         if not self.kite:
-            logger.error("❌ ExecutionEngine: Kite is not connected.")
+            logger.error(" ExecutionEngine: Kite is not connected.")
             return {"status": "error", "message": "Kite not connected"}
 
         # Format symbol for Kite (remove .NS, etc.)
         tradingsymbol = symbol.replace(".NS", "").replace(".BO", "").upper()
 
         try:
-            logger.info(f"🚀 Placing {transaction_type} order for {quantity} {tradingsymbol} ({order_type})")
+            logger.info(f" Placing {transaction_type} order for {quantity} {tradingsymbol} ({order_type})")
             
             # Translate to Kite constants
             t_type = self.kite.TRANSACTION_TYPE_BUY if transaction_type.upper() == "BUY" else self.kite.TRANSACTION_TYPE_SELL
@@ -58,11 +58,11 @@ class ExecutionEngine:
 
             order_id = self.kite.place_order(variety=self.kite.VARIETY_REGULAR, **order_params)
             
-            logger.info(f"✅ Order placed successfully! ID: {order_id}")
+            logger.info(f" Order placed successfully! ID: {order_id}")
             return {"status": "success", "order_id": order_id}
 
         except Exception as e:
-            logger.error(f"❌ Failed to place order for {tradingsymbol}: {e}")
+            logger.error(f" Failed to place order for {tradingsymbol}: {e}")
             return {"status": "error", "message": str(e)}
 
     def modify_order(self, order_id: str, new_price: float = 0.0, new_trigger_price: float = 0.0) -> Dict[str, Any]:
@@ -82,10 +82,10 @@ class ExecutionEngine:
                 order_id=order_id,
                 **params
             )
-            logger.info(f"✅ Order {order_id} modified.")
+            logger.info(f" Order {order_id} modified.")
             return {"status": "success", "order_id": order_id}
         except Exception as e:
-            logger.error(f"❌ Failed to modify order {order_id}: {e}")
+            logger.error(f" Failed to modify order {order_id}: {e}")
             return {"status": "error", "message": str(e)}
 
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
@@ -98,10 +98,10 @@ class ExecutionEngine:
                 variety=self.kite.VARIETY_REGULAR,
                 order_id=order_id
             )
-            logger.info(f"✅ Order {order_id} cancelled.")
+            logger.info(f" Order {order_id} cancelled.")
             return {"status": "success", "order_id": order_id}
         except Exception as e:
-            logger.error(f"❌ Failed to cancel order {order_id}: {e}")
+            logger.error(f" Failed to cancel order {order_id}: {e}")
             return {"status": "error", "message": str(e)}
 
 execution_engine = ExecutionEngine()

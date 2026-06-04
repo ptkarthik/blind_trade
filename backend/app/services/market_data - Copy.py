@@ -33,7 +33,7 @@ class MarketDataService:
             except YFRateLimitError:
                 # Specific handling for yfinance rate limits
                 backoff = initial_backoff * (4 ** attempt) + random.uniform(1, 3)
-                print(f"⚠️ YF Rate Limit hit. Backing off for {round(backoff, 2)}s (Attempt {attempt+1}/{max_retries})")
+                print(f"️ YF Rate Limit hit. Backing off for {round(backoff, 2)}s (Attempt {attempt+1}/{max_retries})")
                 await asyncio.sleep(backoff)
             except Exception as e:
                 if attempt == max_retries - 1:
@@ -171,7 +171,7 @@ class MarketDataService:
             except Exception as e:
                 err_msg = str(e)
                 err_preview = (err_msg[:100] + "...") if len(err_msg) > 100 else err_msg
-                print(f"⚠️ TwelveData Client Init Failed (Outage?): {err_preview}")
+                print(f"️ TwelveData Client Init Failed (Outage?): {err_preview}")
                 print("Falling back to Community API (Yahoo Finance).")
                 self.td = None
                 self.td_disabled = True
@@ -299,7 +299,7 @@ class MarketDataService:
                  self.metadata_cache[symbol] = data
                  return data
             
-        print(f"📡 Metadata Fetch for {symbol}...")
+        print(f" Metadata Fetch for {symbol}...")
         info = await self.get_fundamentals(symbol)
         
         sector = info.get("sector", "General")
@@ -418,11 +418,11 @@ class MarketDataService:
             except Exception as e:
                 msg = str(e).upper()
                 if "CREDITS" in msg:
-                    print(f"⚠️ TwelveData Credits Exhausted. Disabling.")
+                    print(f"️ TwelveData Credits Exhausted. Disabling.")
                     self.td_disabled = True
                 elif "429" in msg or "RATE_LIMIT" in msg:
                     # TwelveData Credits Exhausted -> Cooldown 15 mins
-                    print(f"⚠️ TwelveData Credits Exhausted for {symbol}. Cooling down for 15m.")
+                    print(f"️ TwelveData Credits Exhausted for {symbol}. Cooling down for 15m.")
                     self.td_disabled = True
                     self.td_disabled_until = time.time() + 900 # 15 mins
                 else:
@@ -433,7 +433,7 @@ class MarketDataService:
                     
                     # Phase 98: Circuit Breaker for 520/5xx (Server Level issues)
                     if "520" in err_msg or "500" in err_msg or "502" in err_msg:
-                        print(f"🛑 TwelveData 5xx Error detected. Cooling down for 30m.")
+                        print(f" TwelveData 5xx Error detected. Cooling down for 30m.")
                         self.td_disabled = True
                         self.td_disabled_until = time.time() + 1800 # 30 mins
 
@@ -511,20 +511,20 @@ class MarketDataService:
             except Exception as e:
                 err_msg = str(e).upper()
                 if "401" in err_msg or "UNAUTHORIZED" in err_msg or "CRUMB" in err_msg:
-                    print(f"🔑 YF Crumb/Session invalid (Live Price 401) for {ticker_symbol}. Retrying...")
+                    print(f" YF Crumb/Session invalid (Live Price 401) for {ticker_symbol}. Retrying...")
                     last_error = str(e) # Update last_error before continuing
                     continue # Try next candidate
 
                 last_error = str(e)
                 # Filter out verbose traceback for known yfinance library bug (NoneType subscriptable)
                 if "subscriptable" in last_error or "'NoneType' object" in last_error:
-                    print(f"⚠️ Yahoo Finance library bug (NoneType) for {ticker_symbol}. Traceback suppressed.")
+                    print(f"️ Yahoo Finance library bug (NoneType) for {ticker_symbol}. Traceback suppressed.")
                 else:
                     print(f"DEBUG: Yahoo Direct failed for {ticker_symbol}: {last_error}")
                 
                 # If Invalid Crumb or Unauthorized, it's a specific block
                 if "401" in last_error or "Crumb" in last_error or "Unauthorized" in last_error:
-                    print(f"⚠️ Yahoo Blocked (Crumb/401) for {ticker_symbol}. Triggering Proxy.")
+                    print(f"️ Yahoo Blocked (Crumb/401) for {ticker_symbol}. Triggering Proxy.")
 
                 # Proxy Fallback
                 try:
@@ -653,7 +653,7 @@ class MarketDataService:
         """
         Attempts to fetch history using rotating proxies when main connection fails.
         """
-        print(f"🔄 Switching to Proxy for {symbol}...")
+        print(f" Switching to Proxy for {symbol}...")
         for _ in range(3): # Try 3 different proxies max
             proxy = await proxy_manager.get_proxy()
             if not proxy: break
@@ -666,10 +666,10 @@ class MarketDataService:
                 df = await asyncio.wait_for(asyncio.to_thread(_try_fetch), timeout=15.0)
                 
                 if not df.empty:
-                    print(f"✅ Proxy Fetch Success for {symbol} via {proxy}")
+                    print(f" Proxy Fetch Success for {symbol} via {proxy}")
                     return df
                 else:
-                    print(f"❌ Proxy {proxy} returned empty for {symbol}")
+                    print(f" Proxy {proxy} returned empty for {symbol}")
                     proxy_manager.blacklist(proxy)
             except Exception as e:
                 # print(f"Proxy {proxy} failed for {symbol}: {e}")
@@ -679,7 +679,7 @@ class MarketDataService:
 
     async def _fetch_live_with_proxy(self, symbol: str) -> Dict[str, Any]:
         """Fetch live price via proxy."""
-        print(f"🔄 Switching to Proxy for Live Price {symbol}...")
+        print(f" Switching to Proxy for Live Price {symbol}...")
         for _ in range(2):
             proxy = await proxy_manager.get_proxy()
             if not proxy: break
@@ -694,7 +694,7 @@ class MarketDataService:
                 
                 data = await asyncio.wait_for(asyncio.to_thread(_try), timeout=10.0)
                 if data:
-                    print(f"✅ Proxy Live Success for {symbol}")
+                    print(f" Proxy Live Success for {symbol}")
                     # Calculate change if possible
                     p = data['price']
                     pc = data['prev_close']
@@ -739,7 +739,7 @@ class MarketDataService:
         # 0. Check TD Cooldown
         if self.td_disabled and time.time() > self.td_disabled_until:
             self.td_disabled = False
-            print("🕒 TwelveData Cooldown expired. Re-enabling.")
+            print(" TwelveData Cooldown expired. Re-enabling.")
 
         # 1. Try TwelveData
         if self.td and not self.td_disabled and not symbol.startswith("^"):
@@ -770,15 +770,15 @@ class MarketDataService:
             except Exception as e:
                 msg = str(e).upper()
                 if "CREDITS" in msg:
-                    print(f"⚠️ TwelveData Credits Exhausted (OHLC). Cooling down for 15m.")
+                    print(f"️ TwelveData Credits Exhausted (OHLC). Cooling down for 15m.")
                     self.td_disabled = True
                     self.td_disabled_until = current_time + 900
                 elif "429" in msg:
-                    print(f"🕒 TwelveData Rate Limited (OHLC) for {symbol}. Skipping.")
+                    print(f" TwelveData Rate Limited (OHLC) for {symbol}. Skipping.")
                 else:
                     err_msg = str(e).upper()
                     if "NAMERESOLUTIONERROR" in err_msg or "GETADDRINFO FAILED" in err_msg:
-                         print(f"🌐 DNS Resolution failed for TwelveData ({symbol}). Likely network issue.")
+                         print(f" DNS Resolution failed for TwelveData ({symbol}). Likely network issue.")
                     else:
                          err_msg = str(e)
                          err_preview = (err_msg[:100] + "...") if len(err_msg) > 100 else err_msg
@@ -786,7 +786,7 @@ class MarketDataService:
                          
                          # Phase 98: Circuit Breaker for 520/5xx
                          if "520" in err_msg or "500" in err_msg or "502" in err_msg:
-                             print(f"🛑 TwelveData 5xx Error detected. Cooling down for 30m.")
+                             print(f" TwelveData 5xx Error detected. Cooling down for 30m.")
                              self.td_disabled = True
                              self.td_disabled_until = time.time() + 1800
 
@@ -825,12 +825,12 @@ class MarketDataService:
                          self.ohlc_cache[cache_key] = {"timestamp": current_time, "data": df}
                          return df
             except YFRateLimitError:
-                print(f"🛑 YF Rate Limit (OHLC) for {ticker_symbol}. Skipping candidate.")
+                print(f" YF Rate Limit (OHLC) for {ticker_symbol}. Skipping candidate.")
                 continue
             except Exception as e:
                 err_msg = str(e).upper()
                 if "401" in err_msg or "UNAUTHORIZED" in err_msg or "CRUMB" in err_msg:
-                    print(f"🔑 YF Crumb/Session invalid (401) for {ticker_symbol}. Retrying...")
+                    print(f" YF Crumb/Session invalid (401) for {ticker_symbol}. Retrying...")
                 pass
 
             # 2. Fallback to yf.download
@@ -853,16 +853,16 @@ class MarketDataService:
                         self.ohlc_cache[cache_key] = {"timestamp": current_time, "data": df_dl}
                         return df_dl
             except YFRateLimitError:
-                print(f"🛑 YF Rate Limit (Download) for {ticker_symbol}. Skipping candidate.")
+                print(f" YF Rate Limit (Download) for {ticker_symbol}. Skipping candidate.")
                 continue
             except Exception as e:
                 err_msg = str(e).upper()
                 if "401" in err_msg or "UNAUTHORIZED" in err_msg or "CRUMB" in err_msg:
-                    print(f"🔑 YF Crumb/Session invalid (401 Download) for {ticker_symbol}. Retrying...")
+                    print(f" YF Crumb/Session invalid (401 Download) for {ticker_symbol}. Retrying...")
                 pass
 
             if fast_fail:
-                print(f"⏩ fast_fail enabled for {symbol}, bypassing proxy retry loop.")
+                print(f" fast_fail enabled for {symbol}, bypassing proxy retry loop.")
                 continue
 
             # Proxy Fallback
@@ -879,7 +879,7 @@ class MarketDataService:
 
         # 3. Resampling Fallback (Specific for 15m issues)
         if interval == "15m":
-            print(f"⚠️ 15m fetch failed for {symbol}. Attempting 5m resampling...")
+            print(f"️ 15m fetch failed for {symbol}. Attempting 5m resampling...")
             try:
                 df_5m = await self.get_ohlc(symbol, period=period, interval="5m")
                 if not df_5m.empty:
@@ -892,7 +892,7 @@ class MarketDataService:
 
         # 4. Desperate Fallback: yf.download
         if interval in ["15m", "5m"]:
-            print(f"⚠️ attempting yf.download fallback for {symbol}...")
+            print(f"️ attempting yf.download fallback for {symbol}...")
             try:
                 # IMPORTANT: yf.download returns a MultiIndex columns by default in newer versions
                 # when fetching single ticker, we need to handle it.

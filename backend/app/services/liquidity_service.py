@@ -13,6 +13,10 @@ from app.core.config import settings
 
 class LiquidityService:
     def __init__(self):
+        self._cache = {}
+        self._cache_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "liquidity_cache.json")
+        self._lock = None  # Ensure cache loading is thread-safe
+
         self.cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
         self.liquidity_cache_file = os.path.join(self.cache_dir, "liquidity_master.json")
         self.benchmarks_cache_file = os.path.join(self.cache_dir, "volume_benchmarks.json")
@@ -21,6 +25,12 @@ class LiquidityService:
         self.liquidity_data = {} # Symbol -> {adv20, level, last_updated}
         self.benchmarks = {} # Symbol -> {time_bucket (e.g. "09:30"): avg_vol}
         self.bootstrapping_symbols = set()
+
+    @property
+    def lock(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
         
     def _get_time_bucket(self, dt):
         """Standardizes datetime to HH:MM bucket."""
@@ -37,7 +47,7 @@ class LiquidityService:
                     if os.path.exists(self.benchmarks_cache_file):
                         with open(self.benchmarks_cache_file, "r") as f:
                             self.benchmarks = json.load(f)
-                    print(f"✅ LiquidityService: Loaded cache for {len(self.liquidity_data)} symbols.")
+                    print(f" LiquidityService: Loaded cache for {len(self.liquidity_data)} symbols.")
                     return
             except Exception as e:
                 print(f"LiquidityService: Cache load error: {e}")
@@ -127,7 +137,7 @@ class LiquidityService:
         """
         Intensive background task to fetch 20-day historical data and calculate benchmarks.
         """
-        print(f"🔄 LiquidityService: Refreshing benchmarks for {len(symbols)} symbols...")
+        print(f" LiquidityService: Refreshing benchmarks for {len(symbols)} symbols...")
         
         # To avoid blocking, we could process in batches
         batch_size = 50
@@ -140,19 +150,19 @@ class LiquidityService:
             self._save_cache()
             await asyncio.sleep(1) # Breath
             
-        print("✅ LiquidityService: All benchmarks refreshed.")
+        print(" LiquidityService: All benchmarks refreshed.")
 
     async def bulk_bootstrap(self, symbols: list[str]):
         """Bootstraps ADV20 for a large batch of symbols in one go."""
         if not symbols: return
         
         # Track what we are bootstrapping to avoid redundant probes
-        new_symbols = [s for s in symbols if s not in self.bootstrapping_symbols]
+        new_symbols = [s for s in symbols if s not in self.bootstrapping_symbols and s not in self.liquidity_data]
         if not new_symbols: return
         
         self.bootstrapping_symbols.update(new_symbols)
         if len(new_symbols) > 5:
-            print(f"🛰️ [LIQ BOOTSTRAP] Starting bulk load for {len(new_symbols)} symbols...")
+            print(f"️ [LIQ BOOTSTRAP] Starting bulk load for {len(new_symbols)} symbols...")
         
         try:
             results = await market_service.get_batch_ohlc(new_symbols, interval="1d", period="1mo")
@@ -177,14 +187,14 @@ class LiquidityService:
             
             if count > 0:
                 if len(new_symbols) > 5:
-                    print(f"✅ [LIQ BOOTSTRAP] Successfully mapped {count} symbols.")
+                    print(f" [LIQ BOOTSTRAP] Successfully mapped {count} symbols.")
                 self._save_cache()
             
             # Clean up tracking set
             for s in new_symbols: self.bootstrapping_symbols.discard(s)
             
         except Exception as e:
-            print(f"❌ [LIQ BOOTSTRAP] Bulk load failed: {e}")
+            print(f" [LIQ BOOTSTRAP] Bulk load failed: {e}")
             for s in new_symbols: self.bootstrapping_symbols.discard(s)
 
     async def refresh_symbol_benchmark(self, symbol: str):

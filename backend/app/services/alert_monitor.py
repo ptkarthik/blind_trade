@@ -17,10 +17,10 @@ class AlertMonitor:
 
     async def run_periodic_summary(self):
         """Runs the 30-minute summary check."""
-        logger.info("🔍 Running half-hourly market summary...")
+        logger.info(" Running half-hourly market summary...")
         
         if not kite_data.is_ready:
-            logger.warning("⚠️ AlertMonitor: Kite data not ready, skipping summary.")
+            logger.warning("️ AlertMonitor: Kite data not ready, skipping summary.")
             return
 
         try:
@@ -33,16 +33,16 @@ class AlertMonitor:
                 price = nifty_data.get("price", 0)
                 change_pct = nifty_data.get("change_percent", 0)
                 
-                status_icon = "🟢" if change_pct >= 0 else "🔴"
+                status_icon = "" if change_pct >= 0 else ""
                 nifty_summary = f"{status_icon} <b>NIFTY 50</b>: {price} ({change_pct}%)\n"
                 
                 # Check for significant movement or zero crossing
                 if self.last_nifty_price is not None:
                     last_pct = self.last_nifty_price.get("change_percent", 0)
                     if (last_pct < 0 and change_pct >= 0) or (last_pct >= 0 and change_pct < 0):
-                        nifty_summary = f"🚨 <b>TREND CHANGE</b> 🚨\n" + nifty_summary
+                        nifty_summary = f" <b>TREND CHANGE</b> \n" + nifty_summary
                     elif abs(change_pct - last_pct) >= 1.0:
-                        nifty_summary = f"⚡ <b>1% MOVEMENT</b> ⚡\n" + nifty_summary
+                        nifty_summary = f" <b>1% MOVEMENT</b> \n" + nifty_summary
                 
                 self.last_nifty_price = nifty_data
 
@@ -50,7 +50,7 @@ class AlertMonitor:
             active_trades = trade_manager.get_active_trades()
             trades_summary = ""
             if active_trades:
-                trades_summary = "\n💼 <b>Active Positions:</b>\n"
+                trades_summary = "\n <b>Active Positions:</b>\n"
                 symbols = [t["symbol"] for t in active_trades]
                 live_prices = await kite_data.get_ltp(symbols)
                 
@@ -65,18 +65,18 @@ class AlertMonitor:
                     else:
                         pnl_pct = 0
                         
-                    t_icon = "🟢" if pnl_pct >= 0 else "🔴"
+                    t_icon = "" if pnl_pct >= 0 else ""
                     trades_summary += f"{t_icon} {sym}: {live_price} ({pnl_pct:.2f}%)\n"
             else:
-                trades_summary = "\n💼 No active positions."
+                trades_summary = "\n No active positions."
 
             # Construct and send final message
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            final_message = f"🕒 <b>Market Summary ({timestamp})</b>\n\n{nifty_summary}{trades_summary}"
+            final_message = f" <b>Market Summary ({timestamp})</b>\n\n{nifty_summary}{trades_summary}"
             
             notification_service.send_mobile_alert(final_message)
             
         except Exception as e:
-            logger.error(f"❌ AlertMonitor Error: {e}")
+            logger.error(f" AlertMonitor Error: {e}")
 
 alert_monitor = AlertMonitor()
