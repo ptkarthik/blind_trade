@@ -563,6 +563,7 @@ class SwingEngine:
                 # optimal risk/reward. They haven't run up yet, so they have room to grow.
                 # Cartrade-type setups: breaking out but <5% above 20 EMA = low-risk entry.
                 # This boosts safe, early breakouts above overextended ones in the ranking.
+                asym_bonus = 0
                 try:
                     if len(df_1d) >= 21:
                         from ta.trend import EMAIndicator
@@ -571,20 +572,19 @@ class SwingEngine:
                             ema20_dist = ((real_price - ema_20_val) / ema_20_val) * 100
                             if 0 < ema20_dist <= 5:
                                 asym_bonus = 8
-                                strat_bonus += asym_bonus
                                 score_breakdown.append(f"V46 Fresh BO: +{asym_bonus} ({round(ema20_dist, 1)}% above EMA20)")
                                 selected.setdefault("reasons", []).append({"text": f"Day-1 Fresh Breakout (only {round(ema20_dist, 1)}% above EMA20 — optimal entry)", "impact": asym_bonus, "layer": 2, "type": "positive"})
                                 print(f"     V46 FRESH BREAKOUT BOOST: {sym} only {round(ema20_dist, 1)}% above EMA20 — bonus +{asym_bonus}", flush=True)
                             elif 0 < ema20_dist <= 8:
                                 asym_bonus = 4
-                                strat_bonus += asym_bonus
                                 score_breakdown.append(f"V46 Near BO: +{asym_bonus} ({round(ema20_dist, 1)}% above EMA20)")
                                 selected.setdefault("reasons", []).append({"text": f"Near Breakout ({round(ema20_dist, 1)}% above EMA20 — good entry zone)", "impact": asym_bonus, "layer": 2, "type": "positive"})
                 except Exception as e:
                     logger.debug(f"V46 Asymmetry boost check failed for {sym}: {e}")
+                score += asym_bonus
 
-            score += min(23, strat_bonus)  # [V46] Raised cap from 15 to 23 to accommodate Fresh BO bonus
-            if strat_bonus > 0: selected.setdefault("reasons", []).append({"text": "Strategy Specific Bonuses", "impact": min(23, strat_bonus), "layer": 1, "type": "positive"})
+            score += min(15, strat_bonus)
+            if strat_bonus > 0: selected.setdefault("reasons", []).append({"text": "Strategy Specific Bonuses", "impact": min(15, strat_bonus), "layer": 1, "type": "positive"})
             
             # --- Component 6.3: Consolidation Duration Bonus (max 7, breakout only) [V45.2] ---
             # Longer consolidation before breakout = stronger move. 
@@ -657,6 +657,7 @@ class SwingEngine:
                     elif delivery_pct >= 30:
                         delivery_score = 1
                         score_breakdown.append(f"Delivery: +1 ({delivery_pct}%)")
+                        selected.setdefault("reasons", []).append({"text": f"Moderate Delivery ({delivery_pct}%)", "impact": 1, "layer": 2, "type": "positive"})
                     elif delivery_pct < 25 and vol_ratio > 3.0:
                         # High volume but very low delivery = noise, not accumulation
                         delivery_score = -5
