@@ -64,6 +64,7 @@ export const auditApi = {
     getReport: (date?: string) => api.get(`/audit/report${date ? `?date=${date}` : ''}`),
     triggerEvaluation: (date?: string) => api.post(`/audit/evaluate${date ? `?date=${date}` : ''}`),
     getHistory: (days = 7) => api.get(`/audit/history?days=${days}`),
+    getTraps: () => api.get('/audit/traps'),
 };
 
 export default api;

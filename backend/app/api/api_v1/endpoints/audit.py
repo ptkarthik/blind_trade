@@ -41,3 +41,15 @@ async def get_audit_history(days: int = 7):
     """
     history = await performance_tracker.get_history(days)
     return {"status": "OK", "data": history}
+
+
+@router.get("/traps")
+async def get_trap_patterns():
+    """
+    Returns all stored trap patterns that the AI brain has learned.
+    Each pattern includes the source stock, loss %, indicator fingerprint,
+    and how many future stocks have matched it.
+    """
+    from app.services.trap_memory import trap_memory
+    patterns = await trap_memory.get_all_patterns()
+    return {"status": "OK", "data": patterns, "total": len(patterns)}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { auditApi } from '../services/api';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Target, Shield, BarChart3, Loader2 } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Target, Shield, BarChart3, Loader2, Brain, Zap } from 'lucide-react';
 
 interface AuditStock {
   rank: number;
@@ -48,14 +48,26 @@ interface HistoryEntry {
   accuracy_pct: number;
 }
 
+interface TrapPatternEntry {
+  id: string;
+  source_symbol: string;
+  source_date: string;
+  loss_pct: number;
+  trap_type: string;
+  confidence: number;
+  match_count: number;
+  indicators: Record<string, number>;
+}
+
 export function PerformanceAuditView() {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [trapPatterns, setTrapPatterns] = useState<TrapPatternEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>('');
-  const [activeView, setActiveView] = useState<'today' | 'history'>('today');
+  const [activeView, setActiveView] = useState<'today' | 'history' | 'brain'>('today');
 
   const fetchReport = async (date?: string) => {
     setLoading(true);
@@ -78,6 +90,15 @@ export function PerformanceAuditView() {
     }
   };
 
+  const fetchTraps = async () => {
+    try {
+      const res = await auditApi.getTraps();
+      setTrapPatterns(res.data?.data || []);
+    } catch (e) {
+      console.error('Failed to fetch trap patterns:', e);
+    }
+  };
+
   const triggerEvaluation = async () => {
     setEvaluating(true);
     try {
@@ -94,6 +115,7 @@ export function PerformanceAuditView() {
   useEffect(() => {
     fetchReport();
     fetchHistory();
+    fetchTraps();
   }, []);
 
   const getPerformanceColor = (tag: string | null) => {
@@ -148,6 +170,12 @@ export function PerformanceAuditView() {
               className={`px-3 py-1.5 rounded-md text-[10px] font-black tracking-widest uppercase transition-all ${activeView === 'history' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
               HISTORY
+            </button>
+            <button
+              onClick={() => { setActiveView('brain'); fetchTraps(); }}
+              className={`px-3 py-1.5 rounded-md text-[10px] font-black tracking-widest uppercase transition-all ${activeView === 'brain' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              🧠 BRAIN
             </button>
           </div>
           <button
@@ -356,7 +384,7 @@ export function PerformanceAuditView() {
             </div>
           )}
         </>
-      ) : (
+      ) : activeView === 'history' ? (
         /* History View */
         <div className="space-y-3">
           {history.length === 0 ? (
@@ -407,6 +435,83 @@ export function PerformanceAuditView() {
                 ))}
               </div>
             </>
+          )}
+        </div>
+      ) : (
+        /* Brain View — Learned Trap Patterns */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🧠</span>
+              <div>
+                <div className="text-sm font-black tracking-tight">TRAP MEMORY — AI BRAIN</div>
+                <div className="text-[10px] text-muted-foreground">Patterns learned from past TRAP stocks. Auto-applied to future scans.</div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-black text-primary">{trapPatterns.length}</div>
+              <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">PATTERNS STORED</div>
+            </div>
+          </div>
+
+          {trapPatterns.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <span className="text-4xl block mb-3 opacity-30">🧠</span>
+              <p className="font-medium">Brain is empty — no trap patterns learned yet</p>
+              <p className="text-xs mt-1">Click UPDATE PRICES after market close to identify TRAPs. The brain auto-learns from them.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {trapPatterns.map((pattern) => (
+                <div
+                  key={pattern.id}
+                  className="rounded-lg border border-red-500/20 bg-red-500/5 p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
+                        <AlertTriangle className="w-5 h-5 text-red-500" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-sm">{pattern.source_symbol.replace('.NS', '')}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider bg-red-500/10 text-red-500">
+                            {pattern.trap_type.replace('_', ' ')}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          Learned on {pattern.source_date} • Lost {pattern.loss_pct?.toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-center">
+                        <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">CONFIDENCE</div>
+                        <div className="font-black text-sm text-amber-500">{pattern.confidence?.toFixed(1)}x</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">BLOCKED</div>
+                        <div className="font-black text-sm text-emerald-500">{pattern.match_count}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Indicator Fingerprint */}
+                  {pattern.indicators && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {Object.entries(pattern.indicators).map(([key, val]) => (
+                        <span
+                          key={key}
+                          className="text-[10px] px-2 py-1 rounded-md font-mono bg-muted/50 border border-border text-muted-foreground"
+                        >
+                          {key}: {typeof val === 'number' ? val.toFixed(1) : val}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

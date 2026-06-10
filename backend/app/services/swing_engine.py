@@ -774,6 +774,28 @@ class SwingEngine:
             except Exception as e:
                 logger.debug(f"V46 EMA10 Extension check failed for {sym}: {e}")
             
+            # --- V46 Penalty 5: Trap Memory Check ---
+            # Compares this stock's indicators against all known trap patterns
+            # learned from past TRAP-classified stocks. The more traps we find,
+            # the smarter this check becomes.
+            try:
+                from app.services.trap_memory import trap_memory
+                trap_indicators = {
+                    "roc_5d": locals().get("roc_5d", 0),
+                    "vol_ratio": vol_ratio,
+                    "ema10_dist": locals().get("ema10_dist", 0),
+                    "delivery_pct": selected.get("delivery_pct", 50),
+                    "adx": selected.get("adx", 0),
+                }
+                trap_penalty, trap_reason = await trap_memory.check_stock(trap_indicators)
+                if trap_penalty > 0:
+                    v2_penalty += trap_penalty
+                    score_breakdown.append(f"V46 Trap Memory: -{trap_penalty}")
+                    selected.setdefault("reasons", []).append({"text": trap_reason, "impact": -trap_penalty, "layer": 3, "type": "negative"})
+                    print(f"     V46 TRAP MEMORY: {sym} matches known trap — penalty -{trap_penalty}", flush=True)
+            except Exception as e:
+                logger.debug(f"V46 Trap Memory check failed for {sym}: {e}")
+
             # ====================================================================
             # V4 Institutional Upgrades (Component 8: Math Extensions)
             # ====================================================================

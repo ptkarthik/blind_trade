@@ -152,6 +152,20 @@ class PerformanceTracker:
                 await session.commit()
                 print(f" [TRACKER] Updated {updated}/{len(snapshots)} snapshots with EOD performance for {scan_date}", flush=True)
 
+                # --- TRAP MEMORY: Auto-learn from any TRAP-classified stocks ---
+                try:
+                    from app.services.trap_memory import trap_memory
+                    traps_learned = 0
+                    for snap in snapshots:
+                        if snap.performance_tag == "TRAP":
+                            result_type = await trap_memory.learn_from_trap(snap)
+                            if result_type:
+                                traps_learned += 1
+                    if traps_learned > 0:
+                        print(f" [TRAP MEMORY] Learned {traps_learned} new trap pattern(s) from {scan_date}", flush=True)
+                except Exception as e:
+                    logger.debug(f"[TRAP MEMORY] Learning failed (non-critical): {e}")
+
                 return {"status": "OK", "date": scan_date, "updated": updated}
 
         except Exception as e:
