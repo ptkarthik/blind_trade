@@ -715,6 +715,44 @@ class SwingEngine:
             except Exception as e:
                 logger.debug(f"V2 Distribution check failed for {sym}: {e}")
             
+            # ====================================================================
+            # V4 Institutional Upgrades (Component 8: Math Extensions)
+            # ====================================================================
+            inst_math_score = 0
+            
+            # --- W-MACD Confluence ---
+            w_macd_bullish = selected.get("w_macd_bullish", False)
+            if w_macd_bullish:
+                inst_math_score += 5
+                score_breakdown.append("W-MACD: +5")
+                selected.setdefault("reasons", []).append({"text": "Weekly MACD Bullish Confluence", "impact": 5, "layer": 2, "type": "positive"})
+            
+            # --- Anchored VWAP (AVWAP) ---
+            avwap = selected.get("avwap_60d_low", 0.0)
+            if avwap > 0:
+                # If price is bouncing off AVWAP (within 3% above it)
+                avwap_dist = (real_price - avwap) / avwap
+                if 0 <= avwap_dist <= 0.03:
+                    inst_math_score += 5
+                    score_breakdown.append(f"AVWAP Bounce: +5 ({round(avwap_dist*100,1)}%)")
+                    selected.setdefault("reasons", []).append({"text": f"AVWAP Support Bounce (60d low anchor)", "impact": 5, "layer": 2, "type": "positive"})
+                elif avwap_dist < 0:
+                    # Below AVWAP is a structural breakdown, penalty
+                    inst_math_score -= 5
+                    score_breakdown.append(f"Below AVWAP: -5")
+                    selected.setdefault("reasons", []).append({"text": f"Below AVWAP (Warning)", "impact": -5, "layer": 3, "type": "negative"})
+            
+            # --- Volume Profile (VPVR POC) ---
+            poc = selected.get("vpvr_poc_90d", 0.0)
+            if poc > 0:
+                poc_dist = (real_price - poc) / poc
+                if 0 <= poc_dist <= 0.03:
+                    inst_math_score += 5
+                    score_breakdown.append(f"POC Bounce: +5")
+                    selected.setdefault("reasons", []).append({"text": f"VPVR POC Bounce (High volume node)", "impact": 5, "layer": 2, "type": "positive"})
+                    
+            score += inst_math_score
+
             # --- Archetype Detection: Hidden Alpha Support Bounce ---
             is_hidden_alpha_divergence = False
             if selected.get("strategy") == "PULLBACK":
@@ -927,10 +965,18 @@ class SwingEngine:
                 self.update_job_progress(job_id, total_stocks, total_stocks, "AI Gatekeeper analyzing Top 5 setups concurrently...", [s['symbol'] for s in top_5])
                 
                 async def analyze_single_setup(setup):
+                    # [Institutional Upgrade Phase 2]
+                    # In a production environment with unlocked APIs, we would fetch:
+                    # 1. Open Interest (OI) from Kite NFO tokens
+                    # 2. Fundamentals (PE, EPS) from an institutional data provider
+                    # For now, we pass placeholders that the AI can ignore if null.
+                    
                     indicators = {
                         "setup_type": setup.get("setup_type"),
                         "verdict": setup.get("verdict"),
-                        "engine_score": setup.get("score")
+                        "engine_score": setup.get("score"),
+                        "open_interest_trend": "Not Available (API Restricted)",
+                        "pe_ratio": "Not Available (API Restricted)"
                     }
                     return await ai_brain.analyze_trade_setup(
                         setup["symbol"], setup["strategy"], setup["price"], indicators, setup.get("reasons", [])

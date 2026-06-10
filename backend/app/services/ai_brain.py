@@ -105,12 +105,28 @@ class AIBrain:
                     
                 return {"status": "error", "ai_confidence": 0, "ai_reason": clean_reason, "approved": True}
 
+    def _fetch_news(self, symbol: str) -> str:
+        try:
+            url = f'https://query2.finance.yahoo.com/v1/finance/search?q={symbol}'
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            res = requests.get(url, headers=headers, timeout=3).json()
+            news_items = res.get('news', [])[:3]
+            if not news_items:
+                return "No recent news found."
+            headlines = [f"- {n.get('title')}" for n in news_items]
+            return "\n".join(headlines)
+        except Exception:
+            return "News fetch unavailable."
+
     def _build_prompt(self, symbol: str, strategy: str, current_price: float, indicators: Dict[str, Any], engine_reasons: list) -> str:
         """
         Constructs the context prompt for the LLM.
         """
         # Format the reasons list nicely
         reasons_text = "\n".join([f"- {r.get('text', 'Unknown')} ({r.get('label', '')})" for r in engine_reasons])
+        
+        # [Institutional Upgrade] Fetch Real-Time News Sentiment
+        news_text = self._fetch_news(symbol)
         
         prompt = f"""
 You are an expert quantitative swing trader and risk manager.
@@ -123,18 +139,22 @@ Our mathematical trading engine has identified a high-probability trade setup. I
 **Mathematical Engine Signals (Why it picked this):**
 {reasons_text}
 
+**Recent News Headlines (For Sentiment/Catalyst Check):**
+{news_text}
+
 **Raw Technical Indicators:**
 {json.dumps(indicators, indent=2)}
 
 **Your Task:**
-Analyze the technical indicators and the engine's reasons. 
-1. Look for any glaring contradictions (e.g., trying to buy a pullback when ADX shows a massive bearish trend, or RSI is completely overbought on a breakout).
-2. Look for strong confluence (e.g., MACD is bullish, Volume is surging, and it's bouncing off a major moving average).
+Analyze the technical indicators, the engine's reasons, and the recent news. 
+1. Look for any glaring contradictions (e.g., trying to buy a pullback when ADX shows a massive bearish trend).
+2. Look for strong confluence (e.g., MACD is bullish, Volume is surging).
+3. **Crucial:** Evaluate the news headlines. If there is a massive fundamental red flag (e.g., fraud, severe regulatory action, terrible earnings), you MUST veto the trade even if technicals are perfect. If the news is a strong positive catalyst, it adds conviction.
 
 **Output Format Requirements:**
 You MUST respond with ONLY a valid JSON object matching this schema. Do not include markdown formatting or extra text.
 {{
-    "approved": boolean, // true if the trade looks mathematically sound, false if there is a major red flag.
+    "approved": boolean, // true if the trade looks mathematically sound and fundamentally safe, false if there is a major red flag (technical or news).
     "ai_confidence_score": integer, // Score from 0 to 100 on how confident you are in this setup.
     "reasoning": string // A 1-2 sentence explanation of your decision for the user dashboard.
 }}

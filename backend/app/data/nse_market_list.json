@@ -774,12 +774,6 @@
         "industry": "General"
     },
     {
-        "symbol": "ATLANTAELE.NS",
-        "name": "Atlanta Electricals Limited",
-        "raw_symbol": "ATLANTAELE",
-        "industry": "General"
-    },
-    {
         "symbol": "ATUL.NS",
         "name": "Atul Limited",
         "raw_symbol": "ATUL",
@@ -1656,12 +1650,6 @@
         "industry": "General"
     },
     {
-        "symbol": "COFFEEDAY.NS",
-        "name": "Coffee Day Enterprises Limited",
-        "raw_symbol": "COFFEEDAY",
-        "industry": "General"
-    },
-    {
         "symbol": "COFORGE.NS",
         "name": "Coforge Limited",
         "raw_symbol": "COFORGE",
@@ -1753,7 +1741,7 @@
     },
     {
         "symbol": "CRISIL.NS",
-        "name": "CRISIL Limited",
+        "name": "Crisil Limited",
         "raw_symbol": "CRISIL",
         "industry": "General"
     },
@@ -6282,12 +6270,6 @@
         "industry": "General"
     },
     {
-        "symbol": "QUICKHEAL.NS",
-        "name": "Quick Heal Technologies Limited",
-        "raw_symbol": "QUICKHEAL",
-        "industry": "General"
-    },
-    {
         "symbol": "RACLGEAR.NS",
         "name": "RACL Geartech Limited",
         "raw_symbol": "RACLGEAR",
@@ -7173,12 +7155,6 @@
         "symbol": "SIEMENS.NS",
         "name": "Siemens Limited",
         "raw_symbol": "SIEMENS",
-        "industry": "General"
-    },
-    {
-        "symbol": "SIGMAADV.NS",
-        "name": "SIGMA ADVANCED SYSTEMS LIMITED",
-        "raw_symbol": "SIGMAADV",
         "industry": "General"
     },
     {

@@ -60,7 +60,8 @@ class SwingTechnicalAnalysis:
 
         # --- V3.2: Multi-Timeframe (MTF) Context ---
         try:
-            df_weekly = df.resample('W').agg({
+            # We must use resample('W-FRI') to properly align with Friday closes
+            df_weekly = df.resample('W-FRI').agg({
                 'open': 'first',
                 'high': 'max',
                 'low': 'min',
@@ -72,11 +73,66 @@ class SwingTechnicalAnalysis:
             if len(w_close) >= 50:
                 ctx['w_ema_20'] = EMAIndicator(close=w_close, window=20).ema_indicator()
                 ctx['w_sma_50'] = SMAIndicator(close=w_close, window=50).sma_indicator()
+                
+                # [Institutional Upgrade] Weekly MACD for macro confluence
+                macd_w = MACD(close=w_close, window_slow=26, window_fast=12, window_sign=9)
+                ctx['w_macd_line'] = macd_w.macd()
+                ctx['w_macd_signal'] = macd_w.macd_signal()
+                ctx['w_macd_hist'] = macd_w.macd_diff()
+                
                 ctx['mtf_enabled'] = True
             else:
                 ctx['mtf_enabled'] = False
         except Exception:
             ctx['mtf_enabled'] = False
+
+        # --- [Institutional Upgrade] Anchored VWAP (60-day low) ---
+        try:
+            low_60d_idx = df['low'].iloc[-60:].idxmin() if len(df) >= 60 else df['low'].idxmin()
+            df_avwap = df.loc[low_60d_idx:].copy()
+            if not df_avwap.empty:
+                df_avwap['typ_price'] = (df_avwap['high'] + df_avwap['low'] + df_avwap['close']) / 3
+                df_avwap['vol_price'] = df_avwap['typ_price'] * df_avwap['volume']
+                avwap = df_avwap['vol_price'].cumsum() / df_avwap['volume'].cumsum()
+                
+                avwap_full = pd.Series(index=df.index, dtype=float)
+                avwap_full.update(avwap)
+                ctx['avwap_60d_low'] = avwap_full
+            else:
+                ctx['avwap_60d_low'] = pd.Series(dtype=float)
+        except Exception:
+            ctx['avwap_60d_low'] = pd.Series(dtype=float)
+            
+        # --- [Institutional Upgrade] Volume Profile (VPVR) Point of Control ---
+        try:
+            # 90-day institutional accumulation zone
+            df_vp = df.iloc[-90:].copy() if len(df) >= 90 else df.copy()
+            if not df_vp.empty and len(df_vp) > 10:
+                min_p = df_vp['low'].min()
+                max_p = df_vp['high'].max()
+                
+                if max_p > min_p:
+                    bins = np.linspace(min_p, max_p, 20)
+                    typ_price = (df_vp['high'] + df_vp['low'] + df_vp['close']) / 3
+                    inds = np.digitize(typ_price, bins)
+                    
+                    vol_profile = {}
+                    for i in range(1, len(bins) + 1):
+                        vol_profile[i] = df_vp['volume'][inds == i].sum()
+                    
+                    max_bin = max(vol_profile, key=vol_profile.get)
+                    if max_bin < len(bins):
+                        poc_price = (bins[max_bin-1] + bins[max_bin]) / 2
+                    else:
+                        poc_price = bins[-1]
+                        
+                    ctx['vpvr_poc_90d'] = poc_price
+                else:
+                    ctx['vpvr_poc_90d'] = 0.0
+            else:
+                ctx['vpvr_poc_90d'] = 0.0
+        except Exception:
+            ctx['vpvr_poc_90d'] = 0.0
 
         return ctx
 
@@ -373,9 +429,10 @@ class SwingTechnicalAnalysis:
             "obv_rising": obv_rising,
             "gap_filter_passed": True,
             "relative_strength": "OUTPERFORM",
-            "stock_20d_return": round(stock_20d_ret, 2),
-            "pullback_quality": "HEALTHY",
-            "drawdown_pct": round(drawdown_pct, 2),
+            "is_hybrid_exit": False,
+            "avwap_60d_low": safe_scalar(ctx.get('avwap_60d_low', pd.Series(dtype=float)).iloc[-1]) if isinstance(ctx.get('avwap_60d_low'), pd.Series) and not ctx.get('avwap_60d_low').empty else 0.0,
+            "vpvr_poc_90d": ctx.get('vpvr_poc_90d', 0.0),
+            "w_macd_bullish": safe_scalar(ctx.get('w_macd_line', pd.Series([0])).iloc[-1]) > safe_scalar(ctx.get('w_macd_signal', pd.Series([0])).iloc[-1]) if ctx.get('mtf_enabled') else False,
             "consol_days": 0  # Pullbacks don't have a consolidation base
         }
 
@@ -629,6 +686,9 @@ class SwingTechnicalAnalysis:
             "stock_20d_return": round(stock_20d_ret, 2),
             "breakout_strength": "STRONG",
             "volatility_ratio": round(current_range / max(avg_range_10d, 0.1), 2),
+            "avwap_60d_low": safe_scalar(ctx.get('avwap_60d_low', pd.Series(dtype=float)).iloc[-1]) if isinstance(ctx.get('avwap_60d_low'), pd.Series) and not ctx.get('avwap_60d_low').empty else 0.0,
+            "vpvr_poc_90d": ctx.get('vpvr_poc_90d', 0.0),
+            "w_macd_bullish": safe_scalar(ctx.get('w_macd_line', pd.Series([0])).iloc[-1]) > safe_scalar(ctx.get('w_macd_signal', pd.Series([0])).iloc[-1]) if ctx.get('mtf_enabled') else False,
             "consol_days": consol_days
         }
 
