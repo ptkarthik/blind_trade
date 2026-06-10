@@ -4,8 +4,9 @@ import { AnalysisModal } from './components/AnalysisModal';
 import { SectorDeals } from './components/SectorDeals';
 import { PortfolioOptimizer } from './components/PortfolioOptimizer';
 import { PaperTradingView } from './components/PaperTradingView';
+import { PerformanceAuditView } from './components/PerformanceAuditView';
 import { PaperOrderModal } from './components/PaperOrderModal';
-import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard } from 'lucide-react';
+import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard, BarChart3 } from 'lucide-react';
 import { SearchBox } from './components/SearchBox';
 import { StockCardLongTerm } from './components/StockCardLongTerm';
 import { StockCardIntraday } from './components/StockCardIntraday';
@@ -70,7 +71,7 @@ function App() {
       return cached ? JSON.parse(cached) : null;
     } catch { return null; }
   });
-  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade'>('deals');
+  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade' | 'audit'>('deals');
   const lastCompletedJobId = useRef<string | null>(null);
   const currentSignalJobId = useRef<string | null>(null);
 
@@ -772,6 +773,12 @@ function App() {
               >
                 <LayoutDashboard className="h-3 w-3" /> PAPER TRADING
               </button>
+              <button
+                onClick={() => setActiveTab('audit')}
+                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'audit' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <BarChart3 className="h-3 w-3" /> AUDIT
+              </button>
             </div>
           </div>
         </div>
@@ -796,9 +803,11 @@ function App() {
           </>
         ) : activeTab === 'portfolio' ? (
           <PortfolioOptimizer />
-        ) : (
+        ) : activeTab === 'papertrade' ? (
           <PaperTradingView />
-        )}
+        ) : activeTab === 'audit' ? (
+          <PerformanceAuditView />
+        ) : null}
       </main >
     </div >
   );

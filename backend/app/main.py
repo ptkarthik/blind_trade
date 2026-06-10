@@ -47,6 +47,7 @@ async def startup_event():
     from app.models.job import Job
     from app.models.papertrade import PaperTrade, Account
     from app.models.swing_trade import SwingTrade
+    from app.models.scan_snapshot import ScanSnapshot
     
     async with engine.begin() as conn:
         # This will create tables if they don't exist

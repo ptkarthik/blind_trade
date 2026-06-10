@@ -558,8 +558,33 @@ class SwingEngine:
                     score_breakdown.append("Squeeze: +10")
                 else:
                     strat_bonus += 3
-            score += min(15, strat_bonus)
-            if strat_bonus > 0: selected.setdefault("reasons", []).append({"text": "Strategy Specific Bonuses", "impact": min(15, strat_bonus), "layer": 1, "type": "positive"})
+                
+                # [V46] Day-1 Asymmetry Boost: Fresh breakouts close to EMA20 have
+                # optimal risk/reward. They haven't run up yet, so they have room to grow.
+                # Cartrade-type setups: breaking out but <5% above 20 EMA = low-risk entry.
+                # This boosts safe, early breakouts above overextended ones in the ranking.
+                try:
+                    if len(df_1d) >= 21:
+                        from ta.trend import EMAIndicator
+                        ema_20_val = safe_scalar(EMAIndicator(close=df_1d['close'], window=20).ema_indicator().iloc[-1])
+                        if ema_20_val > 0:
+                            ema20_dist = ((real_price - ema_20_val) / ema_20_val) * 100
+                            if 0 < ema20_dist <= 5:
+                                asym_bonus = 8
+                                strat_bonus += asym_bonus
+                                score_breakdown.append(f"V46 Fresh BO: +{asym_bonus} ({round(ema20_dist, 1)}% above EMA20)")
+                                selected.setdefault("reasons", []).append({"text": f"Day-1 Fresh Breakout (only {round(ema20_dist, 1)}% above EMA20 — optimal entry)", "impact": asym_bonus, "layer": 2, "type": "positive"})
+                                print(f"     V46 FRESH BREAKOUT BOOST: {sym} only {round(ema20_dist, 1)}% above EMA20 — bonus +{asym_bonus}", flush=True)
+                            elif 0 < ema20_dist <= 8:
+                                asym_bonus = 4
+                                strat_bonus += asym_bonus
+                                score_breakdown.append(f"V46 Near BO: +{asym_bonus} ({round(ema20_dist, 1)}% above EMA20)")
+                                selected.setdefault("reasons", []).append({"text": f"Near Breakout ({round(ema20_dist, 1)}% above EMA20 — good entry zone)", "impact": asym_bonus, "layer": 2, "type": "positive"})
+                except Exception as e:
+                    logger.debug(f"V46 Asymmetry boost check failed for {sym}: {e}")
+
+            score += min(23, strat_bonus)  # [V46] Raised cap from 15 to 23 to accommodate Fresh BO bonus
+            if strat_bonus > 0: selected.setdefault("reasons", []).append({"text": "Strategy Specific Bonuses", "impact": min(23, strat_bonus), "layer": 1, "type": "positive"})
             
             # --- Component 6.3: Consolidation Duration Bonus (max 7, breakout only) [V45.2] ---
             # Longer consolidation before breakout = stronger move. 
@@ -677,9 +702,10 @@ class SwingEngine:
             # --- V2 Penalty 2: Short-Term Chasing Detection ---
             # If 5-day ROC > 15%, the stock has moved too fast too recently.
             # KSHINTL had +20% in 2 days → would have scored -10 here.
-            # [V45.2 FIX] Waive penalty when volume persistence (5d avg) >= 2.0x.
-            # Sustained multi-day volume = institutional accumulation, NOT retail chasing.
-            # Example: INFOBEAN +15.1% ROC with 11.3x vol + 5d avg 3.0x = accumulation.
+            # [V46] Climax Volume Trap: High volume after huge run = exhaustion, NOT accumulation.
+            # Old logic waived the penalty for vol_5d >= 2.0x. This caused AHCL-type traps where
+            # a stock runs +15% on 4x volume, gets max score, then dumps -4.5% the next day.
+            # New logic: If ROC is extreme AND today's volume is a spike (>4x), it's climax volume.
             try:
                 if len(df_1d) >= 6:
                     price_5d_ago = safe_scalar(df_1d['close'].iloc[-6])
@@ -688,8 +714,16 @@ class SwingEngine:
                         # [V45] Strategy-specific thresholds: breakouts need more momentum room
                         chase_threshold = 20 if strategy_name == "BREAKOUT" else 15
                         if roc_5d > chase_threshold:
-                            # [V45.2] If volume is sustained across 5 days, this is institutional — not chasing
-                            if vol_5d >= 2.0:
+                            # [V46 CLIMAX TRAP] High single-day volume spike on overextended stock = exhaustion
+                            # vol_ratio > 4x on a stock already up >15% = everyone who wanted to buy has bought
+                            if vol_ratio > 4.0 and roc_5d > 15:
+                                climax_pen = 15
+                                v2_penalty += climax_pen
+                                score_breakdown.append(f"V46 Climax Trap: -{climax_pen} (5d ROC: +{round(roc_5d, 1)}% with {round(vol_ratio, 1)}x volume spike)")
+                                selected.setdefault("reasons", []).append({"text": f"Climax Volume Trap ({round(vol_ratio, 1)}x volume spike after +{round(roc_5d, 1)}% run — exhaustion risk)", "impact": -climax_pen, "layer": 3, "type": "negative"})
+                                print(f"     V46 CLIMAX TRAP: {sym} 5d ROC = +{round(roc_5d, 1)}% with {round(vol_ratio, 1)}x vol spike — penalty -{climax_pen}", flush=True)
+                            # [V45.2] Sustained multi-day volume with moderate extension = genuine accumulation
+                            elif vol_5d >= 2.0 and roc_5d <= 25:
                                 score_breakdown.append(f"V2 Chasing: WAIVED (5d ROC: +{round(roc_5d, 1)}% but vol 5d avg {round(vol_5d, 1)}x = accumulation)")
                                 print(f"     V2 CHASING WAIVED: {sym} 5d ROC = +{round(roc_5d, 1)}% but vol persistence {round(vol_5d, 1)}x confirms accumulation", flush=True)
                             else:
@@ -714,6 +748,31 @@ class SwingEngine:
                     print(f"     V2 DISTRIBUTION: {sym} {round(vol_ratio, 1)}x volume at {round((extension_ratio-1)*100)}% extended (RED) — penalty -{dist_pen}", flush=True)
             except Exception as e:
                 logger.debug(f"V2 Distribution check failed for {sym}: {e}")
+            
+            # --- V46 Penalty 4: Short-Term EMA Overextension ---
+            # If price is >10% above its 10-day EMA, it is statistically likely to mean-revert.
+            # This catches AHCL-type traps that pass the 60-day extension check (50% threshold)
+            # but are severely stretched above their short-term moving average.
+            try:
+                if len(df_1d) >= 11:
+                    from ta.trend import EMAIndicator
+                    ema_10 = safe_scalar(EMAIndicator(close=df_1d['close'], window=10).ema_indicator().iloc[-1])
+                    if ema_10 > 0:
+                        ema10_dist = ((real_price - ema_10) / ema_10) * 100
+                        if ema10_dist > 15:
+                            ema_ext_pen = 15
+                            v2_penalty += ema_ext_pen
+                            score_breakdown.append(f"V46 EMA10 Stretch: -{ema_ext_pen} ({round(ema10_dist, 1)}% above EMA10)")
+                            selected.setdefault("reasons", []).append({"text": f"EMA10 Overextended ({round(ema10_dist, 1)}% above — extreme mean-reversion risk)", "impact": -ema_ext_pen, "layer": 3, "type": "negative"})
+                            print(f"     V46 EMA10 STRETCH: {sym} is {round(ema10_dist, 1)}% above EMA10 — penalty -{ema_ext_pen}", flush=True)
+                        elif ema10_dist > 10:
+                            ema_ext_pen = 10
+                            v2_penalty += ema_ext_pen
+                            score_breakdown.append(f"V46 EMA10 Extended: -{ema_ext_pen} ({round(ema10_dist, 1)}% above EMA10)")
+                            selected.setdefault("reasons", []).append({"text": f"EMA10 Extended ({round(ema10_dist, 1)}% above — elevated mean-reversion risk)", "impact": -ema_ext_pen, "layer": 3, "type": "negative"})
+                            print(f"     V46 EMA10 EXTENDED: {sym} is {round(ema10_dist, 1)}% above EMA10 — penalty -{ema_ext_pen}", flush=True)
+            except Exception as e:
+                logger.debug(f"V46 EMA10 Extension check failed for {sym}: {e}")
             
             # ====================================================================
             # V4 Institutional Upgrades (Component 8: Math Extensions)
@@ -1016,6 +1075,13 @@ class SwingEngine:
                 self.job_states[job_id]["stop_requested"] = True
                 self.job_states[job_id]["is_running"] = False
             if 'sync_task' in locals(): await sync_task
+
+        # --- PERFORMANCE TRACKER: Snapshot top picks for EOD auditing ---
+        try:
+            from app.services.performance_tracker import performance_tracker
+            await performance_tracker.snapshot_scan_results(job_id, trade_plan)
+        except Exception as e:
+            logger.debug(f"[TRACKER] Snapshot failed (non-critical): {e}")
 
         # Return the finalized Trade Plan
         from app.services.delivery_service import delivery_service

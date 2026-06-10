@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.api_v1.endpoints import market, signals, jobs, papertrades, settings
+from app.api.api_v1.endpoints import market, signals, jobs, papertrades, settings, audit
 
 api_router = APIRouter()
 print(f"LOADING API ROUTER. Included: market, signals, jobs, settings")
@@ -10,4 +10,5 @@ api_router.include_router(signals.router, prefix="/signals", tags=["signals"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(papertrades.router, prefix="/papertrades", tags=["papertrades"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
+api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
 print("API ROUTER LOAD COMPLETED")
