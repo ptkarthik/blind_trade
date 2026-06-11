@@ -1,14 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
-from app.api import deps
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, HTTPException
 from app.services.live_monitor import live_monitor
 
 router = APIRouter()
 
 @router.get("/")
 async def get_live_dashboard(
-    date: str = None,
-    db: AsyncSession = Depends(deps.get_db)
+    date: str = None
 ):
     """
     Get the live dashboard data containing top 10 stocks and active alerts.
@@ -17,9 +14,7 @@ async def get_live_dashboard(
     return data
 
 @router.post("/run")
-async def trigger_live_monitor(
-    db: AsyncSession = Depends(deps.get_db)
-):
+async def trigger_live_monitor():
     """
     Manually trigger the live monitor check.
     """
