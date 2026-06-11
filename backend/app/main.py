@@ -74,11 +74,15 @@ async def startup_event():
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from app.services.live_monitor import live_monitor
+        from app.services.position_manager import position_manager
         scheduler = AsyncIOScheduler()
-        # Run every 15 minutes between 9 AM and 4 PM
         scheduler.add_job(live_monitor.run_intraday_check, 'cron', day_of_week='mon-fri', hour='9-15', minute='*/15')
+        # 15-Minute Guardian Loop (for trailing stops)
+        scheduler.add_job(position_manager.run_evaluation_cycle, 'cron', day_of_week='mon-fri', hour='9-15', minute='2,17,32,47')
+        # Hourly Deep Scan and Summary Push
+        scheduler.add_job(position_manager.run_hourly_deep_scan, 'cron', day_of_week='mon-fri', hour='9-15', minute='0')
         scheduler.start()
-        print(" [SCHEDULER] Live Monitor Intraday Tracker Started.")
+        print(" [SCHEDULER] Live Monitor & Position Guardian Started.")
     except Exception as e:
         print(f" [SCHEDULER] Failed to start: {e}")
 

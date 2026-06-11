@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Float, Integer, Boolean
+from sqlalchemy import Column, String, DateTime, Float, Integer, Boolean, JSON
 from app.models.job import Base
 
 class SwingTrade(Base):
@@ -32,6 +32,9 @@ class SwingTrade(Base):
     
     sector = Column(String, nullable=True)
     confidence = Column(String, nullable=True) # HIGH, MEDIUM, LOW
+    initial_score = Column(Float, nullable=True)
+    current_score = Column(Float, nullable=True)
+    scan_data = Column(JSON, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -27,15 +27,15 @@ logger = logging.getLogger("trap_memory")
 
 # Tolerance bands for matching: if a stock's indicator is within ±BAND of a known trap, it matches
 MATCH_BANDS = {
-    "roc_5d": 5.0,       # ±5% ROC tolerance
-    "vol_ratio": 1.5,    # ±1.5x volume tolerance
-    "ema10_dist": 3.0,   # ±3% EMA distance tolerance
-    "delivery_pct": 10.0, # ±10% delivery tolerance
-    "adx": 10.0,         # ±10 ADX tolerance
+    "roc_5d": 2.0,       # ±2% ROC tolerance (tighter)
+    "vol_ratio": 0.5,    # ±0.5x volume tolerance (tighter)
+    "ema10_dist": 1.5,   # ±1.5% EMA distance tolerance (tighter)
+    "delivery_pct": 5.0, # ±5% delivery tolerance (tighter)
+    "adx": 5.0,          # ±5 ADX tolerance (tighter)
 }
 
 # Minimum indicators that must match to trigger the penalty
-MIN_MATCH_FIELDS = 3
+MIN_MATCH_FIELDS = 4
 
 
 class TrapMemory:

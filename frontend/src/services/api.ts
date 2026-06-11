@@ -72,4 +72,11 @@ export const liveApi = {
     triggerCheck: () => api.post('/live/run'),
 };
 
+export const positionsApi = {
+    getPortfolio: () => api.get('/positions/portfolio'),
+    triggerEvaluation: () => api.post('/positions/evaluate_now'),
+    addTrade: (data: any) => api.post('/positions/add_trade', data),
+    closeTrade: (id: string) => api.patch(`/positions/close/${id}`),
+};
+
 export default api;

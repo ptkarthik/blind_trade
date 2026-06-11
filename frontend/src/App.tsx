@@ -5,6 +5,7 @@ import { SectorDeals } from './components/SectorDeals';
 import { PortfolioOptimizer } from './components/PortfolioOptimizer';
 import { PaperTradingView } from './components/PaperTradingView';
 import { PerformanceAuditView } from './components/PerformanceAuditView';
+import { ActivePositionsView } from './components/ActivePositionsView';
 import { PaperOrderModal } from './components/PaperOrderModal';
 import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard, BarChart3 } from 'lucide-react';
 import { SearchBox } from './components/SearchBox';
@@ -71,7 +72,7 @@ function App() {
       return cached ? JSON.parse(cached) : null;
     } catch { return null; }
   });
-  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade' | 'audit'>('deals');
+  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade' | 'audit' | 'positions'>('deals');
   const lastCompletedJobId = useRef<string | null>(null);
   const currentSignalJobId = useRef<string | null>(null);
 
@@ -779,6 +780,12 @@ function App() {
               >
                 <BarChart3 className="h-3 w-3" /> AUDIT
               </button>
+              <button
+                onClick={() => setActiveTab('positions')}
+                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'positions' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <ShieldCheck className="h-3 w-3" /> POSITIONS
+              </button>
             </div>
           </div>
         </div>
@@ -788,26 +795,25 @@ function App() {
           <div className="flex justify-center py-20">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
-        ) : activeTab === 'deals' ? (
+        ) : (
           <>
-            {/* Sector-wise Dashboard (Unified View) */}
-            <ErrorBoundary>
-              <SectorDeals
-                data={sectorSignals}
-                stats={sectorStats}
-                mode={mode}
-                onSignalClick={openAnalysis}
-                onBuy={handleBuyRequest}
-              />
-            </ErrorBoundary>
+            {activeTab === 'deals' && (
+              <ErrorBoundary>
+                <SectorDeals
+                  data={sectorSignals}
+                  stats={sectorStats}
+                  mode={mode}
+                  onSignalClick={openAnalysis}
+                  onBuy={handleBuyRequest}
+                />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'portfolio' && <PortfolioOptimizer />}
+            {activeTab === 'papertrade' && <PaperTradingView />}
+            {activeTab === 'audit' && <PerformanceAuditView />}
+            {activeTab === 'positions' && <ActivePositionsView />}
           </>
-        ) : activeTab === 'portfolio' ? (
-          <PortfolioOptimizer />
-        ) : activeTab === 'papertrade' ? (
-          <PaperTradingView />
-        ) : activeTab === 'audit' ? (
-          <PerformanceAuditView />
-        ) : null}
+        )}
       </main >
     </div >
   );
