@@ -622,6 +622,32 @@ class SwingEngine:
             except Exception as e:
                 logger.debug(f"Post-earnings check failed for {sym}: {e}")
             
+            # --- Component 6.8: Momentum Igniter (Early Parabolic Catch) ---
+            # Catching stocks exactly as they explode, before they hit extension penalties.
+            # Purely additive. Does not regress existing logic.
+            igniter_bonus = 0
+            if selected["strategy"] == "BREAKOUT" and vol_ratio >= 4.0:
+                try:
+                    if len(df_1d) >= 60:
+                        daily_roc = ((real_price - safe_scalar(df_1d['close'].iloc[-2])) / max(safe_scalar(df_1d['close'].iloc[-2]), 0.01)) * 100
+                        if daily_roc >= 5.0:
+                            local_low_60d = safe_scalar(df_1d['low'].iloc[-60:].min())
+                            if local_low_60d > 0:
+                                local_extension = real_price / local_low_60d
+                                if local_extension <= 1.25: # < 25% above 60d low (Catching on Day 1)
+                                    from ta.trend import EMAIndicator
+                                    local_ema_10 = safe_scalar(EMAIndicator(close=df_1d['close'], window=10).ema_indicator().iloc[-1])
+                                    if local_ema_10 > 0:
+                                        local_ema10_dist = ((real_price - local_ema_10) / local_ema_10) * 100
+                                        if local_ema10_dist <= 10.0: # Not overextended from short-term mean
+                                            igniter_bonus = 15
+                                            score += igniter_bonus
+                                            selected["setup_type"] = "MOMENTUM_IGNITER"
+                                            score_breakdown.append(f"Igniter Bonus: +{igniter_bonus} (Day 1 Parabolic)")
+                                            selected.setdefault("reasons", []).append({"text": f"🔥 Momentum Igniter (Day 1 Parabolic explosion caught early)", "impact": igniter_bonus, "layer": 1, "type": "positive"})
+                                            print(f"     🔥 MOMENTUM IGNITER DETECTED: {sym} — bonus +{igniter_bonus}", flush=True)
+                except Exception as e:
+                    logger.debug(f"Momentum Igniter check failed for {sym}: {e}")
             
             # --- Component 7: MACD/OBV Institutional Signals (max 10) ---
             inst_score = 0
