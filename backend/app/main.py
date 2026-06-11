@@ -49,6 +49,7 @@ async def startup_event():
     from app.models.swing_trade import SwingTrade
     from app.models.scan_snapshot import ScanSnapshot
     from app.models.trap_pattern import TrapPattern
+    from app.models.trade_alert import TradeAlert
     
     async with engine.begin() as conn:
         # This will create tables if they don't exist
@@ -68,6 +69,18 @@ async def startup_event():
             
     # Background Runner is now handled by external Worker process (app.worker.worker_main)
     print("API Startup Complete. Background Jobs System Ready.")
+
+    # 5. Start Live Monitor Scheduler
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from app.services.live_monitor import live_monitor
+        scheduler = AsyncIOScheduler()
+        # Run every 15 minutes between 9 AM and 4 PM
+        scheduler.add_job(live_monitor.run_intraday_check, 'cron', day_of_week='mon-fri', hour='9-15', minute='*/15')
+        scheduler.start()
+        print(" [SCHEDULER] Live Monitor Intraday Tracker Started.")
+    except Exception as e:
+        print(f" [SCHEDULER] Failed to start: {e}")
 
 from fastapi.staticfiles import StaticFiles
 import os

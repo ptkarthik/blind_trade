@@ -67,4 +67,9 @@ export const auditApi = {
     getTraps: () => api.get('/audit/traps'),
 };
 
+export const liveApi = {
+    getDashboard: (date?: string) => api.get(`/live${date ? `?date=${date}` : ''}`),
+    triggerCheck: () => api.post('/live/run'),
+};
+
 export default api;

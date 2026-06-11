@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { auditApi } from '../services/api';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Target, Shield, BarChart3, Loader2, Brain, Zap } from 'lucide-react';
+import { auditApi, liveApi } from '../services/api';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Target, Shield, BarChart3, Loader2, Brain, Zap, Radio, Bell } from 'lucide-react';
 
 interface AuditStock {
   rank: number;
@@ -67,7 +67,9 @@ export function PerformanceAuditView() {
   const [evaluating, setEvaluating] = useState(false);
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>('');
-  const [activeView, setActiveView] = useState<'today' | 'history' | 'brain'>('today');
+  const [activeView, setActiveView] = useState<'today' | 'history' | 'brain' | 'live'>('today');
+  const [liveData, setLiveData] = useState<any>(null);
+  const [loadingLive, setLoadingLive] = useState(false);
 
   const fetchReport = async (date?: string) => {
     setLoading(true);
@@ -96,6 +98,29 @@ export function PerformanceAuditView() {
       setTrapPatterns(res.data?.data || []);
     } catch (e) {
       console.error('Failed to fetch trap patterns:', e);
+    }
+  };
+
+  const fetchLive = async () => {
+    setLoadingLive(true);
+    try {
+      const res = await liveApi.getDashboard(selectedDate || undefined);
+      setLiveData(res.data);
+    } catch (e) {
+      console.error('Failed to fetch live dashboard:', e);
+    } finally {
+      setLoadingLive(false);
+    }
+  };
+
+  const triggerLiveCheck = async () => {
+    setLoadingLive(true);
+    try {
+      await liveApi.triggerCheck();
+      setTimeout(fetchLive, 2000); // Wait for background job to finish
+    } catch (e) {
+      console.error('Failed to trigger live check:', e);
+      setLoadingLive(false);
     }
   };
 
@@ -177,15 +202,33 @@ export function PerformanceAuditView() {
             >
               🧠 BRAIN
             </button>
+            <button
+              onClick={() => { setActiveView('live'); fetchLive(); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-black tracking-widest uppercase transition-all ${activeView === 'live' ? 'bg-red-500 text-white shadow-sm animate-pulse' : 'text-muted-foreground hover:text-red-500'}`}
+            >
+              <Radio className="w-3 h-3" />
+              LIVE
+            </button>
           </div>
-          <button
-            onClick={triggerEvaluation}
-            disabled={evaluating}
-            className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[10px] font-black tracking-widest uppercase hover:bg-primary/90 disabled:opacity-50 transition-all"
-          >
-            {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-            {evaluating ? 'EVALUATING...' : 'UPDATE PRICES'}
-          </button>
+          {activeView === 'live' ? (
+             <button
+              onClick={triggerLiveCheck}
+              disabled={loadingLive}
+              className="flex items-center gap-1.5 bg-red-500 text-white px-3 py-1.5 rounded-md text-[10px] font-black tracking-widest uppercase hover:bg-red-600 disabled:opacity-50 transition-all"
+            >
+              {loadingLive ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              {loadingLive ? 'CHECKING...' : 'FORCE CHECK'}
+            </button>
+          ) : (
+            <button
+              onClick={triggerEvaluation}
+              disabled={evaluating}
+              className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-[10px] font-black tracking-widest uppercase hover:bg-primary/90 disabled:opacity-50 transition-all"
+            >
+              {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              {evaluating ? 'EVALUATING...' : 'UPDATE PRICES'}
+            </button>
+          )}
         </div>
       </div>
 
