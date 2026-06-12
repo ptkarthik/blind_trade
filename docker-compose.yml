@@ -1,23 +1,36 @@
 version: '3.8'
 
 services:
-  db:
-    image: postgres:15-alpine
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: blind_trade_db
-    ports:
-      - "5432:5432"
+      - POSTGRES_SERVER=localhost
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=blind_trade_db
+    env_file:
+      - ./backend/.env
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Mount the database file so it persists across container restarts
+      - ./blind_trade.db:/app/blind_trade.db
+      # Mount any delivery caches
+      - ./backend/delivery_cache:/app/delivery_cache
+      - ./backend/logs:/app/logs
+    ports:
+      - "8000:8000"
 
-  redis:
-    image: redis:7-alpine
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     restart: always
     ports:
-      - "6379:6379"
+      - "80:80"
+    depends_on:
+      - backend
 
-volumes:
-  postgres_data:
+# We remove the postgres container since the app uses SQLite.
+# If you ever migrate to Postgres, you can add it back here.
