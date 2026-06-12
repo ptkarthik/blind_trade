@@ -111,6 +111,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                     
                     <div className="mt-6 text-center">
                         <button 
+                            type="button"
                             onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
                             className="text-zinc-400 hover:text-indigo-400 text-sm transition-colors"
                         >

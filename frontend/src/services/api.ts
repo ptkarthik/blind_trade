@@ -33,10 +33,7 @@ api.interceptors.response.use(
     (error) => {
         if (error.response && error.response.status === 401) {
             localStorage.removeItem('blind_trade_token');
-            // If we're not already on the root/login flow, reload to trigger it
-            if (window.location.pathname !== '/') {
-                window.location.reload();
-            }
+            window.location.reload();
         }
         return Promise.reject(error);
     }

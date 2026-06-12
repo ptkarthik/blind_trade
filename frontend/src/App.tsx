@@ -562,14 +562,29 @@ function App() {
             </>
             )}
 
-            <div className="flex flex-col items-end">
-              <span className="text-muted-foreground">NIFTY 50</span>
-              <span className="font-mono font-bold text-up">{marketStatus?.nifty_50 || '---'}</span>
+            <div className="flex items-center gap-4 text-xs font-bold tracking-wider">
+              <span className="text-muted-foreground flex items-center gap-1">
+                NIFTY 50
+                <span className={marketStatus?.nifty_change !== undefined && marketStatus.nifty_change > 0 ? 'text-green-500' : 'text-red-500'}>
+                  {marketStatus?.nifty_50 !== undefined ? marketStatus.nifty_50 : '---'}
+                </span>
+              </span>
+              <span className="text-muted-foreground flex items-center gap-1">
+                INDIA VIX
+                <span className={marketStatus?.india_vix !== undefined && marketStatus.india_vix < 20 ? 'text-green-500' : 'text-red-500'}>
+                  {marketStatus?.india_vix !== undefined ? marketStatus.india_vix : '---'}
+                </span>
+              </span>
             </div>
-            <div className="flex flex-col items-end">
-              <span className="text-muted-foreground">INDIA VIX</span>
-              <span className="font-mono font-bold text-destructive">{marketStatus?.india_vix || '---'}</span>
-            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('blind_trade_token');
+                window.location.reload();
+              }}
+              className="ml-4 px-3 py-1 rounded-md text-xs font-bold bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+            >
+              LOGOUT
+            </button>
           </div>
         </div>
       </header>

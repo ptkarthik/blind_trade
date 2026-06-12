@@ -577,8 +577,8 @@ class SwingEngine:
                                 print(f"     V46 FRESH BREAKOUT BOOST: {sym} only {round(ema20_dist, 1)}% above EMA20 — bonus +{asym_bonus}", flush=True)
                             elif 0 < ema20_dist <= 8:
                                 asym_bonus = 4
-                                score_breakdown.append(f"V46 Near BO: +{asym_bonus} ({round(ema20_dist, 1)}% above EMA20)")
-                                selected.setdefault("reasons", []).append({"text": f"Near Breakout ({round(ema20_dist, 1)}% above EMA20 — good entry zone)", "impact": asym_bonus, "layer": 2, "type": "positive"})
+                                score_breakdown.append(f"V46 Ext BO: +{asym_bonus} ({round(ema20_dist, 1)}% above EMA20)")
+                                selected.setdefault("reasons", []).append({"text": f"Breakout Momentum ({round(ema20_dist, 1)}% above EMA20 — buy the dip)", "impact": asym_bonus, "layer": 2, "type": "positive"})
                 except Exception as e:
                     logger.debug(f"V46 Asymmetry boost check failed for {sym}: {e}")
                 score += asym_bonus
