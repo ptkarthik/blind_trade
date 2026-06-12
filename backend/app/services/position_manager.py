@@ -258,13 +258,13 @@ class PositionManager:
                 open_trades = result.scalars().all()
                 
                 for trade in open_trades:
-                    # Deep scan
-                    analysis = await swing_engine.analyze_stock(trade.symbol)
+                    # Deep continuous scan (Decoupled from fresh entry criteria)
+                    analysis = await swing_engine.evaluate_active_position(trade.symbol, trade.strategy)
                     if analysis and "score" in analysis:
                         trade.current_score = float(analysis["score"])
                         trade.scan_data = analysis
                     else:
-                        trade.current_score = 50.0 # Neutral / No longer a fresh buy setup
+                        trade.current_score = 50.0 # Neutral fallback if data fetch completely fails
                         if trade.scan_data:
                             # Update score internally so UI knows
                             trade.scan_data["score"] = 50.0

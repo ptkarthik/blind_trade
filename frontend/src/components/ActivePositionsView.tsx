@@ -19,6 +19,7 @@ export const ActivePositionsView: React.FC = () => {
         const hours = Math.floor(minutes / 60);
         return `${hours}h ago`;
     };
+    const loadPositions = async () => {
         try {
             setLoading(true);
             const res = await positionsApi.getPortfolio();
@@ -129,44 +130,45 @@ export const ActivePositionsView: React.FC = () => {
                                     <h4 className="text-sm font-black uppercase tracking-widest text-primary">Pattern Deviation</h4>
                                 </div>
                                 
-                                {pos.initial_scan_data ? (
-                                    <div className="space-y-4 flex-1">
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-muted/50 p-3 rounded-lg border border-border">
-                                                <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Initial Setup</div>
-                                                <div className="text-xl font-black">{pos.initial_score}<span className="text-xs opacity-50">/100</span></div>
-                                                <div className="text-xs font-bold text-slate-400 mt-1 truncate">
-                                                    {pos.initial_scan_data?.setup_type || pos.strategy}
-                                                </div>
-                                            </div>
-                                            <div className="bg-primary/5 p-3 rounded-lg border border-primary/20">
-                                                <div className="text-[9px] uppercase tracking-widest text-primary font-bold mb-1">Current State</div>
-                                                <div className="text-xl font-black text-primary">{pos.current_score}<span className="text-xs opacity-50">/100</span></div>
-                                                <div className="text-xs font-bold text-primary/70 mt-1 truncate">
-                                                    {pos.scan_data?.setup_type || pos.strategy}
-                                                </div>
+                                <div className="space-y-4 flex-1">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-muted/50 p-3 rounded-lg border border-border">
+                                            <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Initial Setup</div>
+                                            <div className="text-xl font-black">{pos.initial_score || 'N/A'}<span className="text-xs opacity-50">/100</span></div>
+                                            <div className="text-xs font-bold text-slate-400 mt-1 truncate">
+                                                {pos.initial_scan_data?.setup_type || pos.strategy}
                                             </div>
                                         </div>
-                                        
-                                        <div className="bg-background rounded-lg p-3 border border-border/50">
-                                            <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Technical Shift</div>
-                                            <p className="text-xs font-medium text-foreground leading-relaxed">
-                                                {pos.initial_score > pos.current_score 
-                                                    ? "⚠️ Technical structure has weakened since entry." 
-                                                    : pos.initial_score < pos.current_score 
-                                                        ? "🔥 Setup has gained strength." 
-                                                        : "⚖️ Structure remains stable."}
-                                            </p>
+                                        <div className="bg-primary/5 p-3 rounded-lg border border-primary/20">
+                                            <div className="text-[9px] uppercase tracking-widest text-primary font-bold mb-1">Current State</div>
+                                            <div className="text-xl font-black text-primary">{pos.current_score || 'N/A'}<span className="text-xs opacity-50">/100</span></div>
+                                            <div className="text-xs font-bold text-primary/70 mt-1 truncate">
+                                                {pos.scan_data?.setup_type || pos.strategy}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="bg-background rounded-lg p-3 border border-border/50">
+                                        <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Technical Shift</div>
+                                        <p className="text-xs font-medium text-foreground leading-relaxed">
+                                            {pos.initial_score > pos.current_score 
+                                                ? "⚠️ Technical structure has weakened since entry." 
+                                                : pos.initial_score < pos.current_score 
+                                                    ? "🔥 Setup has gained strength." 
+                                                    : "⚖️ Structure remains stable."}
+                                        </p>
+                                        {pos.scan_data?.strategic_summary && (
                                             <div className="mt-2 text-[10px] text-muted-foreground">
-                                                {pos.scan_data?.strategic_summary || "Continuous AI monitoring active."}
+                                                {pos.scan_data.strategic_summary}
                                             </div>
-                                        </div>
+                                        )}
+                                        {!pos.initial_scan_data && (
+                                            <div className="mt-2 text-[9px] text-amber-500/80 italic">
+                                                *Detailed baseline snapshot unavailable for older trades.
+                                            </div>
+                                        )}
                                     </div>
-                                ) : (
-                                    <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs italic">
-                                        No initial scan data captured for deviation tracking.
-                                    </div>
-                                )}
+                                </div>
                                 <div className="text-[9px] text-right text-muted-foreground mt-2">
                                     Last Evaluated: {formatTimeAgo(pos.last_evaluated_at)}
                                 </div>
@@ -204,6 +206,11 @@ export const ActivePositionsView: React.FC = () => {
                                 <div className="flex items-center gap-3">
                                     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
                                         <Clock size={12} /> Held for {pos.holding_days} days
+                                        {pos.scan_data?.hold_duration && (
+                                            <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded ml-1 border border-primary/20 tracking-tighter">
+                                                EST: {pos.scan_data.hold_duration}
+                                            </span>
+                                        )}
                                     </div>
                                     {pos.last_evaluated_at && (
                                         <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground/60 uppercase font-bold tracking-wider">

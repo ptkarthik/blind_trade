@@ -151,6 +151,32 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
                 )}
             </div>
 
+            {/* AMO & Pre-Market Strategy */}
+            {(signal.amo_action || (signal.premarket_checks && signal.premarket_checks.length > 0)) && (
+                <div className="mt-4 pt-4 border-t border-border flex flex-col gap-2 relative z-10">
+                    <span className="text-[10px] font-black tracking-widest uppercase text-muted-foreground mb-1">Execution Strategy</span>
+                    {signal.amo_action && (
+                        <div className={`p-2.5 rounded-xl border flex flex-col gap-1 ${signal.amo_action.includes('✅') ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                            <div className={`text-[11px] font-black ${signal.amo_action.includes('✅') ? 'text-emerald-700' : 'text-red-700'}`}>{signal.amo_action}</div>
+                            <span className="text-[10px] font-medium text-muted-foreground leading-tight">{signal.amo_reason}</span>
+                        </div>
+                    )}
+                    {signal.premarket_checks && signal.premarket_checks.length > 0 && (
+                        <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20 mt-1">
+                            <span className="text-[9px] font-black tracking-widest text-amber-700 uppercase flex items-center gap-1">
+                                <Clock size={10} /> 9:00 AM Preconditions
+                            </span>
+                            {signal.premarket_checks.map((chk, i) => (
+                                <div key={i} className="text-[10px] text-amber-800 font-medium flex items-start gap-1.5 leading-tight">
+                                    <div className="w-1 h-1 rounded-full bg-amber-500 shrink-0 mt-1.5" />
+                                    {chk}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* --- ACTION BUTTONS (Manual Trade) --- */}
             {onBuy && (
                 <div className="mt-4 pt-4 border-t border-border flex items-center justify-end gap-2 relative z-10">

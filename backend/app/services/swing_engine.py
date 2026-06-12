@@ -937,6 +937,50 @@ class SwingEngine:
             
             verdict += f"Ref Capital (1L) Allocation: {port_result['exposure_pct']}%."
 
+            # --- AMO EXECUTOR & PRE-MARKET PRECONDITIONS ---
+            atr_val = safe_scalar(ctx['atr'].iloc[-1])
+            ema20_val = safe_scalar(ctx['ema_20'].iloc[-1])
+            obv_s_val = ctx['obv']
+            obv_rising_val = False
+            if len(obv_s_val) >= 10:
+                obv_rising_val = safe_scalar(obv_s_val.iloc[-1]) > safe_scalar(obv_s_val.iloc[-10])
+
+            c_h_val = safe_scalar(df_1d['high'].iloc[-1])
+            c_l_val = safe_scalar(df_1d['low'].iloc[-1])
+            c_range_val = c_h_val - c_l_val
+            upper_wick_val = c_h_val - max(safe_scalar(df_1d['open'].iloc[-1]), real_price)
+            upper_wick_pct = (upper_wick_val / c_range_val) * 100 if c_range_val > 0 else 0
+
+            ema20_dist_val = ((real_price - ema20_val) / ema20_val) * 100 if ema20_val > 0 else 0
+            
+            amo_action = "✅ PLACE AMO LIMIT"
+            amo_reason = "Momentum confirmed at EOD."
+            if ema20_dist_val > 5.0:
+                amo_action = "❌ DO NOT AMO"
+                amo_reason = f"Overextended {round(ema20_dist_val, 1)}% above EMA20. Wait for morning dip."
+            elif upper_wick_pct > 40:
+                amo_action = "❌ DO NOT AMO"
+                amo_reason = f"Heavy selling pressure late in day (Upper wick {round(upper_wick_pct)}%)."
+            elif not obv_rising_val and vol_ratio < 1.5:
+                amo_action = "❌ DO NOT AMO"
+                amo_reason = "Weak institutional flow. Requires live confirmation tomorrow."
+
+            premarket_checks = []
+            if amo_action == "✅ PLACE AMO LIMIT":
+                exhaustion_level = real_price + (atr_val * 0.5)
+                support_level = c_l_val
+                premarket_checks.append(f"Cancel AMO if pre-market opens > ₹{round(exhaustion_level, 2)} (Exhaustion Risk)")
+                premarket_checks.append(f"Cancel AMO if pre-market opens < ₹{round(support_level, 2)} (Support Failure)")
+
+            # --- DYNAMIC HOLD DURATION ---
+            dynamic_hold = "2 to 3 Weeks"
+            if selected.get("setup_type") == "MOMENTUM_IGNITER":
+                dynamic_hold = "1 to 3 Days"
+            elif selected.get("strategy") == "PULLBACK":
+                dynamic_hold = "5 to 10 Days"
+            elif selected.get("strategy") == "BREAKOUT" and locals().get("consol_days", 0) >= 10:
+                dynamic_hold = "3 to 6 Weeks"
+
             return {
                 "symbol": sym,
                 "name": name,
@@ -953,10 +997,13 @@ class SwingEngine:
                 "stop_loss": sl,
                 "target": target,
                 "is_hybrid": selected.get("is_hybrid_exit", False),
-                "hold_duration": "2 to 21 Days",
+                "hold_duration": dynamic_hold,
                 "priority": final_score,
                 "delivery_pct": selected.get("delivery_pct"),
                 "reasons": selected.get("reasons", []),
+                "amo_action": amo_action,
+                "amo_reason": amo_reason,
+                "premarket_checks": premarket_checks,
                 # --- Position Sizing & Portfolio Metadata ---
                 "risk_per_trade_pct": portfolio_engine.risk_per_trade_pct, 
                 "position_size_type": "PORTFOLIO_CONSERVATIVE",
@@ -1145,6 +1192,85 @@ class SwingEngine:
         
         if job_id in self.job_states: del self.job_states[job_id]
         return sanitize_data(final_payload)
+
+    async def evaluate_active_position(self, sym: str, strategy: str):
+        """
+        Continuously evaluates an active position to calculate its ongoing technical health score,
+        decoupled from strict fresh entry criteria.
+        """
+        try:
+            df_1d = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
+            if df_1d is None or df_1d.empty or len(df_1d) < 60:
+                return None
+            
+            ctx = ta_swing.compute_context(df_1d)
+            real_price = safe_scalar(df_1d['close'].iloc[-1])
+            if real_price <= 0: return None
+
+            rsi = safe_scalar(ctx['rsi'].iloc[-1])
+            adx = safe_scalar(ctx['adx'].iloc[-1])
+            macd_line = safe_scalar(ctx['macd_line'].iloc[-1])
+            macd_signal = safe_scalar(ctx['macd_signal'].iloc[-1])
+            macd_bullish = macd_line > macd_signal
+            ema20 = safe_scalar(ctx['ema_20'].iloc[-1])
+            sma50 = safe_scalar(ctx['sma_50'].iloc[-1])
+            
+            # Base Score starts at 50
+            score = 50
+            
+            # 1. Moving Average Support (Trend) - max 30 points
+            if real_price > ema20:
+                score += 30
+            elif real_price > sma50:
+                score += 10
+            else:
+                score -= 20 # Broken trend
+                
+            # 2. Momentum (RSI) - max 15 points
+            if rsi > 60: score += 15
+            elif rsi > 50: score += 5
+            elif rsi < 40: score -= 10
+            
+            # 3. Trend Strength (ADX) - max 15 points
+            if adx > 25 and real_price > ema20: score += 15
+            elif adx > 20: score += 5
+            
+            # 4. MACD Confluence - max 10 points
+            if macd_bullish: score += 10
+            else: score -= 5
+            
+            # 5. Market Context - max 10 points
+            is_nifty_bullish = self.market_context.get("nifty_bullish", False)
+            if is_nifty_bullish: score += 10
+            
+            # Clamp between 0 and 100
+            score = max(0, min(100, score))
+            
+            # Build strategic summary
+            summary_parts = []
+            if real_price > ema20:
+                summary_parts.append("✅ Holding above EMA20")
+            elif real_price > sma50:
+                summary_parts.append("⚠️ Below EMA20, testing SMA50")
+            else:
+                summary_parts.append("🚨 Trend Broken (Below SMA50)")
+                
+            summary_parts.append(f"RSI: {round(rsi, 1)}")
+            summary_parts.append(f"MACD: {'Bullish' if macd_bullish else 'Bearish'}")
+            
+            return {
+                "score": score,
+                "setup_type": strategy,
+                "strategic_summary": " | ".join(summary_parts),
+                "rsi": rsi,
+                "adx": adx,
+                "macd_bullish": macd_bullish,
+                "price": real_price,
+                "signal": "HOLD" if score >= 40 else "SELL"
+            }
+        except Exception as e:
+            logger.error(f"Failed to evaluate active position {sym}: {e}")
+            return None
 
     async def manage_active_trades(self):
         """
