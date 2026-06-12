@@ -1,4 +1,6 @@
 from app.models.job import Job
+from app.models.user import User
+from app.api.deps import get_current_admin_user
 from app.db.session import AsyncSessionLocal, get_db
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.future import select
@@ -28,7 +30,7 @@ class JobSchema(BaseModel):
         from_attributes = True
 
 @router.post("/scan", response_model=JobSchema)
-async def trigger_scan(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
+async def trigger_scan(job_in: JobCreate, db: AsyncSession = Depends(get_db), admin: User = Depends(get_current_admin_user)):
     """
     Trigger a new Background Scan Job.
     """
@@ -173,7 +175,7 @@ async def get_scan_history(skip: int = 0, limit: int = 10, db: AsyncSession = De
     return jobs_out
 
 @router.post("/stop", response_model=JobSchema)
-async def stop_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def stop_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db), admin: User = Depends(get_current_admin_user)):
     """
     Mark the latest active job as stopped.
     """
@@ -208,7 +210,7 @@ async def stop_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(g
     return job
 
 @router.post("/pause", response_model=JobSchema)
-async def pause_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def pause_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db), admin: User = Depends(get_current_admin_user)):
     """
     Pause the latest processing job.
     """
@@ -242,7 +244,7 @@ async def pause_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(
     return job
 
 @router.post("/resume", response_model=JobSchema)
-async def resume_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def resume_scan(job_type: Optional[str] = None, db: AsyncSession = Depends(get_db), admin: User = Depends(get_current_admin_user)):
     """
     Resume the latest paused job.
     """
@@ -291,7 +293,7 @@ async def get_job_results(job_id: str, db: AsyncSession = Depends(get_db)):
     return job.result
 
 @router.post("/sync_earnings_calendar")
-async def sync_earnings_calendar(background_tasks: BackgroundTasks):
+async def sync_earnings_calendar(background_tasks: BackgroundTasks, admin: User = Depends(get_current_admin_user)):
     """
     Manually triggers a background sync of the Earnings Calendar.
     """

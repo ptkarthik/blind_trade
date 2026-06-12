@@ -49,12 +49,12 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
                         ))}
                     </div>
                     <span className="text-[10px] font-bold uppercase tracking-widest text-primary mt-1">{signal.confidence}</span>
-                    {signal.ai_confidence !== undefined && (
+                    {(signal as any).ai_confidence !== undefined && (
                         <div className="mt-2 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md">
                             <BrainCircuit size={12} className="text-emerald-600" />
                             <div className="flex flex-col items-end leading-none">
                                 <span className="text-[8px] font-black tracking-widest uppercase text-emerald-600">AI Match</span>
-                                <span className="text-xs font-black text-emerald-700">{signal.ai_confidence}%</span>
+                                <span className="text-xs font-black text-emerald-700">{(signal as any).ai_confidence}%</span>
                             </div>
                         </div>
                     )}
@@ -121,12 +121,12 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
                     <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground flex items-center gap-1"><Clock size={12} /> Holding Period</span>
                     <span className="font-mono font-bold text-foreground">{signal.hold_duration || '---'}</span>
                 </div>
-                {signal.ai_reason && (
+                {(signal as any).ai_reason && (
                     <div className="bg-emerald-500/5 p-3 rounded-xl border border-emerald-500/20 col-span-2 flex flex-col gap-1">
                         <span className="text-[9px] uppercase font-black tracking-widest text-emerald-700 flex items-center gap-1">
                             <Sparkles size={10} /> AI RATIONALE
                         </span>
-                        <span className="text-[10px] font-medium text-emerald-800 italic leading-relaxed">"{signal.ai_reason}"</span>
+                        <span className="text-[10px] font-medium text-emerald-800 italic leading-relaxed">"{(signal as any).ai_reason}"</span>
                     </div>
                 )}
             </div>

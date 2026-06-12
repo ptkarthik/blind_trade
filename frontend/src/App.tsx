@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { marketApi, signalApi, jobsApi, papertradeApi, settingsApi, kiteApi } from './services/api';
+import { authApi, marketApi, signalApi, jobsApi, papertradeApi, settingsApi, kiteApi } from './services/api';
 import { AnalysisModal } from './components/AnalysisModal';
 import { SectorDeals } from './components/SectorDeals';
 import { PortfolioOptimizer } from './components/PortfolioOptimizer';
@@ -7,7 +7,8 @@ import { PaperTradingView } from './components/PaperTradingView';
 import { PerformanceAuditView } from './components/PerformanceAuditView';
 import { ActivePositionsView } from './components/ActivePositionsView';
 import { PaperOrderModal } from './components/PaperOrderModal';
-import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard, BarChart3 } from 'lucide-react';
+import { AdminView } from './components/AdminView';
+import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard, BarChart3, Shield } from 'lucide-react';
 import { SearchBox } from './components/SearchBox';
 import { StockCardLongTerm } from './components/StockCardLongTerm';
 import { StockCardIntraday } from './components/StockCardIntraday';
@@ -23,6 +24,8 @@ function App() {
   const [mode, setMode] = useState<'intraday' | 'longterm' | 'swing'>('intraday');
   const [loading, setLoading] = useState(false);
   const [autoRestart, setAutoRestart] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [username, setUsername] = useState('');
 
   // Kite Status State
   const [kiteStatus, setKiteStatus] = useState<any>(null);
@@ -72,7 +75,7 @@ function App() {
       return cached ? JSON.parse(cached) : null;
     } catch { return null; }
   });
-  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade' | 'audit' | 'positions'>('deals');
+  const [activeTab, setActiveTab] = useState<'deals' | 'portfolio' | 'papertrade' | 'audit' | 'positions' | 'admin'>('deals');
   const lastCompletedJobId = useRef<string | null>(null);
   const currentSignalJobId = useRef<string | null>(null);
 
@@ -170,12 +173,15 @@ function App() {
     // 1. Initial Market Status, Account Fetch & Settings
     const fetchData = async () => {
       try {
-        const [statusRes, accRes, settingsRes, kiteRes] = await Promise.all([
+        const [statusRes, accRes, settingsRes, kiteRes, userRes] = await Promise.all([
           marketApi.getStatus(),
           papertradeApi.getAccount(),
           settingsApi.get('auto_restart').catch(() => ({ data: { value: 'true' } })),
-          kiteApi.getStatus().catch(() => ({ data: null }))
+          kiteApi.getStatus().catch(() => ({ data: null })),
+          authApi.getMe().catch(() => ({ data: { is_admin: false, username: '' } }))
         ]);
+        setIsAdmin(userRes.data.is_admin);
+        setUsername(userRes.data.username);
         setMarketStatus(statusRes.data);
         setVirtualBalance(accRes.data.balance);
         setAutoRestart(settingsRes.data.value.toLowerCase() === 'true');
@@ -251,9 +257,9 @@ function App() {
 
           // Trigger Signal Fetch if the ACTIVE mode's job is processing
           // We use the Ref to know the current active view
-          const currentMode = modeRef.current;
-          const currentJobType = currentMode === 'intraday' ? 'intraday' : currentMode === 'swing' ? 'swing_scan' : 'full_scan';
-          const activeJob = newStates[currentJobType];
+          // const currentMode = modeRef.current;
+          // const currentJobType = currentMode === 'intraday' ? 'intraday' : currentMode === 'swing' ? 'swing_scan' : 'full_scan';
+          // const activeJob = newStates[currentJobType];
 
           // [V14.7 REACTIVITY REFACTOR]
           // The background worker ONLY updates the job status/progress.
@@ -435,13 +441,20 @@ function App() {
         <div className="container mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
             <Activity className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold tracking-tight">King and Queens Trading</h1>
+            <h1 className="text-xl font-bold tracking-tight">Blind Trade</h1>
+            {username && (
+                <div className="ml-4 px-3 py-1 bg-primary/10 text-primary text-xs font-bold rounded-full uppercase tracking-widest">
+                    {username} {isAdmin && '(ADMIN)'}
+                </div>
+            )}
           </div>
 
           {/* Search Bar with Suggestions - Keyed by mode for state isolation */}
           <SearchBox key={mode} onSelect={analyzeSymbol} />
 
           <div className="flex gap-4 text-sm items-center flex-wrap">
+            {isAdmin && (
+              <>
             {/* Phase 89: Background Job Toggle */}
             <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-full border border-border">
               <span className="text-[10px] font-black tracking-widest uppercase text-muted-foreground">
@@ -546,6 +559,8 @@ function App() {
                 </button>
               );
             })()}
+            </>
+            )}
 
             <div className="flex flex-col items-end">
               <span className="text-muted-foreground">NIFTY 50</span>
@@ -787,6 +802,14 @@ function App() {
               >
                 <ShieldCheck className="h-3 w-3" /> POSITIONS
               </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setActiveTab('admin')}
+                  className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'admin' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Shield className="h-3 w-3" /> ADMIN
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -796,6 +819,8 @@ function App() {
           <div className="flex justify-center py-20">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
+        ) : activeTab === 'admin' ? (
+            <AdminView />
         ) : (
           <>
             {activeTab === 'deals' && (

@@ -24,3 +24,4 @@ pyotp
 selenium
 webdriver-manager
 PyJWT
+passlib[bcrypt]

@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.db.session import get_db
 from app.models.setting import Setting
+from app.models.user import User
+from app.api.deps import get_current_admin_user
 from pydantic import BaseModel
 from typing import List
 
@@ -32,7 +34,7 @@ async def get_setting(key: str, db: AsyncSession = Depends(get_db)):
     return setting
 
 @router.post("/", response_model=SettingSchema)
-async def update_setting(setting_in: SettingSchema, db: AsyncSession = Depends(get_db)):
+async def update_setting(setting_in: SettingSchema, db: AsyncSession = Depends(get_db), admin: User = Depends(get_current_admin_user)):
     result = await db.execute(select(Setting).where(Setting.key == setting_in.key))
     setting = result.scalars().first()
     if not setting:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.api.api_v1.endpoints import market, signals, jobs, papertrades, settings, audit, live, positions, auth
-from app.api.deps import verify_token
+from app.api.deps import get_current_user
 
 api_router = APIRouter()
 print(f"LOADING API ROUTER. Included: market, signals, jobs, settings, auth")
@@ -9,7 +9,7 @@ print(f"LOADING API ROUTER. Included: market, signals, jobs, settings, auth")
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 
 # All other routers REQUIRE the token lock
-locked = [Depends(verify_token)]
+locked = [Depends(get_current_user)]
 
 api_router.include_router(market.router, prefix="/market", tags=["market"], dependencies=locked)
 api_router.include_router(signals.router, prefix="/signals", tags=["signals"], dependencies=locked)

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { auditApi, liveApi } from '../services/api';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Target, Shield, BarChart3, Loader2, Brain, Zap, Radio, Bell } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, BarChart3, Loader2, Radio } from 'lucide-react';
 
 interface AuditStock {
   rank: number;
@@ -68,7 +68,7 @@ export function PerformanceAuditView() {
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [activeView, setActiveView] = useState<'today' | 'history' | 'brain' | 'live'>('today');
-  const [liveData, setLiveData] = useState<any>(null);
+  // Unused: const [liveData, setLiveData] = useState<any>(null);
   const [loadingLive, setLoadingLive] = useState(false);
 
   const fetchReport = async (date?: string) => {
@@ -104,8 +104,8 @@ export function PerformanceAuditView() {
   const fetchLive = async () => {
     setLoadingLive(true);
     try {
-      const res = await liveApi.getDashboard(selectedDate || undefined);
-      setLiveData(res.data);
+      await liveApi.getDashboard(selectedDate || undefined);
+      // setLiveData(res.data);
     } catch (e) {
       console.error('Failed to fetch live dashboard:', e);
     } finally {

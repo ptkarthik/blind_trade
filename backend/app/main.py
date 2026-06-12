@@ -50,6 +50,7 @@ async def startup_event():
     from app.models.scan_snapshot import ScanSnapshot
     from app.models.trap_pattern import TrapPattern
     from app.models.trade_alert import TradeAlert
+    from app.models.user import User
     
     async with engine.begin() as conn:
         # This will create tables if they don't exist

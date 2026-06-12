@@ -2,7 +2,7 @@ import axios from 'axios';
 import axiosRetry from 'axios-retry';
 
 const api = axios.create({
-    baseURL: 'http://localhost:8012/api/v1',
+    baseURL: '/api/v1',
     timeout: 120000,
     headers: {
         'Content-Type': 'application/json',
@@ -43,14 +43,20 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-    login: (password: string) => {
+    login: (username: string, password: string) => {
         const formData = new FormData();
-        formData.append('username', 'admin');
+        formData.append('username', username);
         formData.append('password', password);
         return api.post('/auth/login', formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
-    }
+    },
+    register: (username: string, password: string) => {
+        return api.post('/auth/register', { username, password });
+    },
+    getMe: () => api.get('/auth/me'),
+    getUsers: () => api.get('/auth/users'),
+    toggleAdmin: (userId: string) => api.post(`/auth/users/${userId}/toggle_admin`),
 };
 
 export const marketApi = {

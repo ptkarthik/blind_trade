@@ -22,6 +22,7 @@ interface SectorDealsProps {
         started_at?: string;
         finished_at?: string;
         duration?: string;
+        delivery_date?: string;
     };
 }
 
@@ -66,7 +67,7 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
             // [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
             return unique.sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
-                return (a.analysis_index || 0) - (b.analysis_index || 0);
+                return ((a as any).analysis_index || 0) - ((b as any).analysis_index || 0);
             });
         };
 

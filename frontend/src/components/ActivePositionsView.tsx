@@ -8,7 +8,7 @@ export const ActivePositionsView: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [evaluating, setEvaluating] = useState(false);
     const [selectedScan, setSelectedScan] = useState<any>(null);
-    const [hoveredPosId, setHoveredPosId] = useState<string | null>(null);
+    // Unused: const [hoveredPosId, setHoveredPosId] = useState<string | null>(null);
 
     const formatTimeAgo = (isoString?: string) => {
         if (!isoString) return 'never';
@@ -237,7 +237,7 @@ export const ActivePositionsView: React.FC = () => {
                 <AnalysisModal 
                     isOpen={!!selectedScan} 
                     onClose={() => setSelectedScan(null)} 
-                    signal={selectedScan} 
+                    data={selectedScan} 
                 />
             )}
         </div>

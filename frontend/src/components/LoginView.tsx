@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, LogIn, AlertCircle } from 'lucide-react';
+import { Lock, LogIn, UserPlus, AlertCircle, User as UserIcon } from 'lucide-react';
 import { authApi } from '../services/api';
 
 interface LoginViewProps {
@@ -7,6 +7,8 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -17,12 +19,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         setLoading(true);
 
         try {
-            const res = await authApi.login(password);
-            if (res.data && res.data.access_token) {
-                onLoginSuccess(res.data.access_token);
+            if (isRegistering) {
+                await authApi.register(username, password);
+                // Auto login after register
+                const res = await authApi.login(username, password);
+                if (res.data && res.data.access_token) {
+                    onLoginSuccess(res.data.access_token);
+                }
+            } else {
+                const res = await authApi.login(username, password);
+                if (res.data && res.data.access_token) {
+                    onLoginSuccess(res.data.access_token);
+                }
             }
         } catch (err: any) {
-            setError(err.response?.data?.detail || 'Invalid password');
+            setError(err.response?.data?.detail || 'Authentication failed');
         } finally {
             setLoading(false);
         }
@@ -42,21 +53,36 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                     </div>
                     
                     <h1 className="text-2xl font-black text-center text-white mb-2 tracking-tight">
-                        Engine Access
+                        {isRegistering ? 'Create Account' : 'System Access'}
                     </h1>
                     <p className="text-sm text-center text-zinc-400 mb-8">
-                        Enter master password to unlock the trading core.
+                        {isRegistering ? 'Register to view market data.' : 'Enter credentials to continue.'}
                     </p>
 
                     <form onSubmit={handleSubmit} className="space-y-4">
-                        <div>
+                        <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                <UserIcon className="h-5 w-5 text-zinc-500" />
+                            </div>
+                            <input
+                                type="text"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                placeholder="Username"
+                                className="w-full pl-11 pr-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-mono"
+                                autoFocus
+                            />
+                        </div>
+                        <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                <Lock className="h-5 w-5 text-zinc-500" />
+                            </div>
                             <input
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Master Password"
-                                className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all text-center tracking-widest font-mono"
-                                autoFocus
+                                placeholder="Password"
+                                className="w-full pl-11 pr-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-mono"
                             />
                         </div>
 
@@ -69,19 +95,28 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
                         <button
                             type="submit"
-                            disabled={loading || !password}
+                            disabled={loading || !password || !username}
                             className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all shadow-lg shadow-indigo-900/20"
                         >
                             {loading ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             ) : (
                                 <>
-                                    <LogIn size={18} />
-                                    AUTHORIZE
+                                    {isRegistering ? <UserPlus size={18} /> : <LogIn size={18} />}
+                                    {isRegistering ? 'REGISTER' : 'AUTHORIZE'}
                                 </>
                             )}
                         </button>
                     </form>
+                    
+                    <div className="mt-6 text-center">
+                        <button 
+                            onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
+                            className="text-zinc-400 hover:text-indigo-400 text-sm transition-colors"
+                        >
+                            {isRegistering ? "Already have an account? Login" : "Need an account? Register"}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
