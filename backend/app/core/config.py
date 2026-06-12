@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     # SECURITY & AUTH
     # -----------------------------------------------------------------------
     SECRET_KEY: str = "CHANGE_THIS_IN_PRODUCTION_TO_A_STRONG_SECRET"
+    ADMIN_PASSWORD: str = "admin" # Default fallback
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
     
     # -----------------------------------------------------------------------

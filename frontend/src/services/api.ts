@@ -10,7 +10,6 @@ const api = axios.create({
 });
 
 // Retry failing requests 3 times with exponential backoff
-// This handles the "Network Error" on app boot when frontend starts faster than backend
 axiosRetry(api, {
     retries: 3,
     retryDelay: axiosRetry.exponentialDelay,
@@ -18,6 +17,41 @@ axiosRetry(api, {
         return axiosRetry.isNetworkOrIdempotentRequestError(error) || error.code === 'ECONNABORTED';
     }
 });
+
+// Attach token to every request
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('blind_trade_token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+// Handle 401 Unauthorized globally
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            localStorage.removeItem('blind_trade_token');
+            // If we're not already on the root/login flow, reload to trigger it
+            if (window.location.pathname !== '/') {
+                window.location.reload();
+            }
+        }
+        return Promise.reject(error);
+    }
+);
+
+export const authApi = {
+    login: (password: string) => {
+        const formData = new FormData();
+        formData.append('username', 'admin');
+        formData.append('password', password);
+        return api.post('/auth/login', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+    }
+};
 
 export const marketApi = {
     getStatus: () => api.get('/market/status'),
