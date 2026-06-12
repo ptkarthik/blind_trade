@@ -35,6 +35,7 @@ class SwingTrade(Base):
     initial_score = Column(Float, nullable=True)
     current_score = Column(Float, nullable=True)
     scan_data = Column(JSON, nullable=True)
+    initial_scan_data = Column(JSON, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

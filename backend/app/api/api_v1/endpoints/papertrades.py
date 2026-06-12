@@ -113,6 +113,8 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
                 initial_score=float(order_data.get("score") or 0.0),
                 current_score=float(order_data.get("score") or 0.0),
                 confidence=str(order_data.get("score", "N/A")),
+                scan_data=order_data.get("full_scan_data"),
+                initial_scan_data=order_data.get("full_scan_data"),
                 status="OPEN"
             )
             db.add(guardian_trade)

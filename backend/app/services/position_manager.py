@@ -214,8 +214,10 @@ class PositionManager:
                         "current_score": t.current_score or 0.0,
                         "score": t.confidence or "N/A",
                         "scan_data": t.scan_data,
+                        "initial_scan_data": t.initial_scan_data,
                         "quantity": t.quantity,
-                        "holding_days": (datetime.utcnow() - t.entry_date).days
+                        "holding_days": (datetime.utcnow() - t.entry_date).days,
+                        "last_evaluated_at": t.updated_at.isoformat() if t.updated_at else None
                     })
         except Exception as e:
             logger.error(f"[GUARDIAN] Failed to get live portfolio: {e}")

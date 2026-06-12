@@ -45,6 +45,10 @@ async def add_trade(trade_data: dict) -> Any:
                 initial_stop_loss=trade_data.get("stop_loss"),
                 target=trade_data.get("target"),
                 quantity=trade_data.get("quantity", 1),
+                initial_score=float(trade_data.get("score", 0.0)),
+                current_score=float(trade_data.get("score", 0.0)),
+                scan_data=trade_data.get("full_scan_data"),
+                initial_scan_data=trade_data.get("full_scan_data"),
                 status="OPEN"
             )
             session.add(new_trade)

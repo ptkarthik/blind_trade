@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { positionsApi } from '../services/api';
-import { AlertCircle, CheckCircle2, TrendingUp, Clock, RefreshCw, XCircle, Activity } from 'lucide-react';
+import { AlertCircle, CheckCircle2, TrendingUp, Clock, RefreshCw, XCircle, Activity, Sparkles } from 'lucide-react';
 import { AnalysisModal } from './AnalysisModal';
 
 export const ActivePositionsView: React.FC = () => {
@@ -8,8 +8,17 @@ export const ActivePositionsView: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [evaluating, setEvaluating] = useState(false);
     const [selectedScan, setSelectedScan] = useState<any>(null);
+    const [hoveredPosId, setHoveredPosId] = useState<string | null>(null);
 
-    const loadPositions = async () => {
+    const formatTimeAgo = (isoString?: string) => {
+        if (!isoString) return 'never';
+        const seconds = Math.floor((new Date().getTime() - new Date(isoString).getTime()) / 1000);
+        if (seconds < 60) return `${seconds}s ago`;
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        return `${hours}h ago`;
+    };
         try {
             setLoading(true);
             const res = await positionsApi.getPortfolio();
@@ -111,6 +120,58 @@ export const ActivePositionsView: React.FC = () => {
                                 </div>
                             </div>
 
+                            {/* Deviation Hover Tracker */}
+                            <div 
+                                className="absolute inset-0 bg-card/95 backdrop-blur-sm z-20 p-5 flex flex-col opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-300 border border-primary/20 rounded-xl"
+                            >
+                                <div className="flex items-center gap-2 mb-4 border-b border-border pb-2">
+                                    <Sparkles className="w-4 h-4 text-primary" />
+                                    <h4 className="text-sm font-black uppercase tracking-widest text-primary">Pattern Deviation</h4>
+                                </div>
+                                
+                                {pos.initial_scan_data ? (
+                                    <div className="space-y-4 flex-1">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="bg-muted/50 p-3 rounded-lg border border-border">
+                                                <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Initial Setup</div>
+                                                <div className="text-xl font-black">{pos.initial_score}<span className="text-xs opacity-50">/100</span></div>
+                                                <div className="text-xs font-bold text-slate-400 mt-1 truncate">
+                                                    {pos.initial_scan_data?.setup_type || pos.strategy}
+                                                </div>
+                                            </div>
+                                            <div className="bg-primary/5 p-3 rounded-lg border border-primary/20">
+                                                <div className="text-[9px] uppercase tracking-widest text-primary font-bold mb-1">Current State</div>
+                                                <div className="text-xl font-black text-primary">{pos.current_score}<span className="text-xs opacity-50">/100</span></div>
+                                                <div className="text-xs font-bold text-primary/70 mt-1 truncate">
+                                                    {pos.scan_data?.setup_type || pos.strategy}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="bg-background rounded-lg p-3 border border-border/50">
+                                            <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Technical Shift</div>
+                                            <p className="text-xs font-medium text-foreground leading-relaxed">
+                                                {pos.initial_score > pos.current_score 
+                                                    ? "⚠️ Technical structure has weakened since entry." 
+                                                    : pos.initial_score < pos.current_score 
+                                                        ? "🔥 Setup has gained strength." 
+                                                        : "⚖️ Structure remains stable."}
+                                            </p>
+                                            <div className="mt-2 text-[10px] text-muted-foreground">
+                                                {pos.scan_data?.strategic_summary || "Continuous AI monitoring active."}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs italic">
+                                        No initial scan data captured for deviation tracking.
+                                    </div>
+                                )}
+                                <div className="text-[9px] text-right text-muted-foreground mt-2">
+                                    Last Evaluated: {formatTimeAgo(pos.last_evaluated_at)}
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-3 gap-2 mb-4 bg-background/50 rounded-lg p-3 border border-border/50">
                                 <div>
                                     <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">Entry</div>
@@ -140,8 +201,15 @@ export const ActivePositionsView: React.FC = () => {
                                 </div>
                             </div>
                             <div className="mt-4 flex items-center justify-between">
-                                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                                    <Clock size={12} /> Held for {pos.holding_days} days
+                                <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                                        <Clock size={12} /> Held for {pos.holding_days} days
+                                    </div>
+                                    {pos.last_evaluated_at && (
+                                        <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground/60 uppercase font-bold tracking-wider">
+                                            <RefreshCw size={10} /> {formatTimeAgo(pos.last_evaluated_at)}
+                                        </div>
+                                    )}
                                 </div>
                                 {pos.scan_data && (
                                     <button 

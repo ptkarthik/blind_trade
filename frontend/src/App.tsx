@@ -392,7 +392,8 @@ function App() {
         target: buySignal.target,
         stop_loss: buySignal.stop_loss,
         score: buySignal.score,
-        trade_type: (buySignal as any)._intendedTradeType || 'PAPER'
+        trade_type: (buySignal as any)._intendedTradeType || 'PAPER',
+        full_scan_data: buySignal
       });
       setVirtualBalance(res.data.remaining_balance);
       setIsBuyModalOpen(false);
