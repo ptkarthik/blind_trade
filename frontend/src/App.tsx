@@ -15,10 +15,8 @@ import { StockCardSwing } from './components/StockCardSwing';
 import { FailedSymbolsModal } from './components/FailedSymbolsModal';
 import type { Signal } from './components/DealCard';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LoginView } from './components/LoginView';
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('blind_trade_token'));
   const [signals, setSignals] = useState<Signal[]>([]);
   const [marketStatus, setMarketStatus] = useState<any>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -404,15 +402,6 @@ function App() {
       alert(err.response?.data?.detail || "Trade execution failed");
     }
   };
-
-  if (!isAuthenticated) {
-    return (
-      <LoginView onLoginSuccess={(token) => {
-        localStorage.setItem('blind_trade_token', token);
-        setIsAuthenticated(true);
-      }} />
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans">
