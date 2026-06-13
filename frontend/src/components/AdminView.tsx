@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Shield, ShieldAlert, User, Loader2 } from 'lucide-react';
+import { Shield, User, Loader2 } from 'lucide-react';
 import { authApi } from '../services/api';
 
 interface UserProfile {
