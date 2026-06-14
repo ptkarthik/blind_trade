@@ -26,3 +26,5 @@ logs/
 backend/logs/
 
 backend/*.db*
+backend/app/data/kite_session.json
+backend/data/kite_session.json
