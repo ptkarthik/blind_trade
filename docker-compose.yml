@@ -1,29 +1,6 @@
 version: '3.8'
 
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    restart: always
-    entrypoint: [""]
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    environment:
-      - POSTGRES_SERVER=localhost
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=blind_trade_db
-    env_file:
-      - ./backend/.env
-    volumes:
-      # Mount the database file so it persists across container restarts
-      - ./blind_trade.db:/app/blind_trade.db
-      # Mount any delivery caches
-      - ./backend/delivery_cache:/app/delivery_cache
-      - ./backend/logs:/app/logs
-    ports:
-      - "8000:8000"
-
   frontend:
     build:
       context: ./frontend
@@ -31,8 +8,6 @@ services:
     restart: always
     ports:
       - "80:80"
-    depends_on:
-      - backend
 
 # We remove the postgres container since the app uses SQLite.
 # If you ever migrate to Postgres, you can add it back here.
