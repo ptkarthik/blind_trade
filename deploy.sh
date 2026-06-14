@@ -7,7 +7,18 @@ git fetch origin
 git reset --hard origin/main
 git pull origin main
 
-# 2. Restart PM2 Backend Workers
+# 2. Update Python Dependencies
+echo "📦 Updating Python Dependencies..."
+cd backend
+if [ -d "venv" ]; then
+    source venv/bin/activate
+    pip install -r requirements.txt
+else
+    pip3 install -r requirements.txt
+fi
+cd ..
+
+# 3. Restart PM2 Backend Workers
 echo "🔄 Restarting Python Backend (PM2)..."
 sudo pm2 restart fastapi
 sudo pm2 restart worker
