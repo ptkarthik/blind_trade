@@ -14,6 +14,6 @@ sudo pm2 restart worker
 
 # 3. Rebuild Frontend Container
 echo "🏗️ Rebuilding React Frontend..."
-sudo docker-compose up -d --build frontend
+sudo docker-compose up -d --build --remove-orphans frontend
 
 echo "✅ Deployment complete! Server is running the latest code."
