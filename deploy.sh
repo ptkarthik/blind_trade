@@ -25,7 +25,8 @@ sudo pm2 restart worker
 
 # 3. Rebuild Frontend Container
 echo "🏗️ Rebuilding React Frontend..."
-sudo docker-compose down
+sudo docker rm -f 49b5a7a15add_blind_trade_frontend_1 > /dev/null 2>&1 || true
+sudo docker rm -f blind_trade_frontend_1 > /dev/null 2>&1 || true
 sudo docker-compose up -d --build --remove-orphans frontend
 
 echo "✅ Deployment complete! Server is running the latest code."
