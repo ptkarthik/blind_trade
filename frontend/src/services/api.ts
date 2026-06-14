@@ -1,8 +1,9 @@
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
 
+const isProd = import.meta.env.PROD;
 const api = axios.create({
-    baseURL: '/api/v1',
+    baseURL: isProd ? `http://${window.location.hostname}:8012/api/v1` : '/api/v1',
     timeout: 120000,
     headers: {
         'Content-Type': 'application/json',
