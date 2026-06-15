@@ -34,6 +34,8 @@ class FundamentalAnalysisEngine:
         growth_score = self._score_growth(data)
         fcf_score = self._calculate_fcf_score(data)
         piotroski_score = self._calculate_piotroski_score(data)
+        yield_score = self._score_shareholder_yield(data)
+        momentum_score = self._score_earnings_momentum(data)
         
         # Phase 33: Strategic Moat Proxy
         moat_score = self._calculate_moat_score(hist_financials)
@@ -77,10 +79,11 @@ class FundamentalAnalysisEngine:
         is_junk = len(junk_flags) > 0
         
         # 4. Weighted Aggregate
-        # Re-weight: Growth(20), Profit(20), Value(15), Health(15), FCF(15), Piotroski(15)
-        # Plus a bonus/penalty for DCF Gap
-        final_score = (profit_score * 2.0) + (growth_score * 2.0) + (valuation_score * 1.5) + \
-                      (health_score * 1.5) + (fcf_score * 1.5) + (piotroski_score * 1.5)
+        # Re-weight: Growth(15), Profit(15), Value(15), Health(10), FCF(10), Piotroski(10), Yield(10), Momentum(15)
+        # Sum of weights = 100
+        final_score = (profit_score * 1.5) + (growth_score * 1.5) + (valuation_score * 1.5) + \
+                      (health_score * 1.0) + (fcf_score * 1.0) + (piotroski_score * 1.0) + \
+                      (yield_score * 1.0) + (momentum_score * 1.5)
         
         # Add Moat Bonus (Max 5 points)
         final_score += (moat_score / 2)
@@ -99,6 +102,9 @@ class FundamentalAnalysisEngine:
         # Add FCF/Piotroski/DCF insights
         if fcf_score >= 7: details.append({"text": "Positive Free Cash Flow (Cash Engine)", "type": "positive", "label": "CASH", "value": "Strong"})
         if piotroski_score >= 8: details.append({"text": "High Financial Quality (Piotroski)", "type": "positive", "label": "QUAL", "value": "Bulls Eye"})
+        if yield_score >= 8: details.append({"text": "High Shareholder Yield", "type": "positive", "label": "YIELD", "value": "Attractive"})
+        if momentum_score >= 8: details.append({"text": "Strong Earnings Momentum (Beats/Upgrades)", "type": "positive", "label": "ESTIMATES", "value": "Beat"})
+        elif momentum_score <= 3: details.append({"text": "Earnings Miss or Downgrades", "type": "negative", "label": "ESTIMATES", "value": "Miss"})
         
         if dcf_data["label"] != "Unknown":
             details.append({
@@ -155,6 +161,10 @@ class FundamentalAnalysisEngine:
             "current_ratio": info.get("currentRatio"),
             "revenue_growth": info.get("revenueGrowth"),
             "earnings_growth": info.get("earningsGrowth"),
+            "earnings_quarterly_growth": info.get("earningsQuarterlyGrowth"),
+            "earnings_surprise": info.get("earningsSurprise"),
+            "dividend_yield": info.get("dividendYield") or info.get("trailingAnnualDividendYield", 0),
+            "payout_ratio": info.get("payoutRatio", 0),
             "beta": info.get("beta"),
             "market_cap": info.get("marketCap"),
             "sector": info.get("sector", "Unknown"),
@@ -209,6 +219,47 @@ class FundamentalAnalysisEngine:
             consistent = sum(1 for r in roe_history if r > 0.15)
             if consistent >= 4:
                 score += 1 # Consistent performer bonus
+                
+        return max(0, min(10, score))
+
+    def _score_shareholder_yield(self, d: Dict) -> float:
+        """Score based on Dividend Yield and Payout Ratio."""
+        score = 5.0
+        div_yield = d.get("dividend_yield")
+        payout = d.get("payout_ratio")
+        
+        if div_yield and div_yield > 0:
+            if div_yield > 0.04: score += 3 # > 4% yield
+            elif div_yield > 0.02: score += 2 # > 2% yield
+            elif div_yield > 0.01: score += 1 # Small yield
+            
+            # Penalty for unsustainable payouts
+            if payout and payout > 0.85:
+                score -= 2 # Warning: Payout too high
+            elif payout and payout < 0.60:
+                score += 1 # Very safe dividend
+        return max(0, min(10, score))
+
+    def _score_earnings_momentum(self, d: Dict) -> float:
+        """Score based on recent earnings surprises and estimate revisions."""
+        score = 5.0
+        q_growth = d.get("earnings_quarterly_growth")
+        surprise = d.get("earnings_surprise")
+        fwd_pe = d.get("forward_pe")
+        trl_pe = d.get("pe")
+        
+        if surprise is not None:
+            if surprise > 0.10: score += 2 # >10% beat
+            elif surprise > 0.02: score += 1 # Small beat
+            elif surprise < -0.05: score -= 2 # Miss
+            
+        if q_growth is not None:
+            if q_growth > 0.20: score += 2
+            elif q_growth < 0: score -= 1
+            
+        if fwd_pe and trl_pe and trl_pe > 0:
+            if fwd_pe < trl_pe * 0.8:
+                score += 1 # Analysts expect >20% EPS growth
                 
         return max(0, min(10, score))
 

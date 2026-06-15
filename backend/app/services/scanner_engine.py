@@ -47,7 +47,7 @@ class LongTermScannerEngine:
     def sanitize(data):
         return sanitize_data(data)
     
-    async def run_scan(self, job_id, mode="full"):
+    async def run_scan(self, job_id, mode="full", logger=None):
         """
         Main entry point for a Job.
         Returns the result dict.
@@ -254,14 +254,16 @@ class LongTermScannerEngine:
             
             # 2. Secondary Contextual Parallel Fetch
             index_task = market_service.get_index_performance(sector_name)
+            nifty_task = market_service.get_index_performance("General")
             ext_data_task = market_service.get_extended_data(sym)
             hist_fin_task = market_service.get_historical_financials(sym)
             
-            secondary_results = await asyncio.gather(index_task, ext_data_task, hist_fin_task, return_exceptions=True)
+            secondary_results = await asyncio.gather(index_task, nifty_task, ext_data_task, hist_fin_task, return_exceptions=True)
             
             index_df = secondary_results[0] if not isinstance(secondary_results[0], Exception) else pd.DataFrame()
-            ext = secondary_results[1] if not isinstance(secondary_results[1], Exception) else {"holders": {}, "news": []}
-            hist_financials = secondary_results[2] if not isinstance(secondary_results[2], Exception) else pd.DataFrame()
+            nifty_df = secondary_results[1] if not isinstance(secondary_results[1], Exception) else pd.DataFrame()
+            ext = secondary_results[2] if not isinstance(secondary_results[2], Exception) else {"holders": {}, "news": []}
+            hist_financials = secondary_results[3] if not isinstance(secondary_results[3], Exception) else pd.DataFrame()
             
             _l_close = df['close'].dropna().iloc[-1]
             real_price = safe_scalar(_l_close)
@@ -307,13 +309,20 @@ class LongTermScannerEngine:
                 
                 # --- INSTITUTIONAL INTEL (Paid App Features) ---
                 from app.services.institutional_intel import institutional_intel
-                inst_data = await asyncio.to_thread(institutional_intel.analyze, df)
+                inst_data = await asyncio.to_thread(institutional_intel.analyze, df, nifty_df)
                 
                 inst_score = 0
+                inst_details = []
                 # 1. RS Rating Boost (MarketSmith Style)
                 rs_rating = inst_data.get("rs_rating", 50)
-                if rs_rating > 80: inst_score += 10
-                elif rs_rating > 90: inst_score += 15
+                if rs_rating > 80: 
+                    inst_score += 10
+                    inst_details.append({"text": f"True RS Outperformer", "type": "positive", "label": "RS RATING", "value": str(rs_rating)})
+                elif rs_rating < 30:
+                    inst_details.append({"text": f"Underperforming Nifty 50", "type": "negative", "label": "RS RATING", "value": str(rs_rating)})
+                elif rs_rating > 90: 
+                    inst_score += 15
+                    inst_details.append({"text": f"Elite True RS Outperformer", "type": "positive", "label": "RS RATING", "value": str(rs_rating)})
                 
                 # 2. VCP Pattern (Minervini)
                 if inst_data.get("vcp_detected", False):
@@ -345,6 +354,7 @@ class LongTermScannerEngine:
                 sector_adjustment = 0
                 inst_score = 0
                 inst_data = {}
+                inst_details = []
             
             # --- BREAKOUT BOOST (Phase 62: Momentum Prioritization) ---
             # If stock is near 52-Week High AND has Volume Support -> Massive Boost
@@ -378,7 +388,7 @@ class LongTermScannerEngine:
             sector_details = sector_res.get("details", [])
             
             # Combine all details for labels/logic
-            all_reasons = ta_details + fund_details + risk_details + sector_details
+            all_reasons = ta_details + fund_details + risk_details + sector_details + inst_details
 
             # --- GLOBAL CONTEXT INJECTION (Phase 36) ---
             # 1. Market Regime
@@ -671,8 +681,8 @@ class LongTermScannerEngine:
                     },
                     "Strategic Alpha": {
                         "score": round(sector_res.get("score", 5.0) * 10, 1),
-                        "details": sector_res.get("details", []),
-                        "status": sector_res.get("relative_strength", "Neutral").upper()
+                        "details": sector_details + inst_details,
+                        "status": "OUTPERFORMER" if sector_res.get("score", 5.0) >= 6.0 else "UNDERPERFORMER"
                     }
                 },
                 "alpha_intel": {
