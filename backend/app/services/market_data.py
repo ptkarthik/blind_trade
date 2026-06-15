@@ -34,12 +34,16 @@ class MarketDataService:
         self.index_cache = {}
         self.ohlc_cache = {}
         self.financials_cache = {}
+        self.extended_data_cache = {}
         self.CACHE_DURATION = 10 
         self.INDEX_CACHE_DURATION = 60 
+        self.EXTENDED_CACHE_DURATION = 3600 * 24
         
         self.stock_master = []
+        self.metadata_cache = {}
         self._init_session()
         self._load_sector_maps()
+        self._load_metadata_cache()
 
     async def initialize(self):
         """[V11 RESTORED] Async Initialization Pulse."""
@@ -510,5 +514,200 @@ class MarketDataService:
                 print(f"[OHLC] TwelveData failover also failed for {symbol}: {e}")
             
         return pd.DataFrame()
+
+    # ── RESTORED METHODS (Required by scanner_engine.py) ──
+
+    async def _async_retry(self, func, *args, max_retries=3, initial_backoff=1, **kwargs):
+        """Helper for exponential backoff retries with specific rate limit handling."""
+        for attempt in range(max_retries):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise e
+                backoff = initial_backoff * (2 ** attempt) + random.uniform(0, 1)
+                await asyncio.sleep(backoff)
+        return None
+
+    def _load_metadata_cache(self):
+        """Loads metadata (sector/cap) from local JSON to avoid re-fetching."""
+        import json
+        import os
+        cache_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "metadata_cache.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    self.metadata_cache = json.load(f)
+                print(f"MarketData: Loaded metadata cache for {len(self.metadata_cache)} stocks.")
+            except:
+                self.metadata_cache = {}
+        else:
+            self.metadata_cache = {}
+
+    def _save_metadata_cache(self):
+        """Saves current metadata cache to disk."""
+        import json
+        import os
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, "metadata_cache.json")
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(self.metadata_cache, f, indent=4)
+        except Exception as e:
+            print(f"Error saving metadata cache: {e}")
+
+    async def get_fundamentals(self, symbol: str) -> Dict[str, Any]:
+        """Fetch fundamental data (Info dict) using yfinance."""
+        ticker_symbol = f"{symbol}.NS" if not symbol.endswith((".NS", ".BO")) and not symbol.startswith("^") else symbol
+        try:
+            def _fetch_info():
+                ticker = yf.Ticker(ticker_symbol)
+                try:
+                    res = ticker.info
+                    return res if isinstance(res, dict) else {}
+                except Exception:
+                    return {}
+            
+            info = await self._async_retry(
+                lambda: asyncio.wait_for(asyncio.to_thread(_fetch_info), timeout=15.0)
+            )
+            return info if info else {}
+        except Exception as e:
+            print(f"Fundamental fetch failed for {symbol}: {e}")
+            return {}
+
+    async def get_extended_data(self, symbol: str) -> Dict[str, Any]:
+        """Fetch Holders and News for Sentiment/Risk Analysis."""
+        ticker_symbol = f"{symbol}.NS" if not symbol.endswith((".NS", ".BO")) and not symbol.startswith("^") else symbol
+        
+        # Check cache
+        current_time = time.time()
+        if symbol in self.extended_data_cache:
+            entry = self.extended_data_cache[symbol]
+            if current_time - entry["timestamp"] < self.EXTENDED_CACHE_DURATION:
+                return entry["data"]
+        
+        try:
+            def _fetch_ext():
+                t = yf.Ticker(ticker_symbol)
+                holders = {}
+                try:
+                    mh = t.major_holders
+                    if mh is not None and not mh.empty:
+                        if 'Breakdown' in mh.columns:
+                            mh.set_index('Breakdown', inplace=True)
+                            holders = mh['Value'].to_dict()
+                        elif 0 in mh.columns and 1 in mh.columns:
+                            holders = dict(zip(mh[1], mh[0]))
+                except Exception:
+                    pass
+
+                news = []
+                try:
+                    news = t.news if t.news else []
+                except Exception: pass
+                
+                insider_transactions = []
+                try:
+                    it = t.insider_transactions
+                    if it is not None and not it.empty:
+                        it_reset = it.reset_index()
+                        insider_transactions = it_reset.to_dict('records')
+                except Exception: pass
+
+                return {"holders": holders, "news": news, "insider_transactions": insider_transactions}
+
+            result = await self._async_retry(
+                lambda: asyncio.wait_for(asyncio.to_thread(_fetch_ext), timeout=20.0)
+            )
+            if result:
+                self.extended_data_cache[symbol] = {"timestamp": current_time, "data": result}
+            return result if result else {"holders": {}, "news": []}
+        except Exception as e:
+            print(f"Extended data fetch failed for {symbol}: {e}")
+            return {"holders": {}, "news": []}
+
+    async def get_historical_financials(self, symbol: str) -> Any:
+        """Fetch historical yearly Income Statement for CAGR calculation."""
+        current_time = time.time()
+        if symbol in self.financials_cache:
+            entry = self.financials_cache[symbol]
+            if current_time - entry["timestamp"] < self.EXTENDED_CACHE_DURATION:
+                return entry["data"]
+
+        ticker_symbol = f"{symbol}.NS" if not symbol.endswith((".NS", ".BO")) and not symbol.startswith("^") else symbol
+        try:
+            def _fetch_hist():
+                t = yf.Ticker(ticker_symbol)
+                return t.financials
+            
+            df = await self._async_retry(
+                lambda: asyncio.wait_for(asyncio.to_thread(_fetch_hist), timeout=30.0)
+            )
+            self.financials_cache[symbol] = {"timestamp": current_time, "data": df}
+            return df
+        except Exception as e:
+            print(f"Historical financial fetch failed for {symbol}: {e}")
+            return pd.DataFrame()
+
+    async def get_symbol_metadata(self, symbol: str) -> Dict[str, Any]:
+        """Returns sector and market cap category for a symbol, using cache or fetching live."""
+        if symbol in self.metadata_cache:
+            return self.metadata_cache[symbol]
+        
+        # Check static map first
+        clean_sym = symbol.split(".")[0].upper()
+        if clean_sym in self.SECTOR_MAP:
+            data = {"sector": self.SECTOR_MAP[clean_sym], "market_cap": "Large"} 
+            self.metadata_cache[symbol] = data
+            return data
+
+        # Check stock master
+        for item in self.stock_master:
+            if item["symbol"].split(".")[0].upper() == clean_sym:
+                data = {
+                    "sector": item.get("sector", "General"),
+                    "market_cap": "Mid"
+                }
+                self.metadata_cache[symbol] = data
+                return data
+            
+        # Fetch live
+        info = await self.get_fundamentals(symbol)
+        sector = info.get("sector", "General")
+        mkt_cap = info.get("marketCap", 0)
+        
+        cap_cat = "Small"
+        if mkt_cap > 200000000000: cap_cat = "Large"
+        elif mkt_cap > 50000000000: cap_cat = "Mid"
+        
+        metadata = {
+            "sector": sector,
+            "market_cap_category": cap_cat,
+            "market_cap_value": mkt_cap
+        }
+        
+        self.metadata_cache[symbol] = metadata
+        self._save_metadata_cache()
+        return metadata
+
+    async def get_index_performance(self, sector: str, period: str = "5y") -> pd.DataFrame:
+        """Fetch historical performance for the sector index (Relative Strength)."""
+        index_symbol = self.INDEX_MAP.get(sector, "^NSEI")
+        
+        current_time = time.time()
+        cache_key = f"{index_symbol}_{period}"
+        if cache_key in self.index_cache:
+            entry = self.index_cache[cache_key]
+            if current_time - entry["timestamp"] < self.INDEX_CACHE_DURATION:
+                return entry["data"]
+                
+        df = await self.get_ohlc(index_symbol, period=period, interval="1d")
+        
+        if not df.empty:
+            self.index_cache[cache_key] = {"timestamp": current_time, "data": df}
+            
+        return df
 
 market_service = MarketDataService()

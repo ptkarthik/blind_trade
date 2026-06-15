@@ -18,6 +18,12 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.services.utils import STATIC_FULL_LIST, sanitize_data
 from app.services.market_discovery import market_discovery
 
+def safe_scalar(x):
+    """Safely extract a scalar float from a pandas Series or scalar value."""
+    import numpy as np
+    val = float(x.iloc[0]) if hasattr(x, 'iloc') else float(x)
+    return float(np.nan_to_num(val, nan=0.0))
+
 class LongTermScannerEngine:
     def __init__(self):
         self.running = False
@@ -257,7 +263,7 @@ class LongTermScannerEngine:
             ext = secondary_results[1] if not isinstance(secondary_results[1], Exception) else {"holders": {}, "news": []}
             hist_financials = secondary_results[2] if not isinstance(secondary_results[2], Exception) else pd.DataFrame()
             
-            _l_close = df['close'].iloc[-1]
+            _l_close = df['close'].dropna().iloc[-1]
             real_price = safe_scalar(_l_close)
             
             # Robust Check for NaN/None
