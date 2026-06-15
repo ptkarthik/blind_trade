@@ -13989,5 +13989,160 @@
         "sector": "General",
         "market_cap_category": "Small",
         "market_cap_value": 0
+    },
+    "AMIRCHAND.NS": {
+        "sector": "Consumer Defensive",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "KPL.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "KOVAI.NS": {
+        "sector": "Healthcare",
+        "market_cap_category": "Mid",
+        "market_cap_value": 63454179328
+    },
+    "KAMAHOLD.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "SAIPARENT.NS": {
+        "sector": "Healthcare",
+        "market_cap_category": "Small",
+        "market_cap_value": 25261684736
+    },
+    "KIRLFER.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Mid",
+        "market_cap_value": 72266661888
+    },
+    "TIMEX.NS": {
+        "sector": "Consumer Cyclical",
+        "market_cap_category": "Small",
+        "market_cap_value": 49960153088
+    },
+    "DECNGOLD.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "WPIL.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "CMPDI.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "SEIL.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "ASHIKA.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "FRONTSP.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "COCKERILL.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "WELSPLSOL.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "NATIONSTD.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "KENNAMET.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "KLBRENG-B.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "SIKA.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "NOVARTIND.NS": {
+        "sector": "Healthcare",
+        "market_cap_category": "Small",
+        "market_cap_value": 31900508160
+    },
+    "JSWDULUX.NS": {
+        "sector": "General",
+        "market_cap_category": "Mid",
+        "market_cap_value": 147778306048
+    },
+    "ELPROINTL.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 28645363712
+    },
+    "POWERICA.NS": {
+        "sector": "Industrials",
+        "market_cap_category": "Mid",
+        "market_cap_value": 60618350592
+    },
+    "NIRLON.NS": {
+        "sector": "Real Estate",
+        "market_cap_category": "Mid",
+        "market_cap_value": 55882194944
+    },
+    "GRAUWEIL.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Small",
+        "market_cap_value": 34953490432
+    },
+    "HAWKINCOOK.NS": {
+        "sector": "Consumer Cyclical",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "ULTRAMAR.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "ELANTAS.NS": {
+        "sector": "Basic Materials",
+        "market_cap_category": "Mid",
+        "market_cap_value": 77814161408
+    },
+    "ELITECON.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "3BBLACKBIO.NS": {
+        "sector": "",
+        "market_cap_category": "Small",
+        "market_cap_value": 0
+    },
+    "MAFATIND.NS": {
+        "sector": "General",
+        "market_cap_category": "Small",
+        "market_cap_value": 9364494336
     }
 }

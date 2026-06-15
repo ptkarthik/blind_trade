@@ -37,6 +37,7 @@ class SwingTechnicalAnalysis:
         ctx['sma_200'] = SMAIndicator(close=close_series, window=200).sma_indicator() if len(df) >= 200 else pd.Series(dtype=float)
         ctx['sma_150'] = SMAIndicator(close=close_series, window=150).sma_indicator() if len(df) >= 150 else pd.Series(dtype=float)
         ctx['ema_20'] = EMAIndicator(close=close_series, window=20).ema_indicator()
+        ctx['ema_10'] = EMAIndicator(close=close_series, window=10).ema_indicator()
         ctx['ema_9'] = EMAIndicator(close=close_series, window=9).ema_indicator()
         ctx['rsi'] = RSIIndicator(close=close_series, window=14).rsi()
         ctx['atr'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
@@ -231,29 +232,34 @@ class SwingTechnicalAnalysis:
         _ema_20 = ctx['ema_20'].iloc[-1]
         ema_20 = safe_scalar(_ema_20)
         
-        # [V44] 5-Day Lookback for Support Touch (was 3 — too narrow)
+        # [V45] 5-Day Lookback for Support Touch (was 3 — too narrow)
+        ema_10_touched = False
         ema_20_touched = False
         sma_50_touched = False
         lookback = min(5, len(df) - 1)
         if lookback >= 1:
             for i in range(-lookback, 0):
                 l_low = safe_scalar(df['low'].iloc[i])
+                ema_10_i = safe_scalar(ctx['ema_10'].iloc[i])
                 ema_20_i = safe_scalar(ctx['ema_20'].iloc[i])
                 sma_50_i = safe_scalar(ctx['sma_50'].iloc[i])
+                if l_low <= (ema_10_i * 1.01): ema_10_touched = True  # High momentum support
                 if l_low <= (ema_20_i * 1.015): ema_20_touched = True  # [V45] Tightened from 3% to 1.5%
                 if l_low <= (sma_50_i * 1.02): sma_50_touched = True  # [V45] Tightened from 3.5% to 2%
         else:
             c_l = safe_scalar(latest['low'])
+            ema_10_touched = (c_l <= (safe_scalar(ctx['ema_10'].iloc[-1]) * 1.01))
             ema_20_touched = (c_l <= (ema_20 * 1.015))  # [V45] Tightened from 3% to 1.5%
             sma_50_touched = (c_l <= (sma_50 * 1.02))  # [V45] Tightened from 3.5% to 2%
         
+        ema_10_bounce = ema_10_touched and (close >= safe_scalar(ctx['ema_10'].iloc[-1]))
         ema_20_bounce = ema_20_touched and (close >= ema_20)  # [V45] Must close AT or ABOVE support
         sma_50_bounce = sma_50_touched and (close >= sma_50)  # [V45] No more 1% below tolerance
         
-        if not (ema_20_bounce or sma_50_bounce):
+        if not (ema_10_bounce or ema_20_bounce or sma_50_bounce):
             return {"match": False, "reason": "Did not touch/hold Support Zone cleanly in last 5 days"}
             
-        bounce_target = "EMA 20" if ema_20_bounce else "SMA 50"
+        bounce_target = "EMA 10" if ema_10_bounce else ("EMA 20" if ema_20_bounce else "SMA 50")
         reasons.append({"text": f"Support Bounce ({bounce_target})", "type": "positive", "label": "ZONE", "value": bounce_target})
 
         # 3. Market-Adaptive Candle Confirmation
@@ -266,8 +272,8 @@ class SwingTechnicalAnalysis:
         c_range = c_h - c_l
         if c_range > 0:
             close_pos = (c_c - c_l) / c_range
-            if close_pos < 0.6: # [V45] Not in top 40% (was 50% — too loose for pullback reversals)
-                return {"match": False, "reason": f"Weak Close ({round(close_pos*100)}% of range — need top 40%)"}
+            if close_pos < 0.4: # [V45] Relaxed to top 60% (0.4) to allow equilibrium/doji candles
+                return {"match": False, "reason": f"Weak Close ({round(close_pos*100)}% of range — need top 60%)"}
         
         # Pattern Detection
         body = abs(c_c - c_o)
@@ -330,20 +336,24 @@ class SwingTechnicalAnalysis:
         setup_type = "REVERSAL_PULLBACK" if rsi < 40 else "STANDARD_PULLBACK"
         reasons.append({"text": f"Setup: {setup_type}", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
-        # 5. Volume Confirmation (1.2x OR Rising Trend)
+        # 5. Volume Confirmation: Dry-up OR Accumulation
         vol_s = ctx['vol_s']
         vol_ma = ctx['vol_ma'].iloc[-1]
-        is_vol_surge = safe_scalar(latest['volume']) > (vol_ma * 1.2)
-        is_vol_rising = (vol_s.iloc[-1] > vol_s.iloc[-2] > vol_s.iloc[-3])
-        
-        if not (is_vol_surge or is_vol_rising):
-            return {"match": False, "reason": "No Volume Surge or Rising Trend"}
-            
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
-        # [V45.1] Relative Volume Persistence — institutional accumulation persists for sessions
+        
+        is_vol_dryup = vol_ratio < 0.8
+        is_accumulation = is_green and (vol_ratio >= 1.0 or vol_s.iloc[-1] > vol_s.iloc[-2])
+        is_high_vol_rejection = is_pin and vol_ratio > 1.0
+        
+        # If it's a heavy red distribution day (not a pin bar), reject
+        if not is_green and not is_pin and vol_ratio > 1.3:
+            return {"match": False, "reason": f"Distribution Day (Red Candle with {round(vol_ratio, 1)}x Vol)"}
+            
         vol_3d_avg = safe_scalar(vol_s.iloc[-3:].mean()) / max(vol_ma, 1) if len(vol_s) >= 3 else vol_ratio
         vol_5d_avg = safe_scalar(vol_s.iloc[-5:].mean()) / max(vol_ma, 1) if len(vol_s) >= 5 else vol_ratio
-        reasons.append({"text": "Volume Health Confirmed", "type": "positive", "label": "VOLUME", "value": f"{round(vol_ratio, 1)}x"})
+        
+        vol_label_text = "Volume Dry-up (VCP)" if is_vol_dryup else ("Accumulation" if is_accumulation else "Average Volume")
+        reasons.append({"text": vol_label_text, "type": "positive", "label": "VOLUME", "value": f"{round(vol_ratio, 1)}x"})
 
         # --- V3: MACD Confluence Gate ---
         macd_hist = safe_scalar(ctx['macd_hist'].iloc[-1])
@@ -468,30 +478,41 @@ class SwingTechnicalAnalysis:
         if stock_20d_ret <= (nifty_20d_ret - 5.0):
              return {"match": False, "reason": f"Underperforming Nifty ({round(stock_20d_ret, 1)}% vs {round(nifty_20d_ret, 1)}%)", "relative_strength": "UNDERPERFORM"}
 
-        # 1. Price Confirmation: Breakout of 20-day high (3-day lookback)
+        # 1. Price Confirmation: Breakout of 10-day high (Early Momentum)
         is_breakout = False
-        high_20_val = 0.0
-        if len(df) >= 21:
-            # [V45] Check last 2 days only (was 3 — stale breakouts were passing)
+        high_val = 0.0
+        if len(df) >= 11:
             for i in range(-2, 0):
                 end_idx = len(df) + i
-                start_idx = end_idx - 20
+                start_idx = end_idx - 10
                 if start_idx < 0: start_idx = 0
-                past_high_20 = safe_scalar(df['high'].iloc[start_idx:end_idx].max())
+                past_high_10 = safe_scalar(df['high'].iloc[start_idx:end_idx].max())
                 past_close = safe_scalar(df['close'].iloc[i])
-                if past_close > past_high_20 and c_c > past_high_20:
-                    # [V45] Freshness check: current close must be within 2% of breakout day high
+                if past_close > past_high_10 and c_c > past_high_10:
                     breakout_day_high = safe_scalar(df['high'].iloc[i])
                     if breakout_day_high > 0 and ((breakout_day_high - c_c) / breakout_day_high) > 0.02:
                         continue  # Stale — price faded from breakout high
                     is_breakout = True
-                    high_20_val = past_high_20
+                    high_val = past_high_10
                     break
         
-        if not is_breakout:
-            return {"match": False, "reason": f"Close ({c_c}) did not hold above recent 20D High"}
+        # We also allow BB Squeeze Breakouts even if it isn't a fresh 10-day high yet.
+        # --- V3: Bollinger Band Squeeze Confirmation ---
+        bb_width = ctx['bb_width']
+        if len(bb_width.dropna()) >= 20:
+            current_bw = safe_scalar(bb_width.iloc[-1])
+            avg_bw_20 = safe_scalar(bb_width.iloc[-20:].mean())
+            bb_was_squeezed = safe_scalar(bb_width.iloc[-2]) < avg_bw_20
+            bb_expanding = current_bw > safe_scalar(bb_width.iloc[-2])
+            is_squeeze_breakout = bb_was_squeezed and bb_expanding
+        else:
+            is_squeeze_breakout = False
+
+        if not is_breakout and not is_squeeze_breakout:
+            return {"match": False, "reason": f"Close ({c_c}) did not break recent 10D High or BB Squeeze"}
             
-        reasons = [{"text": "Fresh 20-Day Breakout", "type": "positive", "label": "BREAKOUT", "value": "CONFIRMED"}]
+        brk_reason = "Fresh 10-Day Breakout" if is_breakout else "BB Squeeze Breakout"
+        reasons = [{"text": brk_reason, "type": "positive", "label": "BREAKOUT", "value": "CONFIRMED"}]
 
         # 2. RSI & Trend
         close_series = ctx['close_series']
@@ -538,17 +559,8 @@ class SwingTechnicalAnalysis:
         avg_range_10d = (df['high'] - df['low']).iloc[-11:-1].mean()
         vcp_explosive = current_range >= (avg_range_10d * 1.3)  # Used as conviction bonus below
 
-        # --- V3: Bollinger Band Squeeze Confirmation ---
-        bb_width = ctx['bb_width']
-        if len(bb_width.dropna()) >= 20:
-            current_bw = safe_scalar(bb_width.iloc[-1])
-            avg_bw_20 = safe_scalar(bb_width.iloc[-20:].mean())
-            # Breakout from a squeeze (current BB width expanding from tight) is highest conviction
-            bb_was_squeezed = safe_scalar(bb_width.iloc[-2]) < avg_bw_20
-            bb_expanding = current_bw > safe_scalar(bb_width.iloc[-2])
-            is_squeeze_breakout = bb_was_squeezed and bb_expanding
-        else:
-            is_squeeze_breakout = False
+        # Squeeze breakout logic moved up to line 488, but we keep the vcp check here
+
 
         # --- V45.2: Consolidation Duration (Base Length) ---
         # Count how many days before breakout the stock was in a tight range.
@@ -566,15 +578,15 @@ class SwingTechnicalAnalysis:
 
         reasons.append({"text": "Bullish Momentum Supported", "type": "positive", "label": "RSI", "value": round(rsi, 1)})
 
-        # [V44] Volume lowered from 1.8x to 1.5x — large-cap institutional flow is quieter
+        # [V44] Volume lowered to 1.3x for early explosive moves
         vol_s = ctx['vol_s']
         vol_ma = ctx['vol_ma'].iloc[-1]
         vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
         # [V45.1] Relative Volume Persistence — institutional accumulation persists for sessions
         vol_3d_avg = safe_scalar(vol_s.iloc[-3:].mean()) / max(vol_ma, 1) if len(vol_s) >= 3 else vol_ratio
         vol_5d_avg = safe_scalar(vol_s.iloc[-5:].mean()) / max(vol_ma, 1) if len(vol_s) >= 5 else vol_ratio
-        if vol_ratio < 1.5:
-             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.5x min)"}
+        if vol_ratio < 1.3:
+             return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.3x min)"}
 
         # --- Round 2: ADX Trending Market Check ---
         adx = safe_scalar(ctx['adx'].iloc[-1])

@@ -1107,8 +1107,8 @@ class SwingEngine:
             scan_results = state.get("results", [])
             print(f" [SWING SCAN COMPLETE] {len(scan_results)} qualified signals found from {total_stocks} scanned.", flush=True)
             
-            # Sort by score descending and cap at top 50
-            trade_plan = sorted(scan_results, key=lambda x: x.get("score", 0), reverse=True)[:50]
+            # Sort by score descending (DO NOT cap at 50, so HOLD stocks aren't dropped)
+            trade_plan = sorted(scan_results, key=lambda x: x.get("score", 0), reverse=True)
 
             # --- AI BRAIN: FINAL GATEKEEPER ---
             from app.services.ai_brain import ai_brain
