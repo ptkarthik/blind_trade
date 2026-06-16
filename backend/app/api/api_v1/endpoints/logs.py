@@ -4,7 +4,7 @@ import os
 
 router = APIRouter()
 
-@router.get("/")
+@router.get("")
 def get_logs(
     service: str = Query("worker", description="The service name (e.g. fastapi, worker)"),
     lines: int = Query(100, description="Number of lines to fetch"),
@@ -15,7 +15,7 @@ def get_logs(
     This works universally across Local (Windows) and Production (Linux) without PM2.
     Requires admin privileges.
     """
-    if not current_user.get("is_admin"):
+    if getattr(current_user, 'is_admin', False) == False:
         raise HTTPException(status_code=403, detail="Not authorized to view system logs")
 
     allowed_services = {"worker": "worker_system.log", "fastapi": "fastapi_system.log"}
