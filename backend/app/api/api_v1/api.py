@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from app.api.api_v1.endpoints import market, signals, jobs, papertrades, settings, audit, live, positions, auth
+from app.api.api_v1.endpoints import market, signals, jobs, papertrades, settings, audit, live, positions, auth, logs
 from app.api.deps import get_current_user
 
 api_router = APIRouter()
@@ -19,4 +19,5 @@ api_router.include_router(settings.router, prefix="/settings", tags=["settings"]
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"], dependencies=locked)
 api_router.include_router(live.router, prefix="/live", tags=["live"], dependencies=locked)
 api_router.include_router(positions.router, prefix="/positions", tags=["positions"], dependencies=locked)
+api_router.include_router(logs.router, prefix="/system/logs", tags=["system"], dependencies=locked)
 print("API ROUTER LOAD COMPLETED")

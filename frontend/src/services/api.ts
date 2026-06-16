@@ -97,6 +97,10 @@ export const settingsApi = {
     update: (key: string, value: string) => api.post('/settings', { key, value }),
 };
 
+export const systemApi = {
+    getLogs: (service: string = 'worker') => api.get(`/system/logs?service=${service}&lines=100`),
+};
+
 export const auditApi = {
     getReport: (date?: string) => api.get(`/audit/report${date ? `?date=${date}` : ''}`),
     triggerEvaluation: (date?: string) => api.post(`/audit/evaluate${date ? `?date=${date}` : ''}`),

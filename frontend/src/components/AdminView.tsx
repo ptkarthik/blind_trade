@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Shield, User, Loader2 } from 'lucide-react';
-import { authApi } from '../services/api';
+import { Shield, User, Loader2, Terminal, RefreshCw } from 'lucide-react';
+import { authApi, systemApi } from '../services/api';
 
 interface UserProfile {
     id: string;
@@ -12,6 +12,9 @@ export const AdminView: React.FC = () => {
     const [users, setUsers] = useState<UserProfile[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [logs, setLogs] = useState<string>('');
+    const [logService, setLogService] = useState<string>('worker');
+    const [logsLoading, setLogsLoading] = useState<boolean>(false);
 
     const loadUsers = async () => {
         try {
@@ -24,8 +27,22 @@ export const AdminView: React.FC = () => {
         }
     };
 
+    const loadLogs = async (service: string = logService) => {
+        setLogsLoading(true);
+        setLogService(service);
+        try {
+            const res = await systemApi.getLogs(service);
+            setLogs(res.data.logs);
+        } catch (err: any) {
+            setLogs('Failed to load logs. ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setLogsLoading(false);
+        }
+    };
+
     useEffect(() => {
         loadUsers();
+        loadLogs('worker');
     }, []);
 
     const toggleAdmin = async (userId: string) => {
@@ -93,6 +110,42 @@ export const AdminView: React.FC = () => {
                         ))}
                     </tbody>
                 </table>
+            </div>
+
+            <div className="mt-8 space-y-4">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                        <Terminal className="w-6 h-6 text-primary" />
+                        System Logs (Production)
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        <select 
+                            value={logService}
+                            onChange={(e) => loadLogs(e.target.value)}
+                            className="bg-muted border border-border rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
+                        >
+                            <option value="worker">Worker (Background Scan)</option>
+                            <option value="fastapi">API (FastAPI Server)</option>
+                        </select>
+                        <button 
+                            onClick={() => loadLogs()}
+                            disabled={logsLoading}
+                            className="p-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${logsLoading ? 'animate-spin' : ''}`} />
+                        </button>
+                    </div>
+                </div>
+                <div className="bg-[#0a0a0a] border border-border rounded-xl p-4 overflow-hidden relative">
+                    {logsLoading && (
+                        <div className="absolute inset-0 bg-[#0a0a0a]/50 flex items-center justify-center backdrop-blur-sm z-10">
+                            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                        </div>
+                    )}
+                    <pre className="text-xs font-mono text-zinc-300 overflow-x-auto overflow-y-auto max-h-[500px] whitespace-pre-wrap break-all">
+                        {logs || "No logs available."}
+                    </pre>
+                </div>
             </div>
         </div>
     );
