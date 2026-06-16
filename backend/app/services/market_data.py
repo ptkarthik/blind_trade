@@ -225,7 +225,7 @@ class MarketDataService:
         # ── TIER 2: Yahoo Fast (Fallback for failures) ──
         if remaining_symbols:
             batch_size = 60
-            concurrent_batches = 4
+            concurrent_batches = 2
             all_chunks = [remaining_symbols[i:i + batch_size] for i in range(0, len(remaining_symbols), batch_size)]
             
             for i in range(0, len(all_chunks), concurrent_batches):
@@ -234,11 +234,11 @@ class MarketDataService:
                 async def _process_chunk(chunk):
                     batch_results = {}
                     proxy = await proxy_manager.get_proxy()
-                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    await asyncio.sleep(random.uniform(0.2, 0.5))
                     
                     from app.services.yahoo_fast import yahoo_fast
                     try:
-                        batch_results = await yahoo_fast.fetch_batch(chunk, interval=interval, period=period, concurrency=20)
+                        batch_results = await yahoo_fast.fetch_batch(chunk, interval=interval, period=period, concurrency=10)
                         
                         if not batch_results and self.td and i == 0:
                             # [V12.5 FIX] TwelveData has 8 req/min limit. Do not use for bulk failover, it hangs the system.

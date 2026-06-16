@@ -16,6 +16,24 @@ socket.setdefaulttimeout(15.0)
 
 import sys
 import io
+import logging
+from logging.handlers import RotatingFileHandler
+
+# --- Setup FastAPI System Logger ---
+_log_dir = os.path.join(os.getcwd(), "logs")
+if not os.path.exists(_log_dir):
+    os.makedirs(_log_dir)
+
+fastapi_logger = logging.getLogger("uvicorn.error")
+fastapi_logger.setLevel(logging.INFO)
+
+if not any(isinstance(h, RotatingFileHandler) for h in fastapi_logger.handlers):
+    _fastapi_log_file = os.path.join(_log_dir, "fastapi_system.log")
+    _handler = RotatingFileHandler(_fastapi_log_file, maxBytes=50*1024*1024, backupCount=5, encoding='utf-8')
+    _formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', '%H:%M:%S')
+    _handler.setFormatter(_formatter)
+    fastapi_logger.addHandler(_handler)
+
 if sys.platform == "win32":
     try:
         if hasattr(sys.stdout, 'reconfigure'):

@@ -97,7 +97,7 @@ class YahooFast:
         async def _worker(sym):
             async with semaphore:
                 # Add tiny random jitter to avoid perfect robotic synchronization
-                await asyncio.sleep(random.uniform(0.1, 0.3))
+                await asyncio.sleep(random.uniform(0.5, 2.0))
                 
                 # 3-Attempt Exponential Backoff Retry (No Proxy)
                 for attempt in range(3):
