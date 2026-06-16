@@ -158,9 +158,28 @@ class SwingTechnicalAnalysis:
         # V1.1 Swing Hardening: Raised gap tolerance to 5% for pullbacks (allow strong reversals)
         if gap_pct > 5 or gap_pct < -10:
              return {"match": False, "reason": f"Gap Risk / Corp Action ({round(gap_pct, 1)}%)", "gap_filter_passed": False}
+             
+        # V46 Anti-Trap: Gap-Up Exhaustion
+        body_pct = (abs(safe_scalar(latest['close']) - safe_scalar(latest['open'])) / safe_scalar(latest['open'])) * 100
+        if gap_pct > 3.0 and body_pct < 1.0:
+             return {"match": False, "reason": f"Gap-Up Exhaustion ({round(gap_pct,1)}% gap, stalled body {round(body_pct,1)}%)", "anti_trap": "REJECTED"}
+
         
         _close = latest['close']
         close = safe_scalar(_close)
+
+        # --- V46 Anti-Trap: Universal Volume Climax Rejection ---
+        # If volume is massive (>3.5x), the close MUST be virtually perfect (>0.90 / top 10%)
+        # Otherwise, the huge volume with a wick implies heavy institutional distribution (selling into the spike)
+        vol_ma = ctx['vol_ma'].iloc[-1]
+        vol_ratio = safe_scalar(latest['volume']) / max(vol_ma, 1)
+        if vol_ratio > 3.5:
+             c_h_temp = safe_scalar(latest['high'])
+             c_l_temp = safe_scalar(latest['low'])
+             c_r_temp = c_h_temp - c_l_temp
+             c_pos_temp = (close - c_l_temp) / c_r_temp if c_r_temp > 0 else 1.0
+             if c_pos_temp < 0.90:
+                  return {"match": False, "reason": f"Volume Climax Rejection ({round(vol_ratio,1)}x vol but close {round(c_pos_temp*100)}% < 90%)", "anti_trap": "REJECTED"}
 
         # --- Relative Strength Filter ---
         stock_20d_price = safe_scalar(df['close'].iloc[-21] if len(df) >= 21 else df['close'].iloc[0])
