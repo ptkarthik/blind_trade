@@ -8,6 +8,8 @@ services:
     restart: always
     ports:
       - "80:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 # We remove the postgres container since the app uses SQLite.
 # If you ever migrate to Postgres, you can add it back here.
