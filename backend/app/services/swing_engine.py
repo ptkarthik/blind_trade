@@ -536,6 +536,9 @@ class SwingEngine:
             # --- Component 6: Strategy-Specific Bonuses (max 15) ---
             strat_bonus = 0
             if selected["strategy"] == "PULLBACK":
+                # [V46] Anti-Trap: Base Conviction Boost (+5) to favor safer pullbacks over breakouts
+                strat_bonus += 5
+                
                 # SMA50 bounce is higher quality than EMA20
                 zone_val = next((r["value"] for r in selected.get("reasons", []) if r["label"] == "ZONE"), "")
                 if "SMA 50" in zone_val:

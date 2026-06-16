@@ -477,6 +477,13 @@ class SwingTechnicalAnalysis:
         # V1.1 Swing Hardening: Allow -5.0% buffer for VCP flat-base breakouts
         if stock_20d_ret <= (nifty_20d_ret - 5.0):
              return {"match": False, "reason": f"Underperforming Nifty ({round(stock_20d_ret, 1)}% vs {round(nifty_20d_ret, 1)}%)", "relative_strength": "UNDERPERFORM"}
+             
+        # V46 Anti-Trap: Over-extension Gate
+        ema20_val = safe_scalar(ctx['ema_20'].iloc[-1])
+        if ema20_val > 0:
+             extension_pct = ((c_c - ema20_val) / ema20_val) * 100
+             if extension_pct > 12.0:
+                  return {"match": False, "reason": f"Overextended from 20 EMA ({round(extension_pct, 1)}% > 12%)", "anti_trap": "REJECTED"}
 
         # 1. Price Confirmation: Breakout of 10-day high (Early Momentum)
         is_breakout = False
@@ -587,6 +594,17 @@ class SwingTechnicalAnalysis:
         vol_5d_avg = safe_scalar(vol_s.iloc[-5:].mean()) / max(vol_ma, 1) if len(vol_s) >= 5 else vol_ratio
         if vol_ratio < 1.3:
              return {"match": False, "reason": f"Weak Breakout Volume ({round(vol_ratio,1)}x < 1.3x min)"}
+             
+        # V46 Anti-Trap: Volume Climax Rejection
+        # If volume is massive (>3.5x), the close MUST be virtually perfect (>0.90 / top 10%)
+        # Otherwise, the huge volume with a wick implies heavy institutional distribution (selling into the spike)
+        if vol_ratio > 3.5:
+             c_h_temp = safe_scalar(latest['high'])
+             c_l_temp = safe_scalar(latest['low'])
+             c_r_temp = c_h_temp - c_l_temp
+             c_pos_temp = (c_c - c_l_temp) / c_r_temp if c_r_temp > 0 else 1.0
+             if c_pos_temp < 0.90:
+                  return {"match": False, "reason": f"Volume Climax Rejection ({round(vol_ratio,1)}x vol but close {round(c_pos_temp*100)}% < 90%)", "anti_trap": "REJECTED"}
 
         # --- Round 2: ADX Trending Market Check ---
         adx = safe_scalar(ctx['adx'].iloc[-1])
@@ -621,13 +639,13 @@ class SwingTechnicalAnalysis:
         else:
             reasons.append({"text": f"MACD Bullish{' (Expanding)' if macd_expanding else ''}", "type": "positive", "label": "MACD", "value": "CONFIRMED"})
 
-        # 4. Candle Strength (Top 50%)
+        # 4. Candle Strength (Top 20% required for Breakouts to avoid Day 2 Trap)
         c_h = safe_scalar(latest['high'])
         c_l = safe_scalar(latest['low'])
         c_range = c_h - c_l
         close_pos = (c_c - c_l) / c_range if c_range > 0 else 1.0
-        if close_pos < 0.65:  # [V45] Top 35% required (was 50% — letting too many weak closes through)
-            return {"match": False, "reason": f"Weak Breakout Close ({round(close_pos*100)}% of range — need top 35%)"}
+        if close_pos < 0.80:  # [V46] Anti-Trap: Top 20% required (was 35%)
+            return {"match": False, "reason": f"Weak Breakout Close ({round(close_pos*100)}% of range — need top 20%)", "anti_trap": "REJECTED"}
 
         # --- V3: Adaptive ATR Stop & Target ---
         atr = safe_scalar(ctx['atr'].iloc[-1])
