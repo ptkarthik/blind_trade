@@ -1376,7 +1376,7 @@ class SwingEngine:
                             "total_steps": total,
                             "active_symbols": list(state.get("active_symbols", [])),
                             "status_msg": state.get("status_msg", ""),
-                            "data": list(state.get("results", []))[-50:] # Keep last 50 matches live
+                            "data": list(state.get("results", [])) # Send all matches for global UI sorting
                         })
                         job_obj.result = sanitize_data(current_result)
                         flag_modified(job_obj, "result")
