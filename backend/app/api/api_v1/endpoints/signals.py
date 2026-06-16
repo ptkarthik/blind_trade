@@ -258,6 +258,21 @@ async def get_sector_signals(
                 sym = stock_data.get("symbol", "UNKNOWN")
                 sector = stock_data.get("sector")
                 
+                # LIVE MARKET CAP ENRICHMENT
+                mcap = stock_data.get("marketCap", 0)
+                if not mcap:
+                    # [FAST METADATA LOOKUP] Bypass Yahoo fetch to prevent 504 Gateway Timeout in Production Nginx
+                    clean_sym = sym.split(".")[0].upper()
+                    if clean_sym in market_service.SECTOR_MAP:
+                        mcap = 500000000000  # Assume Large for mapped index symbols
+                        cat = "Large"
+                    else:
+                        mcap = 10000000000   # Assume Small for others
+                        cat = "Small"
+                        
+                    stock_data["marketCap"] = mcap
+                    stock_data["market_cap_category"] = cat
+
                 if not sector or sector == "Unknown":
                     sector = market_service.get_sector_for_symbol(sym)
                 
