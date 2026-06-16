@@ -391,10 +391,12 @@ class SwingEngine:
             # --- Component 2: Volume Quality (max 15) ---
             vol_ratio = selected.get("vol_ratio", 1.0)
             # [V45] Granular volume tiers (confirmation-weighted, not dominating)
+            # [V46] Cap breakout volume score at +11 (Climax volume is dangerous for breakouts)
+            is_bo = selected.get("strategy") == "BREAKOUT"
             if vol_ratio > 4.0:
-                vol_score = 15
+                vol_score = 11 if is_bo else 15
             elif vol_ratio > 3.0:
-                vol_score = 13
+                vol_score = 11 if is_bo else 13
             elif vol_ratio > 2.5:
                 vol_score = 11
             elif vol_ratio > 2.0:
@@ -803,6 +805,39 @@ class SwingEngine:
                             print(f"     V46 EMA10 EXTENDED: {sym} is {round(ema10_dist, 1)}% above EMA10 — penalty -{ema_ext_pen}", flush=True)
             except Exception as e:
                 logger.debug(f"V46 EMA10 Extension check failed for {sym}: {e}")
+                
+            # --- V46 Penalty 4.5: EMA20 Stretch Ramp ---
+            # Penalizes 5-12% stretch so score degrades before hitting the 12% hard gate
+            try:
+                if ema20_val > 0:
+                    if ema20_dist_val > 8.0:
+                        ema20_pen = 8
+                        v2_penalty += ema20_pen
+                        score_breakdown.append(f"V46 EMA20 Stretch: -{ema20_pen}")
+                        selected.setdefault("reasons", []).append({"text": f"Extended from EMA20 ({round(ema20_dist_val,1)}%)", "impact": -ema20_pen, "layer": 3, "type": "negative"})
+                    elif ema20_dist_val > 5.0:
+                        ema20_pen = 4
+                        v2_penalty += ema20_pen
+                        score_breakdown.append(f"V46 EMA20 Stretch: -{ema20_pen}")
+                        selected.setdefault("reasons", []).append({"text": f"Moving away from EMA20 ({round(ema20_dist_val,1)}%)", "impact": -ema20_pen, "layer": 3, "type": "negative"})
+            except Exception as e:
+                pass
+                
+            # --- V46 Penalty 4.6: Consecutive Green Candles (Rubber Band) ---
+            try:
+                consecutive_green = 0
+                for i in range(1, min(10, len(df_1d) + 1)):
+                    if safe_scalar(df_1d['close'].iloc[-i]) > safe_scalar(df_1d['open'].iloc[-i]):
+                        consecutive_green += 1
+                    else:
+                        break
+                if consecutive_green >= 5:
+                    green_pen = 15 if consecutive_green >= 6 else 10
+                    v2_penalty += green_pen
+                    score_breakdown.append(f"V46 Rubber Band: -{green_pen} ({consecutive_green} green days)")
+                    selected.setdefault("reasons", []).append({"text": f"Rubber Band Risk ({consecutive_green} consecutive green days — imminent pullback likely)", "impact": -green_pen, "layer": 3, "type": "negative"})
+            except Exception as e:
+                logger.debug(f"V46 Consecutive Green check failed for {sym}: {e}")
             
             # --- V46 Penalty 5: Trap Memory Check ---
             # Compares this stock's indicators against all known trap patterns
@@ -906,9 +941,10 @@ class SwingEngine:
             elif final_score >= 60: confidence = "MEDIUM"
 
             # [V43] Conviction-based signal classification
-            if final_score >= 75:
+            # [V46] Raised BUY_STRONG threshold to 82 to reserve it for elite setups only
+            if final_score >= 82:
                 signal_type = "BUY_STRONG"
-            elif final_score >= 50:
+            elif final_score >= 55:
                 signal_type = "BUY"
             else:
                 signal_type = "HOLD"  # Low-conviction: surface but don't recommend action

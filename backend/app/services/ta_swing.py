@@ -468,6 +468,12 @@ class SwingTechnicalAnalysis:
         if gap_pct > 8 or gap_pct < -10:
              return {"match": False, "reason": f"Gap Risk / Corp Action ({round(gap_pct, 1)}%)", "gap_filter_passed": False}
              
+        # V46 Anti-Trap: Gap-Up Exhaustion
+        # If open is >3% above yesterday's close, but the candle body (close-open) is tiny (<1%), it gapped up and stalled.
+        body_pct = (abs(safe_scalar(latest['close']) - safe_scalar(latest['open'])) / safe_scalar(latest['open'])) * 100
+        if gap_pct > 3.0 and body_pct < 1.0:
+             return {"match": False, "reason": f"Gap-Up Exhaustion ({round(gap_pct,1)}% gap, stalled body {round(body_pct,1)}%)", "anti_trap": "REJECTED"}
+             
         c_c = safe_scalar(latest['close'])
         
         # --- Relative Strength Filter ---
@@ -532,6 +538,10 @@ class SwingTechnicalAnalysis:
         # [V44] RSI lowered from 60 to 55 — many valid breakouts start at RSI 55-60
         if rsi < 55:
             return {"match": False, "reason": f"Insufficient RSI Momentum ({round(rsi,1)} < 55)"}
+            
+        # V46 Anti-Trap: RSI Ceiling
+        if rsi > 80:
+            return {"match": False, "reason": f"Overbought RSI Rejection ({round(rsi,1)} > 80)", "anti_trap": "REJECTED"}
         
         # [V44] SMA50 slope is now a conviction penalty, not a hard gate
         bo_slope_penalty = False
