@@ -2351,8 +2351,8 @@ class IntradayEngine:
         symbol_index_map = {(s["symbol"] if isinstance(s, dict) else s): i for i, s in enumerate(symbols)}
 
         try:
-            # Process in Streaming Batches of 300
-            chunk_size = 300
+            # Process in Streaming Batches of 100
+            chunk_size = 100
             chunks = [symbols[i:i + chunk_size] for i in range(0, total, chunk_size)]
             for i, chunk in enumerate(chunks):
                 if job_id in self.job_states and not self.job_states[job_id].get("is_running", True):
