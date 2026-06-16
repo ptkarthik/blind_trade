@@ -409,6 +409,8 @@ class SwingTechnicalAnalysis:
         if is_pin or is_engulfing: conviction += 2
         if is_inside_break: conviction += 1
         if is_pivot: conviction += 1
+        # [Phase 3] Direct Conviction Boost for clean pullbacks (replaces the base score inflation)
+        conviction += 2
         # MTF penalty: deduct 2 points if weekly structure is broken but within tolerance
         if mtf_penalty: conviction -= 2
         # [V44] Slope penalty: deduct 2 points if SMA50 slope is flat/down

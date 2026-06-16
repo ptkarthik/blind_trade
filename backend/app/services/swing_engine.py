@@ -390,13 +390,19 @@ class SwingEngine:
             
             # --- Component 2: Volume Quality (max 15) ---
             vol_ratio = selected.get("vol_ratio", 1.0)
-            # [V45] Granular volume tiers (confirmation-weighted, not dominating)
-            # [V46] Cap breakout volume score at +11 (Climax volume is dangerous for breakouts)
+            volatility_ratio = selected.get("volatility_ratio", 1.0)
             is_bo = selected.get("strategy") == "BREAKOUT"
+            
+            # [Phase 3] Failed Breakout Penalty: If a pullback has climax volume AND high volatility (a massive wick/range),
+            # it is likely a failed intraday breakout, not a quiet pullback. Cap its volume score to prevent score inflation.
+            failed_breakout_climax = not is_bo and vol_ratio > 3.0 and volatility_ratio > 1.5
+
             if vol_ratio > 4.0:
-                vol_score = 11 if is_bo else 15
+                if failed_breakout_climax: vol_score = 4
+                else: vol_score = 11 if is_bo else 15
             elif vol_ratio > 3.0:
-                vol_score = 11 if is_bo else 13
+                if failed_breakout_climax: vol_score = 4
+                else: vol_score = 11 if is_bo else 13
             elif vol_ratio > 2.5:
                 vol_score = 11
             elif vol_ratio > 2.0:
@@ -538,16 +544,16 @@ class SwingEngine:
             # --- Component 6: Strategy-Specific Bonuses (max 15) ---
             strat_bonus = 0
             if selected["strategy"] == "PULLBACK":
-                # [V46] Anti-Trap: Base Conviction Boost (+5) to favor safer pullbacks over breakouts
-                strat_bonus += 5
+                # [Phase 3] Removed the artificial +5 base conviction boost for pullbacks.
+                # Clean pullbacks are now rewarded directly in their conviction score.
                 
                 # SMA50 bounce is higher quality than EMA20
                 zone_val = next((r["value"] for r in selected.get("reasons", []) if r["label"] == "ZONE"), "")
                 if "SMA 50" in zone_val:
-                    strat_bonus += 10
-                    score_breakdown.append("SMA50 Bounce: +10")
-                else:
                     strat_bonus += 5
+                    score_breakdown.append("SMA50 Bounce: +5")
+                else:
+                    strat_bonus += 3
                 # Reversal pullback (RSI < 40) is higher conviction
                 if selected.get("setup_type") == "REVERSAL_PULLBACK":
                     strat_bonus += 5
