@@ -23,11 +23,17 @@ echo "🔄 Restarting Python Backend (PM2)..."
 sudo pm2 restart fastapi
 sudo pm2 restart worker
 
-# 3. Rebuild Frontend Container
+# 4. Free up Port 80
+echo "🧹 Freeing up port 80 (stopping conflicting services)..."
+sudo systemctl stop nginx > /dev/null 2>&1 || true
+sudo systemctl stop apache2 > /dev/null 2>&1 || true
+sudo docker ps -a | grep frontend | awk '{print $1}' | xargs -r sudo docker rm -f > /dev/null 2>&1 || true
+sudo fuser -k 80/tcp > /dev/null 2>&1 || true
+
+# 5. Rebuild Frontend Container
 echo "🏗️ Rebuilding React Frontend..."
 sudo docker-compose stop frontend > /dev/null 2>&1 || true
 sudo docker-compose rm -f frontend > /dev/null 2>&1 || true
-sudo docker rm -f blind_trade_frontend_1 > /dev/null 2>&1 || true
 sudo docker-compose up -d --build --remove-orphans frontend
 
 echo "✅ Deployment complete! Server is running the latest code."
