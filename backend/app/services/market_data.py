@@ -225,7 +225,7 @@ class MarketDataService:
         # ── TIER 2: Yahoo Fast (Fallback for failures) ──
         if remaining_symbols:
             batch_size = 60
-            concurrent_batches = 2
+            concurrent_batches = 3
             all_chunks = [remaining_symbols[i:i + batch_size] for i in range(0, len(remaining_symbols), batch_size)]
             
             for i in range(0, len(all_chunks), concurrent_batches):
