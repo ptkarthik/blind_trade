@@ -71,10 +71,20 @@ def get_job_pulse_stats(job: Job):
         "finished_at": "",
         "duration": "",
         "status": job.status if job else "unknown",
-        "delivery_date": job.result.get("delivery_date") if job and job.result else None
+        "delivery_date": None
     }
     if not job:
         return stats
+        
+    try:
+        if isinstance(job.result, dict):
+            stats["delivery_date"] = job.result.get("delivery_date")
+        elif isinstance(job.result, str):
+            import json
+            parsed = json.loads(job.result)
+            stats["delivery_date"] = parsed.get("delivery_date") if isinstance(parsed, dict) else None
+    except:
+        pass
         
     # UTC to IST (+5:30)
     if job.created_at:
@@ -146,7 +156,15 @@ async def get_todays_signals(
         # Unified Pulse Statistics (IST)
         stats = get_job_pulse_stats(valid_job)
         
-        data = valid_job.result.get("data", [])
+        result_data = valid_job.result
+        if isinstance(result_data, str):
+            import json
+            try:
+                result_data = json.loads(result_data)
+            except:
+                result_data = {}
+                
+        data = result_data.get("data", []) if isinstance(result_data, dict) else []
         
         # [V3 KITE LTP] Enrich all signals with real-time prices before serving
         await enrich_with_live_ltp(data)
@@ -208,13 +226,29 @@ async def get_sector_signals(
 
         # Unified Pulse Statistics (IST)
         stats = get_job_pulse_stats(valid_job)
-        data = valid_job.result.get("data", [])
+        
+        # [DEFENSIVE] Handle SQLite parsing job.result as a string sometimes
+        result_data = valid_job.result
+        if isinstance(result_data, str):
+            import json
+            try:
+                result_data = json.loads(result_data)
+            except:
+                result_data = {}
+                
+        data = result_data.get("data", []) if isinstance(result_data, dict) else []
         
         # [V3 KITE LTP] Enrich all signals with real-time prices before serving
         await enrich_with_live_ltp(data)
         
         # [V14.6 SEQUENCE-AWARE SORTING] Descending Score, then Ascending Analysis Index
-        def sort_key(x): return (x.get("score", 0), -(x.get("analysis_index", 0)))
+        def sort_key(x): 
+            s = x.get("score")
+            s = s if s is not None else 0
+            ai = x.get("analysis_index")
+            ai = ai if ai is not None else 0
+            return (s, -ai)
+            
         data = sorted(data, key=sort_key, reverse=True)
         
         # Dynamic Aggregation

@@ -279,18 +279,22 @@ async def resume_scan(job_type: Optional[str] = None, db: AsyncSession = Depends
 
 @router.get("/{job_id}/results")
 async def get_job_results(job_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Get the full results data for a specific job.
-    """
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+        
+    result_data = job.result
+    if isinstance(result_data, str):
+        import json
+        try:
+            result_data = json.loads(result_data)
+        except:
+            result_data = {}
+            
+    if result_data and isinstance(result_data, dict) and "data" in result_data:
+        return result_data["data"]
     
-    # Return just the data part of the result if it exists
-    if job.result and isinstance(job.result, dict) and "data" in job.result:
-        return job.result["data"]
-    
-    return job.result
+    return result_data
 
 @router.post("/sync_earnings_calendar")
 async def sync_earnings_calendar(background_tasks: BackgroundTasks, admin: User = Depends(get_current_admin_user)):
