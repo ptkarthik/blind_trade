@@ -547,6 +547,57 @@ class KiteDataService:
                 logger.error(f" [KITE] Quote fetch failed: {e}")
             return {}
 
+    async def get_live_ohlcv(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetches Live Intraday OHLCV for the current trading day.
+        
+        Returns: {symbol: {"open": float, "high": float, "low": float, "close": float, "volume": int}}
+        Note: 'close' represents the last traded price for the current day.
+        """
+        if not self.is_ready or not symbols:
+            return {}
+
+        token_to_sym = {}
+        nse_tokens = []
+        for sym in symbols:
+            token = self.get_token(sym)
+            if token:
+                key = f"NSE:{sym.replace('.NS', '').upper()}"
+                token_to_sym[key] = sym
+                nse_tokens.append(key)
+
+        if not nse_tokens:
+            return {}
+
+        try:
+            all_quotes = {}
+            for i in range(0, len(nse_tokens), 500):
+                batch = nse_tokens[i:i+500]
+                self._ensure_locks()
+                async with self._quote_lock:
+                    quotes = await asyncio.to_thread(self._kite.quote, batch)
+                all_quotes.update(quotes)
+
+            result = {}
+            for key, data in all_quotes.items():
+                sym = token_to_sym.get(key)
+                if sym:
+                    ohlc = data.get("ohlc", {})
+                    last_price = data.get("last_price", 0)
+                    volume = data.get("volume", 0)
+                    
+                    if last_price > 0 and ohlc.get("open", 0) > 0:
+                        result[sym] = {
+                            "open": ohlc.get("open"),
+                            "high": max(ohlc.get("high", last_price), last_price),
+                            "low": min(ohlc.get("low", last_price), last_price) if ohlc.get("low", 0) > 0 else last_price,
+                            "close": last_price,
+                            "volume": volume
+                        }
+            return result
+        except Exception as e:
+            logger.error(f" [KITE] Live OHLCV fetch failed: {e}")
+            return {}
+
     async def get_market_depth(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         """[AUDIT GAP-C] Fetches Level-2 market depth (bid/ask order flow) from Kite.
         

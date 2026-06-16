@@ -247,6 +247,49 @@ class SwingEngine:
             # 1. Fetch 1D Data - Swap to Anti-Ban Evasion
             # Minimum 60 candles (SMA 50 + buffer). SMA 200 is optional and handled gracefully.
             df_1d = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
+            
+            # --- Phase 4: Intraday Trap Protection (Live Data Injection) ---
+            from app.services.kite_data import kite_data
+            from datetime import datetime
+            import pandas as pd
+            if kite_data.is_ready:
+                live_quotes = await kite_data.get_live_ohlcv([sym])
+                if sym in live_quotes:
+                    live = live_quotes[sym]
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    today_ts = pd.Timestamp(today_str)
+                    
+                    # Ensure df_1d index is datetime
+                    if not pd.api.types.is_datetime64_any_dtype(df_1d.index):
+                        df_1d.index = pd.to_datetime(df_1d.index)
+                        
+                    # Remove timezone if exists for comparison
+                    if df_1d.index.tz is not None:
+                        df_1d.index = df_1d.index.tz_localize(None)
+                    
+                    # Normalize index to midnight for exact date matching
+                    df_1d.index = df_1d.index.normalize()
+                    
+                    if not df_1d.empty:
+                        last_dt = df_1d.index[-1]
+                        # Overwrite or append today's live candle
+                        if last_dt == today_ts:
+                            df_1d.loc[today_ts, 'open'] = float(live['open'])
+                            df_1d.loc[today_ts, 'high'] = float(live['high'])
+                            df_1d.loc[today_ts, 'low'] = float(live['low'])
+                            df_1d.loc[today_ts, 'close'] = float(live['close'])
+                            df_1d.loc[today_ts, 'volume'] = float(live['volume'])
+                        else:
+                            # Append new row
+                            new_row = pd.DataFrame({
+                                'open': [float(live['open'])],
+                                'high': [float(live['high'])],
+                                'low': [float(live['low'])],
+                                'close': [float(live['close'])],
+                                'volume': [float(live['volume'])]
+                            }, index=[today_ts])
+                            df_1d = pd.concat([df_1d, new_row])
+                            
             if df_1d is None or df_1d.empty or len(df_1d) < 60:
                 print(f"   {sym}: DATA INSUFFICIENT ({len(df_1d) if df_1d is not None and not df_1d.empty else 0} candles < 60 min)", flush=True)
                 return None
