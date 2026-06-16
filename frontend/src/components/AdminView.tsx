@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Shield, User, Loader2, Terminal, RefreshCw } from 'lucide-react';
 import { authApi, systemApi } from '../services/api';
 
@@ -15,6 +15,8 @@ export const AdminView: React.FC = () => {
     const [logs, setLogs] = useState<string>('');
     const [logService, setLogService] = useState<string>('worker');
     const [logsLoading, setLogsLoading] = useState<boolean>(false);
+    const [isLive, setIsLive] = useState<boolean>(true);
+    const logsEndRef = useRef<HTMLDivElement>(null);
 
     const loadUsers = async () => {
         try {
@@ -27,8 +29,8 @@ export const AdminView: React.FC = () => {
         }
     };
 
-    const loadLogs = async (service: string = logService) => {
-        setLogsLoading(true);
+    const loadLogs = async (service: string = logService, silent: boolean = false) => {
+        if (!silent) setLogsLoading(true);
         setLogService(service);
         try {
             const res = await systemApi.getLogs(service);
@@ -36,7 +38,7 @@ export const AdminView: React.FC = () => {
         } catch (err: any) {
             setLogs('Failed to load logs. ' + (err.response?.data?.detail || err.message));
         } finally {
-            setLogsLoading(false);
+            if (!silent) setLogsLoading(false);
         }
     };
 
@@ -44,6 +46,24 @@ export const AdminView: React.FC = () => {
         loadUsers();
         loadLogs('worker');
     }, []);
+
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isLive) {
+            interval = setInterval(() => {
+                loadLogs(logService, true);
+            }, 3000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isLive, logService]);
+
+    useEffect(() => {
+        if (isLive && logsEndRef.current) {
+            logsEndRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [logs, isLive]);
 
     const toggleAdmin = async (userId: string) => {
         try {
@@ -118,7 +138,16 @@ export const AdminView: React.FC = () => {
                         <Terminal className="w-6 h-6 text-primary" />
                         System Logs (Production)
                     </h2>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer text-muted-foreground hover:text-foreground transition-colors">
+                            <input 
+                                type="checkbox" 
+                                checked={isLive} 
+                                onChange={(e) => setIsLive(e.target.checked)}
+                                className="rounded border-border text-primary focus:ring-primary bg-muted"
+                            />
+                            Live Auto-Scroll
+                        </label>
                         <select 
                             value={logService}
                             onChange={(e) => loadLogs(e.target.value)}
@@ -128,7 +157,7 @@ export const AdminView: React.FC = () => {
                             <option value="fastapi">API (FastAPI Server)</option>
                         </select>
                         <button 
-                            onClick={() => loadLogs()}
+                            onClick={() => loadLogs(logService, false)}
                             disabled={logsLoading}
                             className="p-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors disabled:opacity-50"
                         >
@@ -144,6 +173,7 @@ export const AdminView: React.FC = () => {
                     )}
                     <pre className="text-xs font-mono text-zinc-300 overflow-x-auto overflow-y-auto max-h-[500px] whitespace-pre-wrap break-all">
                         {logs || "No logs available."}
+                        <div ref={logsEndRef} />
                     </pre>
                 </div>
             </div>
