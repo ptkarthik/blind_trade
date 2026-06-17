@@ -2,7 +2,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
-engine = create_async_engine(settings.SQLALCHEMY_DATABASE_URI, future=True, echo=True)
+engine = create_async_engine(
+    settings.SQLALCHEMY_DATABASE_URI,
+    future=True,
+    echo=False,  # Turn off in production to save PM2 log space
+    pool_size=20,
+    max_overflow=20,
+    pool_timeout=60
+)
 
 # Enable WAL mode for SQLite to handle concurrent writes (dashboard + background jobs)
 from sqlalchemy import event
