@@ -176,10 +176,10 @@ export function PerformanceAuditView() {
         <div>
           <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-primary" />
-            SCAN PERFORMANCE AUDIT
+            DAILY SCAN HISTORY
           </h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Track how your recommendations performed after the scan
+            Historical archive of past scans and their end-of-day performance
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -809,7 +809,7 @@ function App() {
                 onClick={() => setActiveTab('audit')}
                 className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'audit' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
               >
-                <BarChart3 className="h-3 w-3" /> AUDIT
+                <BarChart3 className="h-3 w-3" /> SCAN HISTORY
               </button>
               <button
                 onClick={() => setActiveTab('positions')}
