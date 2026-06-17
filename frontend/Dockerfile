@@ -8,7 +8,7 @@ RUN npm install
 
 # Build the application
 COPY . .
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=512" npm run build
 
 # Production stage
 FROM nginx:alpine

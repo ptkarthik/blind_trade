@@ -34,6 +34,7 @@ sudo fuser -k 80/tcp > /dev/null 2>&1 || true
 echo "🏗️ Rebuilding React Frontend..."
 sudo docker-compose stop frontend > /dev/null 2>&1 || true
 sudo docker-compose rm -f frontend > /dev/null 2>&1 || true
+sudo docker system prune -f > /dev/null 2>&1 || true
 sudo docker-compose up -d --build --remove-orphans frontend
 
 echo "✅ Deployment complete! Server is running the latest code."
