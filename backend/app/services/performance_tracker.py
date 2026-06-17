@@ -193,6 +193,15 @@ class PerformanceTracker:
                 if not snapshots:
                     return {"status": "NO_DATA", "date": scan_date, "stocks": []}
 
+                # Deduplicate by symbol (keep highest score)
+                unique_stocks = {}
+                for snap in snapshots:
+                    if snap.symbol not in unique_stocks or snap.total_score > unique_stocks[snap.symbol].total_score:
+                        unique_stocks[snap.symbol] = snap
+                
+                # Sort descending by score
+                sorted_snaps = sorted(unique_stocks.values(), key=lambda x: x.total_score, reverse=True)
+
                 stocks = []
                 winners = 0
                 losers = 0
@@ -200,9 +209,9 @@ class PerformanceTracker:
                 total_return = 0.0
                 tracked_count = 0
 
-                for snap in snapshots:
+                for idx, snap in enumerate(sorted_snaps, start=1):
                     stock_data = {
-                        "rank": snap.rank,
+                        "rank": idx,
                         "symbol": snap.symbol,
                         "name": snap.name,
                         "sector": snap.sector,
