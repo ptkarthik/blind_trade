@@ -193,25 +193,23 @@ class PerformanceTracker:
                 if not snapshots:
                     return {"status": "NO_DATA", "date": scan_date, "stocks": []}
 
-                # Deduplicate by symbol (keep highest score)
-                unique_stocks = {}
-                for snap in snapshots:
-                    if snap.symbol not in unique_stocks or snap.total_score > unique_stocks[snap.symbol].total_score:
-                        unique_stocks[snap.symbol] = snap
-                
-                # Sort descending by score
-                sorted_snaps = sorted(unique_stocks.values(), key=lambda x: x.total_score, reverse=True)
-
-                stocks = []
+                runs = {}
                 winners = 0
                 losers = 0
                 traps = 0
                 total_return = 0.0
                 tracked_count = 0
 
-                for idx, snap in enumerate(sorted_snaps, start=1):
+                for snap in snapshots:
+                    if snap.scan_job_id not in runs:
+                        runs[snap.scan_job_id] = {
+                            "job_id": snap.scan_job_id,
+                            "time": snap.created_at.isoformat() if snap.created_at else "",
+                            "stocks": []
+                        }
+                    
                     stock_data = {
-                        "rank": idx,
+                        "rank": snap.rank,
                         "symbol": snap.symbol,
                         "name": snap.name,
                         "sector": snap.sector,
@@ -232,7 +230,7 @@ class PerformanceTracker:
                         "is_tracked": snap.is_tracked,
                         "reasons": snap.reasons_json or [],
                     }
-                    stocks.append(stock_data)
+                    runs[snap.scan_job_id]["stocks"].append(stock_data)
 
                     if snap.is_tracked and snap.eod_change_pct is not None:
                         tracked_count += 1
@@ -243,6 +241,11 @@ class PerformanceTracker:
                             losers += 1
                         elif snap.performance_tag == "TRAP":
                             traps += 1
+
+                for r in runs.values():
+                    r["stocks"].sort(key=lambda x: x["rank"])
+
+                sorted_runs = sorted(runs.values(), key=lambda x: x["time"], reverse=True)
 
                 avg_return = round(total_return / max(tracked_count, 1), 2)
 
@@ -256,7 +259,7 @@ class PerformanceTracker:
                     "traps": traps,
                     "avg_return_pct": avg_return,
                     "accuracy_pct": round((winners / max(tracked_count, 1)) * 100, 1) if tracked_count > 0 else 0,
-                    "stocks": stocks,
+                    "runs": sorted_runs,
                 }
 
         except Exception as e:

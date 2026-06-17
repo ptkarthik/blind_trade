@@ -25,6 +25,12 @@ interface AuditStock {
   reasons: any[];
 }
 
+interface AuditRun {
+  job_id: string;
+  time: string;
+  stocks: AuditStock[];
+}
+
 interface AuditReport {
   status: string;
   date: string;
@@ -35,7 +41,7 @@ interface AuditReport {
   traps: number;
   avg_return_pct: number;
   accuracy_pct: number;
-  stocks: AuditStock[];
+  runs: AuditRun[];
 }
 
 interface HistoryEntry {
@@ -274,7 +280,7 @@ export function PerformanceAuditView() {
           )}
 
           {/* No Data State */}
-          {!loading && report && (report.status === 'NO_DATA' || !report.stocks?.length) && (
+          {!loading && report && (report.status === 'NO_DATA' || !report.runs?.length) && (
             <div className="text-center py-12 text-muted-foreground">
               <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p className="font-medium">No scan snapshots found for today</p>
@@ -282,146 +288,154 @@ export function PerformanceAuditView() {
             </div>
           )}
 
-          {/* Stock Cards */}
-          {!loading && report?.stocks && report.stocks.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground px-1">
-                {report.date} — {report.stocks.length} STOCKS TRACKED
-              </div>
-              {report.stocks.map((stock) => (
-                <div
-                  key={stock.symbol}
-                  className={`rounded-lg border ${getPerformanceBg(stock.performance_tag)} transition-all duration-200`}
-                >
-                  {/* Main Row */}
-                  <div
-                    className="flex items-center justify-between p-4 cursor-pointer hover:opacity-80"
-                    onClick={() => setExpandedStock(expandedStock === stock.symbol ? null : stock.symbol)}
-                  >
-                    <div className="flex items-center gap-4">
-                      {/* Rank Badge */}
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-black ${
-                        stock.rank <= 3 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                      }`}>
-                        {stock.rank}
-                      </div>
-                      
-                      {/* Symbol & Strategy */}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-sm">{stock.symbol.replace('.NS', '')}</span>
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider ${
-                            stock.strategy === 'BREAKOUT' ? 'bg-blue-500/10 text-blue-500' : 'bg-purple-500/10 text-purple-500'
-                          }`}>
-                            {stock.strategy}
-                          </span>
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider ${
-                            stock.signal === 'BUY_STRONG' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'
-                          }`}>
-                            {stock.signal}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground mt-0.5">
-                          {stock.name} • {stock.sector}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-6">
-                      {/* Score */}
-                      <div className="text-center">
-                        <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">SCORE</div>
-                        <div className="font-black text-sm">{stock.score}</div>
-                      </div>
-
-                      {/* Entry Price */}
-                      <div className="text-center">
-                        <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">ENTRY</div>
-                        <div className="font-mono text-sm">₹{stock.entry_price?.toFixed(2)}</div>
-                      </div>
-
-                      {/* EOD Price & Change */}
-                      <div className="text-center min-w-[80px]">
-                        <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">EOD</div>
-                        {stock.is_tracked ? (
-                          <div className="flex items-center justify-center gap-1">
-                            {getChangeIcon(stock.eod_change_pct)}
-                            <span className={`font-black text-sm ${
-                              (stock.eod_change_pct ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'
-                            }`}>
-                              {(stock.eod_change_pct ?? 0) >= 0 ? '+' : ''}{stock.eod_change_pct?.toFixed(2)}%
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/50">Pending</span>
-                        )}
-                      </div>
-
-                      {/* Performance Tag */}
-                      <div className="text-center min-w-[70px]">
-                        {stock.performance_tag ? (
-                          <span className={`text-[10px] font-black tracking-widest px-2 py-1 rounded ${getPerformanceColor(stock.performance_tag)}`}>
-                            {stock.performance_tag === 'TRAP' && <AlertTriangle className="w-3 h-3 inline mr-1" />}
-                            {stock.performance_tag}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-muted-foreground/40">—</span>
-                        )}
-                      </div>
-
-                      {/* Expand Arrow */}
-                      {expandedStock === stock.symbol ? (
-                        <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                      )}
+          {/* Stock Cards by Run */}
+          {!loading && report?.runs && report.runs.length > 0 && (
+            <div className="space-y-8">
+              {report.runs.map((run, runIdx) => (
+                <div key={run.job_id} className="space-y-2">
+                  <div className="flex items-center justify-between px-1 mb-2">
+                    <div className="text-[10px] font-bold tracking-widest uppercase text-primary bg-primary/5 px-3 py-1.5 rounded-md inline-flex items-center gap-2 border border-primary/20">
+                      <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                      SCAN RUN {runIdx + 1} @ {new Date(run.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      <span className="text-muted-foreground opacity-70 ml-2">({run.stocks.length} STOCKS)</span>
                     </div>
                   </div>
+                  {run.stocks.map((stock) => (
+                    <div
+                      key={`${run.job_id}-${stock.symbol}`}
+                      className={`rounded-lg border ${getPerformanceBg(stock.performance_tag)} transition-all duration-200`}
+                    >
+                      {/* Main Row */}
+                      <div
+                        className="flex items-center justify-between p-4 cursor-pointer hover:opacity-80"
+                        onClick={() => setExpandedStock(expandedStock === `${run.job_id}-${stock.symbol}` ? null : `${run.job_id}-${stock.symbol}`)}
+                      >
+                        <div className="flex items-center gap-4">
+                          {/* Rank Badge */}
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-black ${
+                            stock.rank <= 3 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                          }`}>
+                            {stock.rank}
+                          </div>
+                          
+                          {/* Symbol & Strategy */}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-black text-sm">{stock.symbol.replace('.NS', '')}</span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider ${
+                                stock.strategy === 'BREAKOUT' ? 'bg-blue-500/10 text-blue-500' : 'bg-purple-500/10 text-purple-500'
+                              }`}>
+                                {stock.strategy}
+                              </span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider ${
+                                stock.signal === 'BUY_STRONG' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'
+                              }`}>
+                                {stock.signal}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              {stock.name} • {stock.sector}
+                            </div>
+                          </div>
+                        </div>
 
-                  {/* Expanded Details */}
-                  {expandedStock === stock.symbol && (
-                    <div className="px-4 pb-4 pt-0 border-t border-border/50 animate-in fade-in slide-in-from-top-1 duration-200">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-                        <div className="bg-muted/50 rounded-md p-2.5">
-                          <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">STOP LOSS</div>
-                          <div className="font-mono text-xs font-bold mt-0.5">₹{stock.stop_loss?.toFixed(2) || 'N/A'}</div>
-                        </div>
-                        <div className="bg-muted/50 rounded-md p-2.5">
-                          <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">TARGET</div>
-                          <div className="font-mono text-xs font-bold mt-0.5">₹{stock.target?.toFixed(2) || 'N/A'}</div>
-                        </div>
-                        <div className="bg-muted/50 rounded-md p-2.5">
-                          <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">VOL RATIO</div>
-                          <div className="font-mono text-xs font-bold mt-0.5">{stock.vol_ratio?.toFixed(1) || 'N/A'}x</div>
-                        </div>
-                        <div className="bg-muted/50 rounded-md p-2.5">
-                          <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">DELIVERY %</div>
-                          <div className="font-mono text-xs font-bold mt-0.5">{stock.delivery_pct?.toFixed(1) || 'N/A'}%</div>
+                        <div className="flex items-center gap-6">
+                          {/* Score */}
+                          <div className="text-center">
+                            <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">SCORE</div>
+                            <div className="font-black text-sm">{stock.score}</div>
+                          </div>
+
+                          {/* Entry Price */}
+                          <div className="text-center">
+                            <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">ENTRY</div>
+                            <div className="font-mono text-sm">₹{stock.entry_price?.toFixed(2)}</div>
+                          </div>
+
+                          {/* EOD Price & Change */}
+                          <div className="text-center min-w-[80px]">
+                            <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">EOD</div>
+                            {stock.is_tracked ? (
+                              <div className="flex items-center justify-center gap-1">
+                                {getChangeIcon(stock.eod_change_pct)}
+                                <span className={`font-black text-sm ${
+                                  (stock.eod_change_pct ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'
+                                }`}>
+                                  {(stock.eod_change_pct ?? 0) >= 0 ? '+' : ''}{stock.eod_change_pct?.toFixed(2)}%
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground/50">Pending</span>
+                            )}
+                          </div>
+
+                          {/* Performance Tag */}
+                          <div className="text-center min-w-[70px]">
+                            {stock.performance_tag ? (
+                              <span className={`text-[10px] font-black tracking-widest px-2 py-1 rounded ${getPerformanceColor(stock.performance_tag)}`}>
+                                {stock.performance_tag === 'TRAP' && <AlertTriangle className="w-3 h-3 inline mr-1" />}
+                                {stock.performance_tag}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground/40">—</span>
+                            )}
+                          </div>
+
+                          {/* Expand Arrow */}
+                          {expandedStock === `${run.job_id}-${stock.symbol}` ? (
+                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                          )}
                         </div>
                       </div>
 
-                      {/* Reasons Breakdown */}
-                      {stock.reasons && stock.reasons.length > 0 && (
-                        <div className="mt-3">
-                          <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground mb-2">SCORING REASONS</div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {stock.reasons.map((reason: any, idx: number) => (
-                              <span
-                                key={idx}
-                                className={`text-[10px] px-2 py-1 rounded-md font-medium border ${
-                                  reason.type === 'positive'
-                                    ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-600'
-                                    : 'bg-red-500/5 border-red-500/20 text-red-500'
-                                }`}
-                              >
-                                {reason.type === 'positive' ? '+' : ''}{reason.impact} {reason.text}
-                              </span>
-                            ))}
+                      {/* Expanded Details */}
+                      {expandedStock === `${run.job_id}-${stock.symbol}` && (
+                        <div className="px-4 pb-4 pt-0 border-t border-border/50 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+                            <div className="bg-muted/50 rounded-md p-2.5">
+                              <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">STOP LOSS</div>
+                              <div className="font-mono text-xs font-bold mt-0.5">₹{stock.stop_loss?.toFixed(2) || 'N/A'}</div>
+                            </div>
+                            <div className="bg-muted/50 rounded-md p-2.5">
+                              <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">TARGET</div>
+                              <div className="font-mono text-xs font-bold mt-0.5">₹{stock.target?.toFixed(2) || 'N/A'}</div>
+                            </div>
+                            <div className="bg-muted/50 rounded-md p-2.5">
+                              <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">VOL RATIO</div>
+                              <div className="font-mono text-xs font-bold mt-0.5">{stock.vol_ratio?.toFixed(1) || 'N/A'}x</div>
+                            </div>
+                            <div className="bg-muted/50 rounded-md p-2.5">
+                              <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground">DELIVERY %</div>
+                              <div className="font-mono text-xs font-bold mt-0.5">{stock.delivery_pct?.toFixed(1) || 'N/A'}%</div>
+                            </div>
                           </div>
+
+                          {/* Reasons Breakdown */}
+                          {stock.reasons && stock.reasons.length > 0 && (
+                            <div className="mt-3">
+                              <div className="text-[9px] font-bold tracking-widest uppercase text-muted-foreground mb-2">SCORING REASONS</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {stock.reasons.map((reason: any, idx: number) => (
+                                  <span
+                                    key={idx}
+                                    className={`text-[10px] px-2 py-1 rounded-md font-medium border ${
+                                      reason.type === 'positive'
+                                        ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-600'
+                                        : 'bg-red-500/5 border-red-500/20 text-red-500'
+                                    }`}
+                                  >
+                                    {reason.type === 'positive' ? '+' : ''}{reason.impact} {reason.text}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
-                  )}
+                  ))}
                 </div>
               ))}
             </div>
