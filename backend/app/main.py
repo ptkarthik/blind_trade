@@ -89,24 +89,41 @@ async def startup_event():
     # Background Runner is now handled by external Worker process (app.worker.worker_main)
     print("API Startup Complete. Background Jobs System Ready.")
 
-    # 5. Start Live Monitor Scheduler
+    # 5. Start Live Monitor Scheduler & Automated Scans
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        import pytz
         from app.services.live_monitor import live_monitor
         from app.services.position_manager import position_manager
-        scheduler = AsyncIOScheduler()
+        from app.services.kite_data import kite_data
+        from app.services.automated_scans import automated_scans_service
+        
+        ist = pytz.timezone('Asia/Kolkata')
+        scheduler = AsyncIOScheduler(timezone=ist)
+        
+        # 15-Minute Intraday Market Guard
         scheduler.add_job(live_monitor.run_intraday_check, 'cron', day_of_week='mon-fri', hour='9-15', minute='*/15')
         # 15-Minute Guardian Loop (for trailing stops)
         scheduler.add_job(position_manager.run_evaluation_cycle, 'cron', day_of_week='mon-fri', hour='9-15', minute='2,17,32,47')
         # Hourly Deep Scan and Summary Push
         scheduler.add_job(position_manager.run_hourly_deep_scan, 'cron', day_of_week='mon-fri', hour='9-15', minute='0')
-        
         # Automated Kite Pre-Market Login (07:00 AM)
-        from app.services.kite_data import kite_data
         scheduler.add_job(kite_data.initialize, 'cron', day_of_week='mon-fri', hour=7, minute=0)
         
+        # ==========================================
+        # 🤖 FULLY AUTOMATED TRADING SCANS (IST)
+        # ==========================================
+        # 1. Morning Momentum (09:35 AM)
+        scheduler.add_job(automated_scans_service.trigger_scheduled_scan, 'cron', args=["intraday", "Morning Momentum"], day_of_week='mon-fri', hour=9, minute=35)
+        # 2. Afternoon Thrust (13:30 PM)
+        scheduler.add_job(automated_scans_service.trigger_scheduled_scan, 'cron', args=["intraday", "Afternoon Thrust"], day_of_week='mon-fri', hour=13, minute=30)
+        # 3. EOD Breakout Catcher (15:10 PM)
+        scheduler.add_job(automated_scans_service.trigger_scheduled_scan, 'cron', args=["swing_scan", "EOD Breakout Catcher"], day_of_week='mon-fri', hour=15, minute=10)
+        # 4. Deep Night Audit (18:30 PM)
+        scheduler.add_job(automated_scans_service.trigger_scheduled_scan, 'cron', args=["swing_scan", "Deep Night Audit"], day_of_week='mon-fri', hour=18, minute=30)
+        
         scheduler.start()
-        print(" [SCHEDULER] Live Monitor & Position Guardian Started.")
+        print(" [SCHEDULER] Live Monitor, Guardian, and Auto-Scans Started in IST.")
     except Exception as e:
         print(f" [SCHEDULER] Failed to start: {e}")
 
