@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies
 COPY package*.json ./
-RUN npm install
+RUN NODE_OPTIONS="--max-old-space-size=512" npm install --no-audit --no-fund
 
 # Build the application
 COPY . .
