@@ -100,6 +100,11 @@ async def startup_event():
         scheduler.add_job(position_manager.run_evaluation_cycle, 'cron', day_of_week='mon-fri', hour='9-15', minute='2,17,32,47')
         # Hourly Deep Scan and Summary Push
         scheduler.add_job(position_manager.run_hourly_deep_scan, 'cron', day_of_week='mon-fri', hour='9-15', minute='0')
+        
+        # Automated Kite Pre-Market Login (07:00 AM)
+        from app.services.kite_data import kite_data
+        scheduler.add_job(kite_data.initialize, 'cron', day_of_week='mon-fri', hour=7, minute=0)
+        
         scheduler.start()
         print(" [SCHEDULER] Live Monitor & Position Guardian Started.")
     except Exception as e:

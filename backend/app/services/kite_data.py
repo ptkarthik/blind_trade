@@ -59,8 +59,25 @@ class KiteDataService:
 
     @property
     def is_ready(self) -> bool:
-        """True if Kite session is active and instruments are loaded."""
-        return self._is_ready and self._access_token is not None
+        if not self._is_ready or not self._access_token:
+            return False
+            
+        # Hard check expiration of the token to prevent false "Connected" UI states
+        if not os.path.exists(self._session_file):
+            return False
+        try:
+            import json
+            from datetime import datetime
+            with open(self._session_file, "r") as f:
+                session = json.load(f)
+            login_time = datetime.fromisoformat(session["login_time"])
+            age_hours = (datetime.now() - login_time).total_seconds() / 3600
+            if age_hours > 8:
+                return False
+        except Exception:
+            return False
+            
+        return True
 
     # =========================================================================
     # INITIALIZATION & AUTH
