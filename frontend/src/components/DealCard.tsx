@@ -39,6 +39,7 @@ export interface Signal {
     verdict?: string;
     setup_tag?: string;
     chase?: { is_chasing: boolean; distance_atr: number };
+    strategy?: "BREAKOUT" | "PULLBACK" | string;
     // AMO & Pre-Market Execution
     amo_action?: string;
     amo_reason?: string;

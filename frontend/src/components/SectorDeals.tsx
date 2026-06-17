@@ -29,6 +29,7 @@ interface SectorDealsProps {
 export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorDealsProps) {
     const [selectedSector, setSelectedSector] = useState<string>("All Sectors");
     const [capFilter, setCapFilter] = useState<"All" | "Large" | "Mid" | "Small">("All");
+    const [strategyFilter, setStrategyFilter] = useState<"All" | "BREAKOUT" | "PULLBACK">("All");
 
     useEffect(() => {
         const sectorsList = ["All Sectors", ...Object.keys(data)];
@@ -83,8 +84,14 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
 
     // Filter Logic
     const filterSignals = (signals: Signal[]) => {
-        if (capFilter === "All") return signals;
-        return signals.filter(s => s.market_cap_category === capFilter);
+        let filtered = signals;
+        if (capFilter !== "All") {
+            filtered = filtered.filter(s => s.market_cap_category === capFilter);
+        }
+        if (strategyFilter !== "All") {
+            filtered = filtered.filter(s => s.strategy === strategyFilter);
+        }
+        return filtered;
     };
 
     const allCurrentBuys = filterSignals(currentData.buys || []);
@@ -189,6 +196,33 @@ export function SectorDeals({ data, mode, onSignalClick, onBuy, stats }: SectorD
                         </button>
                     ))}
                 </div>
+
+                {/* Strategy Filter (Swing Only) */}
+                {mode === 'swing' && (
+                    <div className="flex items-center gap-2 text-sm mt-1">
+                        <span className="font-medium text-muted-foreground">Setup Type:</span>
+                        <div className="flex bg-muted/50 p-1 rounded-lg border border-border">
+                            <button
+                                onClick={() => setStrategyFilter('All')}
+                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${strategyFilter === 'All' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                All Setups
+                            </button>
+                            <button
+                                onClick={() => setStrategyFilter('BREAKOUT')}
+                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${strategyFilter === 'BREAKOUT' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                🔥 Breakouts
+                            </button>
+                            <button
+                                onClick={() => setStrategyFilter('PULLBACK')}
+                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${strategyFilter === 'PULLBACK' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                🛡️ Pullbacks
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Pioneer Prime VIP Lane */}

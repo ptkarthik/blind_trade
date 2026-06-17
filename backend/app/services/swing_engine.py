@@ -78,9 +78,12 @@ class SwingEngine:
             
             # Fallback: Yahoo NIFTYBEES
             if df_nifty is None or df_nifty.empty:
-                df_nifty = await self._fetch_swing_ohlc_with_evasion("NIFTYBEES.NS", period="1y", interval="1d")
-                if df_nifty is not None and not df_nifty.empty:
-                    print(f"[YAHOO FALLBACK] Fetched NIFTYBEES for market context ({len(df_nifty)} candles)", flush=True)
+                try:
+                    df_nifty, _ = await self._fetch_swing_ohlc_with_evasion("NIFTYBEES.NS", period="1y", interval="1d")
+                    if not df_nifty.empty:
+                        print(f"[YAHOO FALLBACK] Fetched NIFTYBEES for market context ({len(df_nifty)} candles)", flush=True)
+                except Exception:
+                    pass
             
             if df_nifty is not None and not df_nifty.empty and len(df_nifty) > 50:
                 from ta.trend import SMAIndicator
@@ -152,7 +155,7 @@ class SwingEngine:
                 if df is not None and not df.empty:
                     logger.info(f" Strategy Kite Success: {sym} ({len(df)} candles)")
                     print(f" [KITE SWING DATA] Successfully fetched {len(df)} historical candles for {sym}", flush=True)
-                    return df
+                    return df, "Kite"
             except Exception as e:
                 logger.warning(f"️ Strategy Kite Failed for {sym}: {e}")
                 print(f"️ [KITE SWING DATA] Failed for {sym}: {e}", flush=True)
@@ -189,7 +192,7 @@ class SwingEngine:
                     df = df.sort_index()
                     df = df[['open', 'high', 'low', 'close', 'volume']]
                     logger.info(f" Strategy 0 Success: {sym} via jugaad-data ({len(df)} candles)")
-                    return df
+                    return df, "NSE/Jugaad"
             except Exception as e:
                 logger.warning(f"️ Strategy 0 Failed for {sym} via jugaad-data: {e}")
 
@@ -205,7 +208,7 @@ class SwingEngine:
                     df = await asyncio.to_thread(_fetch_proxy)
                     if df is not None and not df.empty:
                         df.columns = [c.lower() for c in df.columns]
-                        return df
+                        return df, "YF Proxy"
                 except Exception:
                     pass
                 await asyncio.sleep(random.uniform(0.3, 0.8))
@@ -218,7 +221,7 @@ class SwingEngine:
                 df = await asyncio.to_thread(_fetch_direct)
                 if df is not None and not df.empty:
                     df.columns = [c.lower() for c in df.columns]
-                    return df
+                    return df, "YF Direct"
             except Exception:
                 pass
             await asyncio.sleep(random.uniform(0.2, 0.5))
@@ -230,11 +233,11 @@ class SwingEngine:
             df = await asyncio.to_thread(_fetch_bare)
             if df is not None and not df.empty:
                 df.columns = [c.lower() for c in df.columns]
-                return df
+                return df, "YF Fallback"
         except Exception:
             pass
 
-        return pd.DataFrame()
+        return pd.DataFrame(), "Unknown"
 
 
     async def analyze_stock(self, sym: str, job_id: str = None):
@@ -246,7 +249,7 @@ class SwingEngine:
 
             # 1. Fetch 1D Data - Swap to Anti-Ban Evasion
             # Minimum 60 candles (SMA 50 + buffer). SMA 200 is optional and handled gracefully.
-            df_1d = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
+            df_1d, data_source = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
             
             # --- Phase 4: Intraday Trap Protection (Live Data Injection) ---
             from app.services.kite_data import kite_data
@@ -270,7 +273,7 @@ class SwingEngine:
                     # Normalize index to midnight for exact date matching
                     df_1d.index = df_1d.index.normalize()
                     
-                    if not df_1d.empty:
+                    if not df_1d.empty and float(live.get('volume', 0)) > 0:
                         last_dt = df_1d.index[-1]
                         # Overwrite or append today's live candle
                         if last_dt == today_ts:
@@ -390,6 +393,8 @@ class SwingEngine:
                 
             if not selected: 
                 return None
+                
+            selected["data_source"] = data_source
 
             strategy_name = selected.get("strategy", "UNKNOWN")
 
@@ -589,7 +594,6 @@ class SwingEngine:
             if selected["strategy"] == "PULLBACK":
                 # [Phase 3] Removed the artificial +5 base conviction boost for pullbacks.
                 # Clean pullbacks are now rewarded directly in their conviction score.
-                
                 # SMA50 bounce is higher quality than EMA20
                 zone_val = next((r["value"] for r in selected.get("reasons", []) if r["label"] == "ZONE"), "")
                 if "SMA 50" in zone_val:
@@ -1287,7 +1291,7 @@ class SwingEngine:
         decoupled from strict fresh entry criteria.
         """
         try:
-            df_1d = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
+            df_1d, _ = await self._fetch_swing_ohlc_with_evasion(sym, period="1y", interval="1d")
             if df_1d is None or df_1d.empty or len(df_1d) < 60:
                 return None
             

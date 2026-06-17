@@ -29,8 +29,24 @@ export const StockCardSwing: React.FC<Props> = ({ signal, onClick, onBuy }) => {
             </div>
 
             <div className="flex justify-between items-start mb-4 relative z-10">
-                <div>
-                    <h3 className="font-black text-2xl tracking-tight text-foreground">{signal.symbol}</h3>
+                <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                        <h3 className="font-black text-2xl tracking-tight text-foreground">{signal.symbol}</h3>
+                        {signal.strategy && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase flex items-center gap-1 ${
+                                signal.strategy === 'BREAKOUT' 
+                                ? 'bg-orange-100 text-orange-600' 
+                                : 'bg-blue-100 text-blue-600'
+                            }`}>
+                                {signal.strategy === 'BREAKOUT' ? '🔥 Breakout' : '🛡️ Pullback'}
+                            </span>
+                        )}
+                        {(signal as any).data_source && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 uppercase tracking-wider">
+                                {(signal as any).data_source}
+                            </span>
+                        )}
+                    </div>
                     <p className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">{signal.name}</p>
                 </div>
 

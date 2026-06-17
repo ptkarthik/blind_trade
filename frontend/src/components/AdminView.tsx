@@ -48,7 +48,7 @@ export const AdminView: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        let interval: NodeJS.Timeout;
+        let interval: ReturnType<typeof setInterval>;
         if (isLive) {
             interval = setInterval(() => {
                 loadLogs(logService, true);
