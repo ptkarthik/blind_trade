@@ -204,7 +204,7 @@ class PerformanceTracker:
                     if snap.scan_job_id not in runs:
                         runs[snap.scan_job_id] = {
                             "job_id": snap.scan_job_id,
-                            "time": snap.created_at.isoformat() if snap.created_at else "",
+                            "time": snap.created_at.isoformat() + "Z" if snap.created_at else "",
                             "stocks": []
                         }
                     
