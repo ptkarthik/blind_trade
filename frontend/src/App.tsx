@@ -252,6 +252,10 @@ function App() {
             if (prev['swing_scan']?.status === 'stopping' && newStates['swing_scan']?.status !== 'stopped') {
               merged['swing_scan'] = prev['swing_scan'];
             }
+            
+            if (JSON.stringify(prev) === JSON.stringify(merged)) {
+              return prev;
+            }
             return merged;
           });
 
