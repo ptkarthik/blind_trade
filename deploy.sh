@@ -27,8 +27,8 @@ sudo pm2 restart worker
 echo "🧹 Freeing up port 80 (stopping conflicting services)..."
 sudo systemctl stop nginx > /dev/null 2>&1 || true
 sudo systemctl stop apache2 > /dev/null 2>&1 || true
-sudo docker ps -a | grep frontend | awk '{print $1}' | xargs -r sudo docker rm -f > /dev/null 2>&1 || true
-sudo fuser -k 80/tcp > /dev/null 2>&1 || true
+# Gracefully stop the frontend container first to release port 80 properly
+sudo docker-compose stop frontend > /dev/null 2>&1 || true
 
 # 5. Rebuild Frontend Container
 echo "🏗️ Rebuilding React Frontend..."
