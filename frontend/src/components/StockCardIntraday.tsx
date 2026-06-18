@@ -102,10 +102,20 @@ export function StockCardIntraday({ signal, onClick, onBuy }: StockCardIntradayP
             {/* --- ACTION ZONE (The "Trade" Setup) --- */}
             <div className="grid grid-cols-4 gap-2 py-3 border-t border-b border-slate-200/50 my-2 relative z-10 bg-white/40 backdrop-blur-[2px] rounded-xl px-2">
                 <div className="flex flex-col gap-0.5">
-                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400">LTP</span>
-                    <span className="font-mono font-bold text-slate-600 text-xs sm:text-sm">
-                        {typeof signal.price === 'number' ? `₹${signal.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                    <span className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                        {signal.ltp_source === 'kite_live' && <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />}
+                        LTP
                     </span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-slate-600 text-xs sm:text-sm">
+                            {typeof signal.price === 'number' ? `₹${signal.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '---'}
+                        </span>
+                        {signal.ltp_change_pct !== undefined && signal.ltp_change_pct !== 0 && (
+                            <span className={`text-[9px] font-bold ${signal.ltp_change_pct > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                {signal.ltp_change_pct > 0 ? '+' : ''}{Number(signal.ltp_change_pct).toFixed(2)}%
+                            </span>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex flex-col gap-0.5 border-l border-slate-200/50 pl-2">
