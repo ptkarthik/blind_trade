@@ -16,5 +16,5 @@ class Job(Base):
     error_details = Column(String, nullable=True)
     trigger_source = Column(String, default="manual")  # "manual" or "auto"
     is_hidden = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

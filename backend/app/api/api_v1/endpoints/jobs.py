@@ -69,7 +69,8 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
     since = datetime.utcnow() - timedelta(hours=24)
     
     # Extract only what we need for progress polling from the massive JSON blob
-    query = select(
+    # Dynamically select fields to avoid massive $.data payloads for non-swing jobs
+    select_fields = [
         Job.id, 
         Job.type, 
         Job.status, 
@@ -82,9 +83,13 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
         func.json_extract(Job.result, '$.total_steps').label("total_steps"),
         func.json_extract(Job.result, '$.status_msg').label("status_msg"),
         func.json_extract(Job.result, '$.active_symbols').label("active_symbols"),
-        func.json_extract(Job.result, '$.failed_symbols').label("failed_symbols"),
-        func.json_extract(Job.result, '$.data').label("data")
-    ).where(Job.created_at >= since, Job.is_hidden == False)
+        func.json_extract(Job.result, '$.failed_symbols').label("failed_symbols")
+    ]
+    
+    if job_type == "swing_scan":
+        select_fields.append(func.json_extract(Job.result, '$.data').label("data"))
+        
+    query = select(*select_fields).where(Job.created_at >= since, Job.is_hidden == False)
     
     if job_type:
         query = query.where(Job.type == job_type)
