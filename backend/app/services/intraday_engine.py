@@ -2373,11 +2373,9 @@ class IntradayEngine:
                 try:
                     from app.services.kite_data import kite_data
                     print(">> Awaiting asyncio.wait_for(gather(...))")
-                    res_15m, res_1h, res_1d, res_prices, res_depth = await asyncio.wait_for(
+                    res_15m, res_prices, res_depth = await asyncio.wait_for(
                         asyncio.gather(
                             market_service.get_batch_ohlc(chunk_syms, interval="15m", period="7d"),
-                            market_service.get_batch_ohlc(chunk_syms, interval="60m", period="15d"),
-                            market_service.get_batch_ohlc(chunk_syms, interval="1d", period="3mo"),  # V16 FIX 4: Daily trend data
                             market_service.get_batch_prices(chunk_syms),
                             kite_data.get_market_depth(chunk_syms),  # [GAP-C] Real L2 order flow
                         ),
@@ -2405,9 +2403,27 @@ class IntradayEngine:
                 if res_depth:
                     print(f" [KITE DEPTH] Batch {i}: {len(res_depth)} symbols with L2 order flow data")
 
+                from app.services.macro_cache import macro_cache
+                import pandas as pd
+                
                 batch_pulse = {}
                 for s in chunk_syms:
-                    pulse_entry = {"15m": res_15m.get(s), "1h": res_1h.get(s), "1d": res_1d.get(s), "price": res_prices.get(s, {}).get("price", 0.0)}
+                    df_15m = res_15m.get(s)
+                    df_1h = macro_cache.get_60m_data(s)
+                    
+                    # Stitching live 15m onto cached historical 1H
+                    if df_15m is not None and not df_15m.empty and df_1h is not None and not df_1h.empty:
+                        today_start = pd.Timestamp.today().normalize()
+                        live_15m = df_15m[df_15m.index >= today_start]
+                        if not live_15m.empty:
+                            live_1h = live_15m.resample('60min', label='right', closed='right').agg({
+                                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
+                            }).dropna()
+                            df_1h = pd.concat([df_1h, live_1h]).groupby(level=0).last()
+                            
+                    df_1d = macro_cache.get_1d_data(s)
+
+                    pulse_entry = {"15m": df_15m, "1h": df_1h, "1d": df_1d, "price": res_prices.get(s, {}).get("price", 0.0)}
                     # [AUDIT GAP-C] Inject Kite market depth into pulse data
                     depth_info = res_depth.get(s) if res_depth else None
                     if depth_info:

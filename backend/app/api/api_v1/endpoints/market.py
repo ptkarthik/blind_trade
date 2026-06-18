@@ -64,3 +64,14 @@ async def trigger_kite_login():
     from app.services.kite_data import kite_data
     await kite_data.initialize()
     return kite_data.get_status()
+
+import asyncio
+@router.post("/macro-sync")
+async def trigger_macro_sync():
+    """Trigger background sync for 1D and 1H historical data via Kite."""
+    from app.services.macro_cache import macro_cache
+    if macro_cache.is_syncing:
+        return {"status": "already_syncing", "message": "Macro Cache Sync is already running in the background."}
+    
+    asyncio.create_task(macro_cache.sync_cache())
+    return {"status": "started", "message": "Macro Cache Sync started in the background. Check backend logs for progress."}
