@@ -157,7 +157,7 @@ export const ActivePositionsView: React.FC = () => {
                                                     <div className="grid grid-cols-2 gap-4">
                                                         <div className="bg-muted/50 p-3 rounded-lg border border-border">
                                                             <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Max Reached</div>
-                                                            <div className="text-xl font-black text-emerald-500">+{maxProfit.toFixed(1)}%</div>
+                                                            <div className="text-xl font-black text-emerald-500">+{(pos.max_profit_pct || maxProfit).toFixed(1)}%</div>
                                                         </div>
                                                         <div className="bg-primary/5 p-3 rounded-lg border border-primary/20">
                                                             <div className="text-[9px] uppercase tracking-widest text-primary font-bold mb-1">Locked Profit</div>
@@ -165,26 +165,38 @@ export const ActivePositionsView: React.FC = () => {
                                                         </div>
                                                     </div>
                                                     
-                                                    <div className="bg-background rounded-lg p-3 border border-border/50">
-                                                        <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Technical Shift</div>
-                                                        <p className="text-xs font-medium text-foreground leading-relaxed">
-                                                            {pos.initial_score > pos.current_score 
-                                                                ? "⚠️ Technical structure has weakened since entry." 
-                                                                : pos.initial_score < pos.current_score 
-                                                                    ? "🔥 Setup has gained strength." 
-                                                                    : "⚖️ Structure remains stable."}
-                                                        </p>
-                                                        {pos.scan_data?.strategic_summary && (
-                                                            <div className="mt-2 text-[10px] text-muted-foreground">
-                                                                {pos.scan_data.strategic_summary}
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <div className="bg-muted/30 p-2 rounded-lg border border-border/50 text-center">
+                                                            <div className="text-[8px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Volume</div>
+                                                            <div className={`text-[10px] font-bold ${(pos.volume_health || '').includes('Accumulation') ? 'text-emerald-500' : (pos.volume_health || '').includes('Distribution') || (pos.volume_health || '').includes('Panic') ? 'text-red-500' : 'text-muted-foreground'}`}>
+                                                                {(pos.volume_health || 'N/A').split(':')[0]}
                                                             </div>
-                                                        )}
-                                                        {!pos.initial_scan_data && (
-                                                            <div className="mt-2 text-[9px] text-amber-500/80 italic">
-                                                                *Detailed baseline snapshot unavailable for older trades.
+                                                        </div>
+                                                        <div className="bg-muted/30 p-2 rounded-lg border border-border/50 text-center">
+                                                            <div className="text-[8px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Daily</div>
+                                                            <div className={`text-[10px] font-bold ${pos.daily_trend === 'BULLISH' ? 'text-emerald-500' : pos.daily_trend === 'BEARISH' ? 'text-red-500' : 'text-amber-500'}`}>
+                                                                {pos.daily_trend || 'N/A'}
                                                             </div>
-                                                        )}
+                                                        </div>
+                                                        <div className="bg-muted/30 p-2 rounded-lg border border-border/50 text-center">
+                                                            <div className="text-[8px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Nifty</div>
+                                                            <div className={`text-[10px] font-bold ${pos.nifty_regime === 'BULLISH' ? 'text-emerald-500' : pos.nifty_regime === 'BEARISH' ? 'text-red-500' : 'text-muted-foreground'}`}>
+                                                                {pos.nifty_regime || 'N/A'}
+                                                            </div>
+                                                        </div>
                                                     </div>
+
+                                                    {pos.dead_money && (
+                                                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-center">
+                                                            <div className="text-[10px] font-bold text-amber-500">💤 DEAD MONEY - Consider Redeploying Capital</div>
+                                                        </div>
+                                                    )}
+
+                                                    {pos.drawdown_from_peak > 2 && (
+                                                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2 text-center">
+                                                            <div className="text-[10px] font-bold text-red-500">📉 Drawdown from peak: -{pos.drawdown_from_peak.toFixed(1)}%</div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 <div className="text-[9px] text-right text-muted-foreground mt-2">
                                                     Last Evaluated: {formatTimeAgo(pos.last_evaluated_at)}

@@ -117,12 +117,12 @@ if __name__ == "__main__":
         name='Half-Hourly Market Summary'
     )
     
-    # 5. Position Radar Guardian (Every 30 mins)
+    # 5. Position Radar Guardian (Every 15 mins for faster reaction)
     scheduler.add_job(
         trigger_position_radar,
-        CronTrigger(day_of_week='mon-fri', hour='9-15', minute='15,45'),
+        CronTrigger(day_of_week='mon-fri', hour='9-15', minute='0,15,30,45'),
         id='position_radar',
-        name='Half-Hourly Position Guardian Radar'
+        name='15-Min Position Guardian Radar'
     )
 
     try:
