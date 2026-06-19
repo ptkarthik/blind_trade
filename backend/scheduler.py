@@ -45,6 +45,18 @@ def trigger_market_summary():
     except Exception as e:
         logger.error(f"❌ Error triggering Market Summary: {e}")
 
+def trigger_position_radar():
+    """Trigger the Position Manager to evaluate active trades."""
+    logger.info("🕒 Scheduled Event: Triggering Position Radar...")
+    try:
+        response = requests.post("http://localhost:8012/api/v1/positions/evaluate_now", timeout=60)
+        if response.status_code in [200, 201]:
+            logger.info("✅ Position Radar evaluation complete.")
+        else:
+            logger.error(f"❌ Failed to trigger Position Radar: {response.text}")
+    except Exception as e:
+        logger.error(f"❌ Connection Error triggering Position Radar: {e}")
+
 if __name__ == "__main__":
     logger.info("🚀 Blind Trade Automated Scheduler Starting...")
     logger.info("Market Hours (IST): Mon-Fri")
@@ -103,6 +115,14 @@ if __name__ == "__main__":
         CronTrigger(day_of_week='mon-fri', hour='9-15', minute='0,30'),
         id='market_summary',
         name='Half-Hourly Market Summary'
+    )
+    
+    # 5. Position Radar Guardian (Every 30 mins)
+    scheduler.add_job(
+        trigger_position_radar,
+        CronTrigger(day_of_week='mon-fri', hour='9-15', minute='15,45'),
+        id='position_radar',
+        name='Half-Hourly Position Guardian Radar'
     )
 
     try:

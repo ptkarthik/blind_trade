@@ -133,12 +133,24 @@ class PositionManager:
 
     def _evaluate_trade(self, trade: SwingTrade, current_price: float, df_15m: pd.DataFrame) -> tuple[str, str, float]:
         """
-        Evaluates hold/sell logic.
+        Evaluates hold/sell logic and Dynamic Radar Scoring.
         Returns: (Action, Reason, NewStopLoss)
         """
         action = "HOLD"
         reason = "Trend intact."
         new_stop = trade.stop_loss
+
+        # Radar Scoring Init
+        radar_score = 50.0 # Neutral default
+        profit_pct = ((current_price - trade.entry) / trade.entry) * 100
+        
+        # Track Max Profit Reached
+        scan_data = trade.scan_data or {}
+        max_profit_pct = scan_data.get("max_profit_pct", 0.0)
+        if profit_pct > max_profit_pct:
+            max_profit_pct = profit_pct
+            scan_data["max_profit_pct"] = max_profit_pct
+            trade.scan_data = scan_data
 
         # 1. Hard Stop Loss Hit
         if current_price <= trade.stop_loss:
@@ -148,35 +160,71 @@ class PositionManager:
         if current_price >= trade.target:
             return "SELL", "Target Reached", new_stop
 
-        # 3. Trailing Stop Logic (If up > 4%, trail stop to breakeven or EMA20)
-        profit_pct = ((current_price - trade.entry) / trade.entry) * 100
+        # 3. Dynamic Trailing Stop Logic (Multi-Tier)
         
-        if profit_pct >= 4.0 and trade.stop_loss < trade.entry:
-            # Move stop to breakeven + 0.5% once up 4%
+        # Tier 3 (Aggressive Trailing for > 10% gains): Trail tightly by 3%
+        if max_profit_pct >= 10.0:
+            tier_3_stop = round(current_price * 0.97, 2)
+            if tier_3_stop > new_stop:
+                new_stop = tier_3_stop
+                reason = "Tier 3 Trailing Stop (Locked Gains)"
+                
+        # Tier 2 (Gains Locking for > 5% gains): Lock in at least 2.5% below current, or breakeven+2.5%
+        elif max_profit_pct >= 5.0:
+            tier_2_stop = round(max(trade.entry * 1.025, current_price * 0.975), 2)
+            if tier_2_stop > new_stop:
+                new_stop = tier_2_stop
+                reason = "Tier 2 Trailing Stop (Locked >2.5%)"
+                
+        # Tier 1 (Capital Protection for > 2.5% gains): Move to Entry + 0.5%
+        elif max_profit_pct >= 2.5:
             breakeven_stop = round(trade.entry * 1.005, 2)
             if breakeven_stop > new_stop:
                 new_stop = breakeven_stop
-                reason = "Trailing stop to breakeven"
+                reason = "Tier 1 Trailing Stop (Capital Protected)"
 
-        # 4. Intraday Trend Analysis (if data available)
+        # 4. Intraday Trend Analysis & Radar Scoring
         if df_15m is not None and not df_15m.empty and len(df_15m) > 20:
             try:
                 from ta.trend import EMAIndicator
-                ema_20 = EMAIndicator(close=df_15m['close'], window=20).ema_indicator().iloc[-1]
+                from ta.momentum import RSIIndicator
                 
-                # If up significantly (>6%) and we close below 15m EMA20, trail aggressively
-                if profit_pct >= 6.0:
+                close_prices = df_15m['close']
+                ema_20 = EMAIndicator(close=close_prices, window=20).ema_indicator().iloc[-1]
+                rsi_14 = RSIIndicator(close=close_prices, window=14).rsi().iloc[-1]
+                
+                # Base score based on profit
+                radar_score = 50.0 + (profit_pct * 2)
+                
+                # Bonus for being above 15m EMA
+                if current_price > ema_20:
+                    radar_score += 15
+                else:
+                    radar_score -= 20
+                    
+                # Overbought/Oversold modifiers
+                if rsi_14 > 70:
+                    radar_score += 10 # Strong momentum
+                elif rsi_14 < 40:
+                    radar_score -= 15 # Weakening
+                    
+                # Early Exit / Predictive Sell logic
+                # If we are nicely profitable but suddenly collapse below EMA and RSI is dying
+                if profit_pct > 3.0 and current_price < ema_20 and rsi_14 < 45:
                     aggressive_stop = round(ema_20 * 0.995, 2)
                     if aggressive_stop > new_stop and current_price > aggressive_stop:
                         new_stop = aggressive_stop
+                        reason = "Radar: Bearish Divergence detected, tightening stop."
                         
-                # Dead money check / Intraday bleed
-                # If it's bleeding consistently intraday but hasn't hit stop, maybe just warn?
-                # (For now, just rely on the trailing stop math)
-            except:
+                trade.current_score = round(max(0, min(100, radar_score)), 1)
+                
+            except Exception as e:
                 pass
+        else:
+            trade.current_score = round(max(0, min(100, 50.0 + (profit_pct * 2))), 1)
 
         return action, reason, new_stop
+
 
     async def get_live_portfolio(self) -> List[Dict[str, Any]]:
         """Returns the active portfolio with live prices for the UI."""
@@ -217,6 +265,7 @@ class PositionManager:
                         "initial_scan_data": t.initial_scan_data,
                         "quantity": t.quantity,
                         "holding_days": (datetime.utcnow() - t.entry_date).days,
+                        "created_at": t.created_at.isoformat() if t.created_at else t.entry_date.isoformat(),
                         "last_evaluated_at": t.updated_at.isoformat() if t.updated_at else None
                     })
         except Exception as e:
