@@ -244,12 +244,8 @@ class SwingEngine:
         if hasattr(self, 'current_logger') and self.current_logger:
             self.current_logger.info(msg)
         else:
-            self.log(msg)
-    def log(self, msg):
-        if hasattr(self, 'current_logger') and self.current_logger:
-            self.current_logger.info(msg)
-        else:
-            self.log(msg)
+            print(msg, flush=True)
+
 
     async def analyze_stock(self, sym: str, job_id: str = None):
         """
