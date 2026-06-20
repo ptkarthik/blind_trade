@@ -174,7 +174,7 @@ export const ActivePositionsView: React.FC = () => {
                                                         <div className="bg-muted/30 p-2 rounded-lg border border-border/50 text-center">
                                                             <div className="text-[8px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Volume</div>
                                                             <div className={`text-[10px] font-bold ${(pos.volume_health || '').includes('Accumulation') ? 'text-emerald-500' : (pos.volume_health || '').includes('Distribution') || (pos.volume_health || '').includes('Panic') ? 'text-red-500' : 'text-muted-foreground'}`}>
-                                                                {(pos.volume_health || 'N/A').split(':')[0]}
+                                                                {(pos.volume_health && pos.volume_health !== 'Volume data unavailable' ? pos.volume_health.split(':')[0] : 'UNAVAILABLE')}
                                                             </div>
                                                         </div>
                                                         <div className="bg-muted/30 p-2 rounded-lg border border-border/50 text-center">
@@ -189,6 +189,22 @@ export const ActivePositionsView: React.FC = () => {
                                                                 {pos.nifty_regime || 'N/A'}
                                                             </div>
                                                         </div>
+                                                    </div>
+
+                                                    <div className="bg-background rounded-lg p-3 border border-border/50">
+                                                        <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Technical Shift</div>
+                                                        <p className="text-xs font-medium text-foreground leading-relaxed">
+                                                            {pos.initial_score > pos.current_score 
+                                                                ? "⚠️ Technical structure has weakened since entry." 
+                                                                : pos.initial_score < pos.current_score 
+                                                                    ? "🔥 Setup has gained strength." 
+                                                                    : "⚖️ Structure remains stable."}
+                                                        </p>
+                                                        {pos.scan_data?.strategic_summary && (
+                                                            <div className="mt-2 text-[10px] text-muted-foreground">
+                                                                {pos.scan_data.strategic_summary}
+                                                            </div>
+                                                        )}
                                                     </div>
 
                                                     {pos.dead_money && (
