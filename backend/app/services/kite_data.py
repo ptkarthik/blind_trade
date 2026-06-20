@@ -784,6 +784,72 @@ class KiteDataService:
             "login_url": self._kite.login_url() if self._kite and not self.is_ready else None
         }
 
+    # =========================================================================
+    # LIVE EXECUTION MODE
+    # =========================================================================
+
+    async def get_margins(self) -> Dict[str, Any]:
+        """Fetches live funding margins from Kite."""
+        if not self.is_ready:
+            return {"error": "Kite not connected"}
+        
+        try:
+            margins = await asyncio.to_thread(self._kite.margins)
+            equity_margins = margins.get("equity", {})
+            return {
+                "available": equity_margins.get("available", {}).get("live_balance", 0.0),
+                "used": equity_margins.get("utilised", {}).get("debits", 0.0),
+                "opening": equity_margins.get("available", {}).get("opening_balance", 0.0)
+            }
+        except Exception as e:
+            logger.error(f" [KITE] Fetch margins failed: {e}")
+            return {"error": str(e)}
+
+    async def place_order(self, symbol: str, quantity: int, transaction_type: str, order_type: str = "MARKET", price: float = 0.0) -> Dict[str, Any]:
+        """
+        Places a live order via Kite API.
+        transaction_type: 'BUY' or 'SELL'
+        order_type: 'MARKET' or 'LIMIT'
+        """
+        if not self.is_ready:
+            return {"success": False, "error": "Kite not connected"}
+
+        clean_symbol = symbol.replace(".NS", "").upper()
+        
+        try:
+            from kiteconnect import KiteConnect
+            t_type = self._kite.TRANSACTION_TYPE_BUY if transaction_type.upper() == "BUY" else self._kite.TRANSACTION_TYPE_SELL
+            o_type = self._kite.ORDER_TYPE_MARKET if order_type.upper() == "MARKET" else self._kite.ORDER_TYPE_LIMIT
+            
+            # Use CNC for delivery (swing trades)
+            product = self._kite.PRODUCT_CNC
+
+            order_args = {
+                "tradingsymbol": clean_symbol,
+                "exchange": self._kite.EXCHANGE_NSE,
+                "transaction_type": t_type,
+                "quantity": int(quantity),
+                "order_type": o_type,
+                "product": product,
+                "validity": self._kite.VALIDITY_DAY
+            }
+            if o_type == self._kite.ORDER_TYPE_LIMIT:
+                order_args["price"] = price
+
+            logger.warning(f" [KITE EXECUTION] Placing real {transaction_type} order for {quantity} {clean_symbol}...")
+            order_id = await asyncio.to_thread(
+                self._kite.place_order,
+                variety=self._kite.VARIETY_REGULAR,
+                **order_args
+            )
+            
+            logger.info(f" [KITE EXECUTION] Order successful. ID: {order_id}")
+            return {"success": True, "order_id": order_id, "message": "Order placed successfully"}
+            
+        except Exception as e:
+            logger.error(f" [KITE EXECUTION] Order failed: {e}")
+            return {"success": False, "error": str(e)}
+
 
 # Singleton
 kite_data = KiteDataService()

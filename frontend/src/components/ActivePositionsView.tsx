@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { positionsApi } from '../services/api';
-import { AlertCircle, CheckCircle2, TrendingUp, Clock, RefreshCw, XCircle, Activity, Sparkles } from 'lucide-react';
+import { positionsApi, brokerApi } from '../services/api';
+import { AlertCircle, CheckCircle2, TrendingUp, Clock, RefreshCw, XCircle, Activity, Sparkles, Wallet } from 'lucide-react';
 import { AnalysisModal } from './AnalysisModal';
 
 export const ActivePositionsView: React.FC = () => {
     const [positions, setPositions] = useState<any[]>([]);
+    const [margins, setMargins] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [evaluating, setEvaluating] = useState(false);
     const [selectedScan, setSelectedScan] = useState<any>(null);
-    // Unused: const [hoveredPosId, setHoveredPosId] = useState<string | null>(null);
 
     const formatTimeAgo = (isoString?: string) => {
         if (!isoString) return 'never';
@@ -19,11 +19,18 @@ export const ActivePositionsView: React.FC = () => {
         const hours = Math.floor(minutes / 60);
         return `${hours}h ago`;
     };
+
     const loadPositions = async () => {
         try {
             setLoading(true);
-            const res = await positionsApi.getPortfolio();
+            const [res, marginRes] = await Promise.all([
+                positionsApi.getPortfolio(),
+                brokerApi.getMargins().catch(() => ({ data: { error: true } })) // don't fail everything if margin fails
+            ]);
             setPositions(res.data || []);
+            if (marginRes.data && !marginRes.data.error) {
+                setMargins(marginRes.data);
+            }
         } catch (e) {
             console.error(e);
         } finally {
@@ -73,6 +80,22 @@ export const ActivePositionsView: React.FC = () => {
                     Evaluate Now
                 </button>
             </div>
+
+            {margins && !margins.error && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <Wallet className="w-8 h-8 text-emerald-500" />
+                        <div>
+                            <h3 className="text-sm font-bold text-emerald-500 tracking-wider uppercase">Live Kite Funding</h3>
+                            <p className="text-2xl font-black text-foreground">₹{margins.available?.toLocaleString('en-IN')}</p>
+                        </div>
+                    </div>
+                    <div className="text-right">
+                        <div className="text-xs text-muted-foreground uppercase tracking-widest font-bold">Used Margin</div>
+                        <div className="text-sm font-bold text-foreground">₹{margins.used?.toLocaleString('en-IN')}</div>
+                    </div>
+                </div>
+            )}
 
             {positions.length === 0 ? (
                 <div className="bg-card border border-border rounded-xl p-12 text-center">
@@ -131,14 +154,29 @@ export const ActivePositionsView: React.FC = () => {
                                                 <div className="text-right flex flex-col items-end gap-2">
                                                     <button 
                                                         onClick={async () => {
-                                                            if(window.confirm(`Are you sure you want to close tracking for ${pos.symbol}?`)) {
-                                                                await positionsApi.closeTrade(pos.id);
-                                                                loadPositions();
+                                                            if(window.confirm(`LIVE EXECUTION WARNING: Are you sure you want to place a LIVE MARKET SELL ORDER for ${pos.quantity} shares of ${pos.symbol} on Kite?`)) {
+                                                                try {
+                                                                    const orderRes = await brokerApi.placeOrder({
+                                                                        symbol: pos.symbol,
+                                                                        quantity: pos.quantity,
+                                                                        transaction_type: "SELL",
+                                                                        order_type: "MARKET"
+                                                                    });
+                                                                    if (orderRes.data.success) {
+                                                                        alert(`Success! Order ID: ${orderRes.data.order_id}`);
+                                                                        await positionsApi.closeTrade(pos.id);
+                                                                        loadPositions();
+                                                                    } else {
+                                                                        alert(`Order failed: ${orderRes.data.error}`);
+                                                                    }
+                                                                } catch(e: any) {
+                                                                    alert(`API Error: ${e.response?.data?.detail || e.message}`);
+                                                                }
                                                             }
                                                         }}
-                                                        className="text-xs text-muted-foreground hover:text-red-500 flex items-center gap-1 transition-colors bg-background px-2 py-1 rounded-md border border-border/50 hover:border-red-500/30"
+                                                        className="text-xs font-bold uppercase tracking-widest text-red-500 hover:text-white flex items-center gap-1 transition-colors bg-red-500/10 px-3 py-1.5 rounded-md border border-red-500/20 hover:bg-red-500"
                                                     >
-                                                        <XCircle size={14} /> Close
+                                                        <Activity size={14} /> Sell on Kite
                                                     </button>
                                                     <div>
                                                         <div className={`text-2xl font-black tracking-tighter ${pos.profit_pct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>

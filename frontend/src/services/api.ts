@@ -120,4 +120,9 @@ export const positionsApi = {
     closeTrade: (id: string) => api.patch(`/positions/close/${id}`),
 };
 
+export const brokerApi = {
+    getMargins: () => api.get('/broker/margins'),
+    placeOrder: (data: { symbol: string, quantity: number, transaction_type: string, order_type?: string, price?: number }) => api.post('/broker/order', data),
+};
+
 export default api;

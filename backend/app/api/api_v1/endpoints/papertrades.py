@@ -84,18 +84,17 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     if account.balance < total_cost and trade_type == "PAPER":
         raise HTTPException(status_code=400, detail="Insufficient virtual balance")
     
-    # [REAL TRADE EXECUTION - DISABLED FOR NOW (MANUAL EXECUTION ONLY)]
+    # [REAL TRADE EXECUTION]
     if trade_type == "REAL":
-        # order_res = execution_engine.place_order(
-        #     symbol=symbol,
-        #     transaction_type="BUY",
-        #     quantity=qty,
-        #     order_type="MARKET",
-        #     product="MIS" # Default to Intraday MIS for UI scanner trades
-        # )
-        # if order_res.get("status") != "success":
-        #     raise HTTPException(status_code=500, detail=f"Kite execution failed: {order_res.get('message')}")
-        pass
+        from app.services.kite_data import kite_data
+        order_res = await kite_data.place_order(
+            symbol=symbol,
+            transaction_type="BUY",
+            quantity=qty,
+            order_type="MARKET"
+        )
+        if not order_res.get("success"):
+            raise HTTPException(status_code=500, detail=f"Kite execution failed: {order_res.get('error')}")
             
         # Add to Guardian Loop Monitoring (Avoid Duplicates)
         existing_swing = await db.execute(
