@@ -370,6 +370,27 @@ class PositionManager:
                 new_stop = breakeven_stop
                 reason = "Tier 1: Capital Protected"
 
+        # ===== 3.5. Daily Spike Tracker =====
+        if df_15m is not None and not df_15m.empty:
+            try:
+                last_date = df_15m.index[-1].date()
+                if last_date == date.today():
+                    df_today = df_15m[df_15m.index.date == last_date]
+                    if not df_today.empty:
+                        today_open = df_today['open'].iloc[0]
+                        today_high = df_today['high'].max()
+                        if today_open > 0:
+                            today_spike_pct = ((today_high - today_open) / today_open) * 100
+                            if today_spike_pct >= 4.0:
+                                spike_stop = round(today_high * 0.985, 2) # Trail 1.5% below high
+                                if spike_stop > new_stop:
+                                    if current_price <= spike_stop:
+                                        return "SELL", f"Daily Spike Tracker: Dump detected after {today_spike_pct:.1f}% pump", spike_stop
+                                    new_stop = spike_stop
+                                    reason = f"Daily Spike Tracker: Locked {today_spike_pct:.1f}% intraday pump"
+            except Exception as e:
+                pass
+
         # ===== 4. Nifty Regime Override =====
         # If Nifty is crashing, tighten ALL trailing stops by an extra 1%
         if self._nifty_regime == "BEARISH" and profit_pct > 1.0:
