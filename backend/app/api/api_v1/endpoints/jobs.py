@@ -128,7 +128,7 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
             "status_msg": row.status_msg or "",
             "active_symbols": _parse_json_field(row.active_symbols),
             "failed_symbols": _parse_json_field(row.failed_symbols),
-            "data": _parse_json_field(row.data)
+            "data": _parse_json_field(getattr(row, "data", None))
         }
     }
 

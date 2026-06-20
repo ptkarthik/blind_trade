@@ -180,17 +180,25 @@ class PositionManager:
             await self._update_nifty_regime()
 
             async with AsyncSessionLocal() as session:
-                # 1. Fetch all OPEN trades
-                stmt = select(SwingTrade).where(SwingTrade.status == "OPEN")
-                result = await session.execute(stmt)
-                open_trades = result.scalars().all()
+                # 1. Fetch all OPEN trades (Both Swing and Paper)
+                from app.models.papertrade import PaperTrade
+                
+                stmt_swing = select(SwingTrade).where(SwingTrade.status == "OPEN")
+                stmt_paper = select(PaperTrade).where(PaperTrade.status == "OPEN")
+                
+                res_swing = await session.execute(stmt_swing)
+                res_paper = await session.execute(stmt_paper)
+                
+                open_swing = res_swing.scalars().all()
+                open_paper = res_paper.scalars().all()
+                open_trades = list(open_swing) + list(open_paper)
 
                 if not open_trades:
                     logger.info("[GUARDIAN v2] No open positions to monitor.")
                     return
 
-                symbols = [t.symbol for t in open_trades]
-                logger.info(f"[GUARDIAN v2] Monitoring {len(symbols)} open positions: {symbols}")
+                symbols = list(set([t.symbol for t in open_trades]))
+                logger.info(f"[GUARDIAN v2] Monitoring {len(open_trades)} open positions across {len(symbols)} symbols.")
 
                 # 2. Fetch Live Prices (LTP)
                 live_prices = await kite_data.get_ltp(symbols)
@@ -216,6 +224,8 @@ class PositionManager:
 
                     df_15m = intraday_data.get(symbol)
                     df_daily = daily_data.get(symbol)
+                    
+                    is_real_trade = isinstance(trade, SwingTrade) or (isinstance(trade, PaperTrade) and getattr(trade, 'trade_type', 'PAPER') == 'REAL')
 
                     # Evaluate trade with full radar
                     action, reason, new_stop = self._evaluate_trade(
@@ -223,10 +233,11 @@ class PositionManager:
                     )
 
                     # Update trailing stop if raised
-                    if new_stop > trade.stop_loss:
+                    if getattr(trade, 'stop_loss', 0) and new_stop > trade.stop_loss:
                         old_stop = trade.stop_loss
                         trade.stop_loss = new_stop
-                        trade.updated_at = datetime.utcnow()
+                        if hasattr(trade, 'updated_at'):
+                            trade.updated_at = datetime.utcnow()
 
                         alert_msg = (
                             f"Trail Stop Raised: ₹{old_stop:.2f} → ₹{new_stop:.2f} "
@@ -250,9 +261,9 @@ class PositionManager:
                             f"<i>{alert_msg}</i>"
                         )
 
-                    # Handle EXIT signals (Advisory Mode Only)
+                    # Handle EXIT signals (Auto-Execution)
                     if action == "SELL":
-                        alert_msg = f"ADVISORY SELL: {reason} @ ₹{current_price:.2f}"
+                        alert_msg = f"AUTO SELL EXECUTED: {reason} @ ₹{current_price:.2f}"
                         alert = TradeAlert(
                             symbol=symbol,
                             alert_type="WARNING" if "Stop Hit" in reason else "INFO",
@@ -262,15 +273,55 @@ class PositionManager:
                         )
                         session.add(alert)
                         alerts_generated += 1
-                        print(f" 🚨 [GUARDIAN v2] SELL for {symbol}: {reason}", flush=True)
+                        print(f" 🚨 [GUARDIAN v2] AUTO-SELL for {symbol}: {reason}", flush=True)
+
+                        # Execution Logic
+                        trade.status = "CLOSED"
+                        trade.exit_price = current_price if isinstance(trade, SwingTrade) else None
+                        trade.sell_price = current_price if isinstance(trade, PaperTrade) else None
+                        trade.exit_reason = reason if isinstance(trade, SwingTrade) else None
+                        trade.close_reason = "GUARDIAN_AUTO_SELL" if isinstance(trade, PaperTrade) else None
+                        
+                        if hasattr(trade, 'exit_date'): trade.exit_date = datetime.utcnow()
+                        if hasattr(trade, 'sell_time'): trade.sell_time = datetime.utcnow()
+
+                        # If Paper Trade, update balance
+                        if isinstance(trade, PaperTrade) and getattr(trade, 'trade_type', 'PAPER') == 'PAPER':
+                            from app.models.papertrade import Account
+                            acct = await session.execute(select(Account).limit(1))
+                            account = acct.scalars().first()
+                            if account:
+                                pnl = (current_price - trade.buy_price) * trade.qty
+                                account.balance += (trade.qty * current_price)
+                                account.total_pnl += pnl
+
+                        # If Real Trade, execute API call
+                        if is_real_trade:
+                            qty = getattr(trade, 'quantity', getattr(trade, 'qty', 0))
+                            if qty > 0:
+                                try:
+                                    res = await kite_data.place_order(
+                                        symbol=symbol,
+                                        quantity=qty,
+                                        transaction_type="SELL",
+                                        order_type="MARKET",
+                                        product_type=getattr(trade, 'product_type', 'CNC')
+                                    )
+                                    if not res.get('success'):
+                                        logger.error(f"[GUARDIAN v2] Kite Sell Failed for {symbol}: {res.get('error')}")
+                                        alert_msg = f"⚠️ AUTO SELL FAILED (API Error): {res.get('error')}"
+                                except Exception as e:
+                                    logger.error(f"[GUARDIAN v2] Kite Sell Exception for {symbol}: {e}")
+                                    alert_msg = f"⚠️ AUTO SELL FAILED (Exception): {str(e)}"
 
                         await notifier_service.send_telegram_alert(
-                            f"🚨 <b>GUARDIAN SELL ALERT</b>\n"
+                            f"🚨 <b>GUARDIAN AUTO-SELL</b>\n"
                             f"🔴 <b>{symbol}</b>\n"
                             f"LTP: ₹{current_price:.2f}\n"
                             f"Reason: {reason}\n"
+                            f"Type: {'REAL MONEY' if is_real_trade else 'VIRTUAL/PAPER'}\n"
                             f"Nifty: {self._nifty_regime} ({self._nifty_change_pct:+.1f}%)\n"
-                            f"<i>Action Required: Review position.</i>"
+                            f"<i>{alert_msg}</i>"
                         )
 
                     # Handle DEAD MONEY warnings
@@ -308,25 +359,38 @@ class PositionManager:
     # =========================================================================
     def _evaluate_trade(
         self,
-        trade: SwingTrade,
+        trade, # Can be SwingTrade or PaperTrade
         current_price: float,
         df_15m: pd.DataFrame,
         df_daily: pd.DataFrame = None,
     ) -> tuple[str, str, float]:
         """
-        Full Radar evaluation with volume, daily trend, dead money, and Nifty regime.
+        Full Radar evaluation with dynamic trailing stop and highest price memory.
         Returns: (Action, Reason, NewStopLoss)
         """
         action = "HOLD"
         reason = "Trend intact."
+        
+        # Abstract fields for SwingTrade vs PaperTrade
+        entry_price = getattr(trade, 'entry', getattr(trade, 'buy_price', 0))
+        if entry_price == 0:
+            return "HOLD", "Invalid entry", getattr(trade, 'stop_loss', 0)
+            
         new_stop = trade.stop_loss
+        target = trade.target
+
+        # Track Highest Price Reached
+        if getattr(trade, 'highest_price_reached', None) is None:
+            trade.highest_price_reached = current_price
+        elif current_price > trade.highest_price_reached:
+            trade.highest_price_reached = current_price
 
         # Radar Scoring Init
         radar_score = 50.0
-        profit_pct = ((current_price - trade.entry) / trade.entry) * 100
+        profit_pct = ((current_price - entry_price) / entry_price) * 100
 
-        # Track Max Profit Reached
-        scan_data = trade.scan_data or {}
+        # Track Max Profit Reached (Fallback scan_data logic)
+        scan_data = getattr(trade, 'scan_data', {}) or {}
         max_profit_pct = scan_data.get("max_profit_pct", 0.0)
         if profit_pct > max_profit_pct:
             max_profit_pct = profit_pct
@@ -337,38 +401,33 @@ class PositionManager:
         scan_data["drawdown_from_peak"] = round(drawdown_from_peak, 2)
         scan_data["nifty_regime"] = self._nifty_regime
         scan_data["nifty_change"] = round(self._nifty_change_pct, 2)
-        trade.scan_data = scan_data
+        if hasattr(trade, 'scan_data'):
+            trade.scan_data = scan_data
 
         # ===== 1. Hard Stop Loss Hit =====
         if current_price <= trade.stop_loss:
-            return "SELL", "Stop Loss Hit", new_stop
+            return "SELL", "Hard Stop Loss Hit", new_stop
 
         # ===== 2. Target Hit =====
-        if current_price >= trade.target:
+        if target and current_price >= target:
             return "SELL", "Target Reached", new_stop
 
-        # ===== 3. Dynamic Trailing Stop Logic (Multi-Tier) =====
+        # ===== 3. Dynamic Trailing Stop Logic (The "Memory" feature) =====
+        trailing_sl_pct = getattr(trade, 'trailing_sl_percent', 3.0)
+        if trailing_sl_pct is None:
+            trailing_sl_pct = 3.0
+            
+        # The TSL is dynamically calculated as the highest price minus the buffer percentage.
+        dynamic_tsl = round(trade.highest_price_reached * (1 - (trailing_sl_pct / 100)), 2)
+        
+        # Never lower the stop loss, only raise it.
+        if dynamic_tsl > new_stop:
+            new_stop = dynamic_tsl
+            reason = f"Dynamic TSL: Locked at {trailing_sl_pct}% below highest peak"
 
-        # Tier 3 (>10% gains): Trail tightly by 3%
-        if max_profit_pct >= 10.0:
-            tier_3_stop = round(current_price * 0.97, 2)
-            if tier_3_stop > new_stop:
-                new_stop = tier_3_stop
-                reason = "Tier 3: Locked Gains (3% trail)"
-
-        # Tier 2 (>5% gains): Lock in at least 2.5%
-        elif max_profit_pct >= 5.0:
-            tier_2_stop = round(max(trade.entry * 1.025, current_price * 0.975), 2)
-            if tier_2_stop > new_stop:
-                new_stop = tier_2_stop
-                reason = "Tier 2: Locked >2.5%"
-
-        # Tier 1 (>2.5% gains): Move to breakeven + 0.5%
-        elif max_profit_pct >= 2.5:
-            breakeven_stop = round(trade.entry * 1.005, 2)
-            if breakeven_stop > new_stop:
-                new_stop = breakeven_stop
-                reason = "Tier 1: Capital Protected"
+        # If price drops below the highest peak buffer, SELL
+        if current_price <= dynamic_tsl:
+            return "SELL", f"Trailing Stop Hit: Dropped {trailing_sl_pct}% from highest peak", new_stop
 
         # ===== 3.5. Daily Spike Tracker =====
         scan_data["spike_tracker_active"] = False

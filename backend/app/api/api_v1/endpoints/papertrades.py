@@ -123,14 +123,15 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
                 confidence=str(order_data.get("score", "N/A")),
                 scan_data=order_data.get("full_scan_data"),
                 initial_scan_data=order_data.get("full_scan_data"),
-                status="OPEN"
+                status="OPEN",
+                mode=mode
             )
             db.add(guardian_trade)
     
     if trade_type == "PAPER":
         # Deduct balance
         account.balance -= total_cost
-    
+        
     # Create trade (Avoid Duplicates)
     existing_paper = await db.execute(
         select(PaperTrade).where(PaperTrade.symbol == symbol, PaperTrade.status == "OPEN", PaperTrade.trade_type == trade_type)
@@ -138,6 +139,7 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     if existing_paper.scalars().first():
         raise HTTPException(status_code=400, detail=f"An OPEN {trade_type} trade for {symbol} already exists. Close it first.")
         
+    # [TRADE EXECUTION]
     new_trade = PaperTrade(
         symbol=symbol,
         trade_type=trade_type,
@@ -146,9 +148,10 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
         target=order_data.get("target"),
         stop_loss=order_data.get("stop_loss"),
         score_at_buy=order_data.get("score"),
-        status="OPEN"
+        order_type=kite_order_type,
+        product_type=product_type,
+        mode=mode
     )
-    
     db.add(new_trade)
     await db.commit()
     return {"status": "success", "trade_id": new_trade.id, "remaining_balance": account.balance}

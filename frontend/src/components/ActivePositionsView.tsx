@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { positionsApi, brokerApi } from '../services/api';
+import { positionsApi, brokerApi, papertradeApi } from '../services/api';
 import { AlertCircle, CheckCircle2, TrendingUp, Clock, RefreshCw, XCircle, Activity, Sparkles, Wallet } from 'lucide-react';
 import { AnalysisModal } from './AnalysisModal';
 
-export const ActivePositionsView: React.FC = () => {
-    const [positions, setPositions] = useState<any[]>([]);
+interface ActivePositionsViewProps {
+    mode: string;
+}
+
+export const ActivePositionsView: React.FC<ActivePositionsViewProps> = ({ mode }) => {
+    const [realPositions, setRealPositions] = useState<any[]>([]);
+    const [paperPositions, setPaperPositions] = useState<any[]>([]);
+    const [account, setAccount] = useState<any>(null);
     const [margins, setMargins] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [evaluating, setEvaluating] = useState(false);
+    const [activeTradeTab, setActiveTradeTab] = useState<'REAL' | 'PAPER'>('REAL');
     const [selectedScan, setSelectedScan] = useState<any>(null);
 
     const formatTimeAgo = (isoString?: string) => {
@@ -22,12 +29,16 @@ export const ActivePositionsView: React.FC = () => {
 
     const loadPositions = async () => {
         try {
-            setLoading(true);
-            const [res, marginRes] = await Promise.all([
+            if (!account) setLoading(true);
+            const [resReal, resPaper, accRes, marginRes] = await Promise.all([
                 positionsApi.getPortfolio(),
-                brokerApi.getMargins().catch(() => ({ data: { error: true } })) // don't fail everything if margin fails
+                papertradeApi.getTrades(),
+                papertradeApi.getAccount(),
+                brokerApi.getMargins().catch(() => ({ data: { error: true } }))
             ]);
-            setPositions(res.data || []);
+            setRealPositions(resReal.data || []);
+            setPaperPositions(resPaper.data || []);
+            setAccount(accRes.data);
             if (marginRes.data && !marginRes.data.error) {
                 setMargins(marginRes.data);
             }
@@ -40,7 +51,7 @@ export const ActivePositionsView: React.FC = () => {
 
     useEffect(() => {
         loadPositions();
-        const interval = setInterval(loadPositions, 60000); // refresh every minute
+        const interval = setInterval(loadPositions, 10000); // 10 second refresh like PaperTradingView
         return () => clearInterval(interval);
     }, []);
 
@@ -48,7 +59,6 @@ export const ActivePositionsView: React.FC = () => {
         try {
             setEvaluating(true);
             await positionsApi.triggerEvaluation();
-            // The backend now fully waits for the deep scan to finish before returning.
             await loadPositions();
             setEvaluating(false);
         } catch (e) {
@@ -57,9 +67,14 @@ export const ActivePositionsView: React.FC = () => {
         }
     };
 
-    if (loading && positions.length === 0) {
+    if (loading && realPositions.length === 0 && paperPositions.length === 0) {
         return <div className="flex justify-center p-12"><div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
     }
+
+    const filteredReal = realPositions.filter(p => (p.mode || 'swing') === mode && p.status === 'OPEN');
+    const filteredPaper = paperPositions.filter(p => (p.mode || 'swing') === mode && p.status === 'OPEN');
+
+    const activeList = activeTradeTab === 'REAL' ? filteredReal : filteredPaper;
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12">
@@ -81,12 +96,12 @@ export const ActivePositionsView: React.FC = () => {
                 </button>
             </div>
 
-            {margins && !margins.error && (
-                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex items-center justify-between">
+            {activeTradeTab === 'REAL' && margins && !margins.error && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Wallet className="w-8 h-8 text-emerald-500" />
+                        <Wallet className="w-8 h-8 text-red-500" />
                         <div>
-                            <h3 className="text-sm font-bold text-emerald-500 tracking-wider uppercase">Live Kite Funding</h3>
+                            <h3 className="text-sm font-bold text-red-500 tracking-wider uppercase">Live Kite Funding</h3>
                             <p className="text-2xl font-black text-foreground">₹{margins.available?.toLocaleString('en-IN')}</p>
                         </div>
                     </div>
@@ -97,17 +112,64 @@ export const ActivePositionsView: React.FC = () => {
                 </div>
             )}
 
-            {positions.length === 0 ? (
+            {activeTradeTab === 'PAPER' && account && (
+                <div className="bg-primary/10 border border-primary/20 rounded-xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <Wallet className="w-8 h-8 text-primary" />
+                        <div>
+                            <h3 className="text-sm font-bold text-primary tracking-wider uppercase">Virtual Paper Balance</h3>
+                            <p className="text-2xl font-black text-foreground">₹{account.balance?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+                        </div>
+                    </div>
+                    <div className="text-right flex items-center gap-4">
+                        <div>
+                            <div className="text-xs text-muted-foreground uppercase tracking-widest font-bold">Total P&L</div>
+                            <div className={`text-sm font-bold ${account.total_pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                {account.total_pnl >= 0 ? '+' : ''}₹{account.total_pnl?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            </div>
+                        </div>
+                        <button 
+                            onClick={async () => {
+                                if(window.confirm('Reset Virtual Balance?')) {
+                                    await papertradeApi.resetAccount();
+                                    loadPositions();
+                                }
+                            }}
+                            className="bg-card text-xs uppercase tracking-widest font-bold border border-border px-3 py-1.5 rounded-lg hover:bg-muted"
+                        >
+                            RESET
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Tabs for Real vs Paper */}
+            <div className="flex bg-muted p-1 rounded-xl border border-border w-fit">
+                <button
+                    onClick={() => setActiveTradeTab('PAPER')}
+                    className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTradeTab === 'PAPER' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                    PAPER TRADES
+                </button>
+                <button
+                    onClick={() => setActiveTradeTab('REAL')}
+                    className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTradeTab === 'REAL' ? 'bg-card shadow-sm text-red-500 border border-red-500/20' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                    LIVE REAL MONEY
+                </button>
+            </div>
+
+            {activeList.length === 0 ? (
                 <div className="bg-card border border-border rounded-xl p-12 text-center">
                     <AlertCircle size={48} className="mx-auto text-muted-foreground/50 mb-4" />
-                    <h3 className="text-lg font-bold text-foreground">No Active Positions</h3>
+                    <h3 className="text-lg font-bold text-foreground">No Active {activeTradeTab} Positions</h3>
                     <p className="text-muted-foreground">Trades marked as 'OPEN' will automatically appear here for monitoring.</p>
                 </div>
             ) : (
                 <div className="space-y-8">
                     {Object.entries(
-                        positions.reduce((groups, pos) => {
-                            const date = new Date(pos.created_at || pos.entry_date || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                        activeList.reduce((groups, pos) => {
+                            const date = new Date(pos.created_at || pos.entry_date || pos.buy_time || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
                             if (!groups[date]) groups[date] = [];
                             groups[date].push(pos);
                             return groups;
@@ -125,8 +187,15 @@ export const ActivePositionsView: React.FC = () => {
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {datePositions.map((pos: any) => {
+                                    // Abstract fields to handle both SwingTrade and PaperTrade
+                                    const entryPrice = pos.entry || pos.buy_price || 0;
+                                    const qty = pos.quantity || pos.qty || 0;
+                                    const currentPrice = pos.current_price || entryPrice; // For PaperTrade we might not have live price here unless enriched, but Guardian updates highest_price_reached
+                                    // Actually, positions API returns live PnL for Real trades. For Paper trades we might need to fetch LTP if not returned.
+                                    const profitPct = pos.profit_pct || (entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0);
+                                    
                                     const maxProfit = pos.scan_data?.max_profit_pct || 0;
-                                    const lockPct = pos.stop_loss > pos.entry ? ((pos.stop_loss - pos.entry) / pos.entry) * 100 : 0;
+                                    const lockPct = pos.stop_loss > entryPrice ? ((pos.stop_loss - entryPrice) / entryPrice) * 100 : 0;
                                     
                                     return (
                                         <div key={pos.id} className="bg-card border border-border rounded-xl p-5 hover:border-primary/30 transition-colors group relative overflow-hidden">
@@ -154,17 +223,21 @@ export const ActivePositionsView: React.FC = () => {
                                                 <div className="text-right flex flex-col items-end gap-2">
                                                     <button 
                                                         onClick={async () => {
-                                                            if(window.confirm(`LIVE EXECUTION WARNING: Are you sure you want to place a LIVE MARKET SELL ORDER for ${pos.quantity} shares of ${pos.symbol} on Kite?`)) {
+                                                            if(window.confirm(`LIVE EXECUTION WARNING: Are you sure you want to place a LIVE MARKET SELL ORDER for ${qty} shares of ${pos.symbol} on Kite?`)) {
                                                                 try {
                                                                     const orderRes = await brokerApi.placeOrder({
                                                                         symbol: pos.symbol,
-                                                                        quantity: pos.quantity,
+                                                                        quantity: qty,
                                                                         transaction_type: "SELL",
                                                                         order_type: "MARKET"
                                                                     });
                                                                     if (orderRes.data.success) {
                                                                         alert(`Success! Order ID: ${orderRes.data.order_id}`);
-                                                                        await positionsApi.closeTrade(pos.id);
+                                                                        if (pos.trade_type === 'PAPER') {
+                                                                            await papertradeApi.closeTrade(pos.id);
+                                                                        } else {
+                                                                            await positionsApi.closeTrade(pos.id);
+                                                                        }
                                                                         loadPositions();
                                                                     } else {
                                                                         alert(`Order failed: ${orderRes.data.error}`);
@@ -176,11 +249,11 @@ export const ActivePositionsView: React.FC = () => {
                                                         }}
                                                         className="text-xs font-bold uppercase tracking-widest text-red-500 hover:text-white flex items-center gap-1 transition-colors bg-red-500/10 px-3 py-1.5 rounded-md border border-red-500/20 hover:bg-red-500"
                                                     >
-                                                        <Activity size={14} /> Sell on Kite
+                                                        <Activity size={14} /> Square Off
                                                     </button>
                                                     <div>
-                                                        <div className={`text-2xl font-black tracking-tighter ${pos.profit_pct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                                            {pos.profit_pct >= 0 ? '+' : ''}{pos.profit_pct}%
+                                                        <div className={`text-2xl font-black tracking-tighter ${profitPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                                            {profitPct >= 0 ? '+' : ''}{profitPct.toFixed(2)}%
                                                         </div>
                                                         <div className="text-xs text-muted-foreground">Live PnL</div>
                                                     </div>

@@ -24,6 +24,9 @@ class SwingTrade(Base):
     exit_price = Column(Float, nullable=True)
     exit_date = Column(DateTime, nullable=True)
     exit_reason = Column(String, nullable=True)
+    highest_price_reached = Column(Float, nullable=True)
+    trailing_sl_percent = Column(Float, default=3.0)
+    mode = Column(String, default="swing") # intraday, swing, longterm
     
     r_multiple = Column(Float, nullable=True)
     holding_days = Column(Integer, nullable=True)

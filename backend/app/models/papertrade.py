@@ -31,6 +31,9 @@ class PaperTrade(Base):
     order_type = Column(String, default="MARKET") # MARKET, LIMIT
     product_type = Column(String, default="MIS") # MIS, CNC
     close_reason = Column(String, nullable=True) # SL, TARGET, EOD, MANUAL
+    highest_price_reached = Column(Float, nullable=True)
+    trailing_sl_percent = Column(Float, default=3.0)
+    mode = Column(String, default="swing") # intraday, swing, longterm
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -1,14 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
-import { authApi, marketApi, signalApi, jobsApi, papertradeApi, settingsApi, kiteApi } from './services/api';
+import { authApi, marketApi, signalApi, jobsApi, papertradeApi, settingsApi, kiteApi, brokerApi } from './services/api';
 import { AnalysisModal } from './components/AnalysisModal';
 import { SectorDeals } from './components/SectorDeals';
 import { PortfolioOptimizer } from './components/PortfolioOptimizer';
-import { PaperTradingView } from './components/PaperTradingView';
 import { PerformanceAuditView } from './components/PerformanceAuditView';
 import { ActivePositionsView } from './components/ActivePositionsView';
 import { PaperOrderModal } from './components/PaperOrderModal';
 import { AdminView } from './components/AdminView';
-import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, LayoutDashboard, BarChart3, Shield } from 'lucide-react';
+import { List, Activity, AlertTriangle, ShieldCheck, Search, X, Loader2, Sparkles, BarChart3, Shield } from 'lucide-react';
 import { SearchBox } from './components/SearchBox';
 import { StockCardLongTerm } from './components/StockCardLongTerm';
 import { StockCardIntraday } from './components/StockCardIntraday';
@@ -611,9 +610,9 @@ function App() {
         </div>
       </header>
 
-      {/* Progress Bars - Mode Specific Tracking */}
+      {/* Progress Bars - Track All Scans Simultaneously */}
       <div className="sticky top-[73px] z-[9] flex flex-col">
-        {[mode === 'intraday' ? 'intraday' : mode === 'swing' ? 'swing_scan' : 'full_scan'].map(type => {
+        {['intraday', 'swing_scan', 'full_scan'].map(type => {
           const job = jobStates[type];
           if (!job || !['pending', 'processing', 'paused', 'stopping'].includes(job.status)) return null;
 
@@ -819,25 +818,19 @@ function App() {
                 onClick={() => setActiveTab('deals')}
                 className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'deals' ? 'bg-card shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'}`}
               >
-                <List className="h-3 w-3" /> ACTIVE DEALS
-              </button>
-              <button
-                onClick={() => setActiveTab('papertrade')}
-                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'papertrade' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                <LayoutDashboard className="h-3 w-3" /> PAPER TRADING
-              </button>
-              <button
-                onClick={() => setActiveTab('audit')}
-                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'audit' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                <BarChart3 className="h-3 w-3" /> SCAN HISTORY
+                <List className="h-3 w-3" /> SCANS & ALERTS
               </button>
               <button
                 onClick={() => setActiveTab('positions')}
                 className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'positions' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 <ShieldCheck className="h-3 w-3" /> POSITIONS
+              </button>
+              <button
+                onClick={() => setActiveTab('audit')}
+                className={`px-6 py-2 rounded-lg text-xs font-black tracking-widest uppercase flex items-center gap-2 transition-all ${activeTab === 'audit' ? 'bg-card shadow-sm text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <BarChart3 className="h-3 w-3" /> HISTORY
               </button>
               {isAdmin && (
                 <button
@@ -872,9 +865,8 @@ function App() {
               </ErrorBoundary>
             )}
             {activeTab === 'portfolio' && <PortfolioOptimizer />}
-            {activeTab === 'papertrade' && <PaperTradingView />}
             {activeTab === 'audit' && <PerformanceAuditView />}
-            {activeTab === 'positions' && <ActivePositionsView />}
+            {activeTab === 'positions' && <ActivePositionsView mode={mode} />}
           </>
         )}
       </main >
