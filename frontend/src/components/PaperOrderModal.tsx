@@ -17,8 +17,11 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
     const totalCost = qty * price;
     const tradeType = (signal as any)._intendedTradeType || 'PAPER';
     const isReal = tradeType === 'REAL';
+    const mode = (signal as any)._mode || 'swing';
+    const productType = mode === 'intraday' ? 'MIS' : 'CNC';
+    
     // Real trades don't use virtual balance, but we'll bypass the block if it's REAL
-    const canAfford = isReal || balance >= totalCost;
+    const canAfford = balance >= totalCost; // Real balance is passed in now!
 
     if (!isOpen) return null;
 
@@ -35,7 +38,7 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
                                 {isReal ? 'LIVE TRADE: ' : 'Paper Trade: '}{signal.symbol}
                             </h3>
                             <p className={`text-[10px] font-bold uppercase tracking-widest ${isReal ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`}>
-                                {isReal ? 'REAL MONEY EXECUTION (MIS)' : 'Execute Virtual Order (MIS)'}
+                                {isReal ? `REAL MONEY EXECUTION (${productType})` : `Execute Virtual Order (${productType})`}
                             </p>
                         </div>
                     </div>

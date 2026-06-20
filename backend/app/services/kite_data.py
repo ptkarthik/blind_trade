@@ -805,11 +805,12 @@ class KiteDataService:
             logger.error(f" [KITE] Fetch margins failed: {e}")
             return {"error": str(e)}
 
-    async def place_order(self, symbol: str, quantity: int, transaction_type: str, order_type: str = "MARKET", price: float = 0.0) -> Dict[str, Any]:
+    async def place_order(self, symbol: str, quantity: int, transaction_type: str, order_type: str = "MARKET", price: float = 0.0, product_type: str = "CNC") -> Dict[str, Any]:
         """
         Places a live order via Kite API.
         transaction_type: 'BUY' or 'SELL'
         order_type: 'MARKET' or 'LIMIT'
+        product_type: 'CNC' or 'MIS'
         """
         if not self.is_ready:
             return {"success": False, "error": "Kite not connected"}
@@ -821,8 +822,7 @@ class KiteDataService:
             t_type = self._kite.TRANSACTION_TYPE_BUY if transaction_type.upper() == "BUY" else self._kite.TRANSACTION_TYPE_SELL
             o_type = self._kite.ORDER_TYPE_MARKET if order_type.upper() == "MARKET" else self._kite.ORDER_TYPE_LIMIT
             
-            # Use CNC for delivery (swing trades)
-            product = self._kite.PRODUCT_CNC
+            product = self._kite.PRODUCT_CNC if product_type.upper() == "CNC" else self._kite.PRODUCT_MIS
 
             order_args = {
                 "tradingsymbol": clean_symbol,

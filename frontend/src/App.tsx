@@ -387,8 +387,22 @@ function App() {
     setSearching(false);
   };
 
-  const handleBuyRequest = (signal: Signal, tradeType: 'PAPER' | 'REAL' = 'PAPER') => {
-    setBuySignal({ ...signal, _intendedTradeType: tradeType } as any);
+  const [realMargin, setRealMargin] = useState<number | null>(null);
+
+  const handleBuyRequest = async (signal: Signal, tradeType: 'PAPER' | 'REAL' = 'PAPER') => {
+    setBuySignal({ ...signal, _intendedTradeType: tradeType, _mode: mode } as any);
+    if (tradeType === 'REAL') {
+        try {
+            const marginRes = await brokerApi.getMargins();
+            if (marginRes.data && !marginRes.data.error) {
+                setRealMargin(marginRes.data.available);
+            } else {
+                setRealMargin(null);
+            }
+        } catch (e) {
+            setRealMargin(null);
+        }
+    }
     setIsBuyModalOpen(true);
   };
 
@@ -403,6 +417,7 @@ function App() {
         stop_loss: buySignal.stop_loss,
         score: buySignal.score,
         trade_type: (buySignal as any)._intendedTradeType || 'PAPER',
+        mode: (buySignal as any)._mode || 'swing',
         full_scan_data: buySignal
       });
       setVirtualBalance(res.data.remaining_balance);
@@ -435,7 +450,7 @@ function App() {
           isOpen={isBuyModalOpen}
           onClose={() => setIsBuyModalOpen(false)}
           signal={buySignal}
-          balance={virtualBalance}
+          balance={(buySignal as any)._intendedTradeType === 'REAL' && realMargin !== null ? realMargin : virtualBalance}
           onConfirm={executePaperTrade}
         />
       )}

@@ -84,6 +84,9 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     if account.balance < total_cost and trade_type == "PAPER":
         raise HTTPException(status_code=400, detail="Insufficient virtual balance")
     
+    mode = order_data.get("mode", "swing")
+    product_type = "MIS" if mode == "intraday" else "CNC"
+    
     # [REAL TRADE EXECUTION]
     if trade_type == "REAL":
         from app.services.kite_data import kite_data
@@ -91,7 +94,8 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
             symbol=symbol,
             transaction_type="BUY",
             quantity=qty,
-            order_type="MARKET"
+            order_type="MARKET",
+            product_type=product_type
         )
         if not order_res.get("success"):
             raise HTTPException(status_code=500, detail=f"Kite execution failed: {order_res.get('error')}")
