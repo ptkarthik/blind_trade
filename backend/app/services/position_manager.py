@@ -371,6 +371,7 @@ class PositionManager:
                 reason = "Tier 1: Capital Protected"
 
         # ===== 3.5. Daily Spike Tracker =====
+        scan_data["spike_tracker_active"] = False
         if df_15m is not None and not df_15m.empty:
             try:
                 last_date = df_15m.index[-1].date()
@@ -381,15 +382,19 @@ class PositionManager:
                         today_high = df_today['high'].max()
                         if today_open > 0:
                             today_spike_pct = ((today_high - today_open) / today_open) * 100
+                            scan_data["today_spike_pct"] = round(today_spike_pct, 2)
                             if today_spike_pct >= 4.0:
                                 spike_stop = round(today_high * 0.985, 2) # Trail 1.5% below high
                                 if spike_stop > new_stop:
+                                    scan_data["spike_tracker_active"] = True
                                     if current_price <= spike_stop:
                                         return "SELL", f"Daily Spike Tracker: Dump detected after {today_spike_pct:.1f}% pump", spike_stop
                                     new_stop = spike_stop
                                     reason = f"Daily Spike Tracker: Locked {today_spike_pct:.1f}% intraday pump"
             except Exception as e:
                 pass
+
+        trade.scan_data = scan_data
 
         # ===== 4. Nifty Regime Override =====
         # If Nifty is crashing, tighten ALL trailing stops by an extra 1%

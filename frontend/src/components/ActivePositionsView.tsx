@@ -121,6 +121,11 @@ export const ActivePositionsView: React.FC = () => {
                                                         <span className={`text-[10px] font-bold tracking-widest uppercase px-2 py-0.5 rounded-full border w-fit ${pos.current_score >= 65 ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : pos.current_score < 45 ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-primary/10 text-primary border-primary/20'}`}>
                                                             RADAR SCORE: {pos.current_score}
                                                         </span>
+                                                        {pos.scan_data?.spike_tracker_active && (
+                                                            <span className="text-[10px] font-bold tracking-widest uppercase px-2 py-0.5 rounded-full border w-fit bg-orange-500/10 text-orange-500 border-orange-500/20 animate-pulse">
+                                                                🔥 SPIKE TRAIL: {pos.scan_data.today_spike_pct}%
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="text-right flex flex-col items-end gap-2">
