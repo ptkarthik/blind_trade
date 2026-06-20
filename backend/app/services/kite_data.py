@@ -805,7 +805,7 @@ class KiteDataService:
             logger.error(f" [KITE] Fetch margins failed: {e}")
             return {"error": str(e)}
 
-    async def place_order(self, symbol: str, quantity: int, transaction_type: str, order_type: str = "MARKET", price: float = 0.0, product_type: str = "CNC") -> Dict[str, Any]:
+    async def place_order(self, symbol: str, quantity: int, transaction_type: str, order_type: str = "MARKET", price: float = 0.0, product_type: str = "CNC", is_amo: bool = False) -> Dict[str, Any]:
         """
         Places a live order via Kite API.
         transaction_type: 'BUY' or 'SELL'
@@ -823,6 +823,7 @@ class KiteDataService:
             o_type = self._kite.ORDER_TYPE_MARKET if order_type.upper() == "MARKET" else self._kite.ORDER_TYPE_LIMIT
             
             product = self._kite.PRODUCT_CNC if product_type.upper() == "CNC" else self._kite.PRODUCT_MIS
+            variety = self._kite.VARIETY_AMO if is_amo else self._kite.VARIETY_REGULAR
 
             order_args = {
                 "tradingsymbol": clean_symbol,
@@ -836,10 +837,10 @@ class KiteDataService:
             if o_type == self._kite.ORDER_TYPE_LIMIT:
                 order_args["price"] = price
 
-            logger.warning(f" [KITE EXECUTION] Placing real {transaction_type} order for {quantity} {clean_symbol}...")
+            logger.warning(f" [KITE EXECUTION] Placing real {variety} {transaction_type} order for {quantity} {clean_symbol} at {o_type}...")
             order_id = await asyncio.to_thread(
                 self._kite.place_order,
-                variety=self._kite.VARIETY_REGULAR,
+                variety=variety,
                 **order_args
             )
             

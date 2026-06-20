@@ -406,7 +406,7 @@ function App() {
     setIsBuyModalOpen(true);
   };
 
-  const executePaperTrade = async (qty: number) => {
+  const executePaperTrade = async (qty: number, isAmo: boolean = false, orderType: string = 'MARKET', limitPrice: number = 0) => {
     if (!buySignal) return;
     try {
       const res = await papertradeApi.placeOrder({
@@ -418,6 +418,9 @@ function App() {
         score: buySignal.score,
         trade_type: (buySignal as any)._intendedTradeType || 'PAPER',
         mode: (buySignal as any)._mode || 'swing',
+        is_amo: isAmo,
+        order_type: orderType,
+        limit_price: limitPrice,
         full_scan_data: buySignal
       });
       setVirtualBalance(res.data.remaining_balance);

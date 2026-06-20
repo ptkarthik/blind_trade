@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, ShoppingCart, Info } from 'lucide-react';
 import type { Signal } from './DealCard';
 
@@ -7,14 +7,29 @@ interface PaperOrderModalProps {
     isOpen: boolean;
     onClose: () => void;
     signal: Signal;
-    onConfirm: (qty: number) => void;
+    onConfirm: (qty: number, isAmo: boolean, orderType: string, limitPrice: number) => void;
     balance: number;
 }
 
 export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }: PaperOrderModalProps) {
     const [qty, setQty] = useState(1);
-    const price = signal.price || 0;
-    const totalCost = qty * price;
+    const [isAmo, setIsAmo] = useState(false);
+    const [orderType, setOrderType] = useState('MARKET');
+    const [limitPrice, setLimitPrice] = useState(signal?.price || 0);
+    
+    // Reset state when a new signal is loaded
+    useEffect(() => {
+        if (isOpen && signal) {
+            setQty(1);
+            setIsAmo(false);
+            setOrderType('MARKET');
+            setLimitPrice(signal.price || 0);
+        }
+    }, [isOpen, signal]);
+    
+    const executionPrice = orderType === 'LIMIT' ? limitPrice : (signal.price || 0);
+    const totalCost = qty * executionPrice;
+    
     const tradeType = (signal as any)._intendedTradeType || 'PAPER';
     const isReal = tradeType === 'REAL';
     const mode = (signal as any)._mode || 'swing';
@@ -48,11 +63,30 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
                 </div>
 
                 <div className="p-6 space-y-6">
+                    {/* Advanced Order Toggles */}
+                    <div className="flex flex-col gap-3">
+                        <div className="flex items-center justify-between bg-muted/30 p-2 rounded-xl border border-border">
+                            <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">Order Validity</span>
+                            <div className="flex gap-1">
+                                <button onClick={() => setIsAmo(false)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${!isAmo ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'}`}>REGULAR</button>
+                                <button onClick={() => setIsAmo(true)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isAmo ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'}`}>AMO</button>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between bg-muted/30 p-2 rounded-xl border border-border">
+                            <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">Order Type</span>
+                            <div className="flex gap-1">
+                                <button onClick={() => setOrderType('MARKET')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${orderType === 'MARKET' ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'}`}>MARKET</button>
+                                <button onClick={() => setOrderType('LIMIT')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${orderType === 'LIMIT' ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'}`}>LIMIT</button>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Price Info */}
                     <div className="grid grid-cols-2 gap-4">
                         <div className="bg-muted/30 p-3 rounded-2xl border border-border">
                             <p className="text-[10px] font-black text-muted-foreground uppercase mb-1">Current Price</p>
-                            <p className="text-xl font-mono font-black">₹{price.toLocaleString('en-IN')}</p>
+                            <p className="text-xl font-mono font-black">₹{(signal.price || 0).toLocaleString('en-IN')}</p>
                         </div>
                         <div className="bg-muted/30 p-3 rounded-2xl border border-border">
                             <p className="text-[10px] font-black text-muted-foreground uppercase mb-1">Available Cash</p>
@@ -60,20 +94,33 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
                         </div>
                     </div>
 
-                    {/* Qty Input */}
-                    <div>
-                        <label className="block text-xs font-black text-muted-foreground uppercase tracking-widest mb-2">Quantity</label>
-                        <div className="flex gap-4">
+                    {/* Qty & Limit Input */}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-black text-muted-foreground uppercase tracking-widest mb-2">Quantity</label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="number" 
+                                    value={qty} 
+                                    onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 0))}
+                                    className="w-full bg-muted/50 border border-border rounded-xl p-3 font-mono font-bold text-lg focus:ring-2 focus:ring-primary outline-none transition-all"
+                                />
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                                <button onClick={() => setQty(q => q + 10)} className="flex-1 py-1.5 bg-muted rounded-lg text-[10px] font-bold hover:bg-muted/80">+10</button>
+                                <button onClick={() => setQty(q => Math.max(1, q - 10))} className="flex-1 py-1.5 bg-muted rounded-lg text-[10px] font-bold hover:bg-muted/80">-10</button>
+                            </div>
+                        </div>
+                        
+                        <div className={`transition-opacity ${orderType === 'LIMIT' ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+                            <label className="block text-xs font-black text-muted-foreground uppercase tracking-widest mb-2">Limit Price</label>
                             <input 
                                 type="number" 
-                                value={qty} 
-                                onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 0))}
-                                className="flex-1 bg-muted/50 border border-border rounded-xl p-4 font-mono font-bold text-lg focus:ring-2 focus:ring-primary outline-none transition-all"
+                                value={limitPrice} 
+                                onChange={(e) => setLimitPrice(Math.max(0, parseFloat(e.target.value) || 0))}
+                                className="w-full bg-muted/50 border border-border rounded-xl p-3 font-mono font-bold text-lg focus:ring-2 focus:ring-primary outline-none transition-all"
+                                step="0.05"
                             />
-                            <div className="flex flex-col gap-1 justify-center">
-                                <button onClick={() => setQty(q => q + 10)} className="px-3 py-1 bg-muted rounded-lg text-[10px] font-bold hover:bg-muted/80">+10</button>
-                                <button onClick={() => setQty(q => Math.max(1, q - 10))} className="px-3 py-1 bg-muted rounded-lg text-[10px] font-bold hover:bg-muted/80">-10</button>
-                            </div>
                         </div>
                     </div>
 
@@ -93,11 +140,11 @@ export function PaperOrderModal({ isOpen, onClose, signal, onConfirm, balance }:
                     </div>
 
                     <button 
-                        disabled={!canAfford || qty <= 0}
-                        onClick={() => onConfirm(qty)}
-                        className={`w-full py-4 rounded-2xl font-black uppercase text-sm tracking-widest shadow-lg transition-all transform active:scale-95 ${!canAfford ? 'bg-muted text-muted-foreground cursor-not-allowed' : isReal ? 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/30 shadow-xl border-2 border-red-500' : 'bg-primary text-primary-foreground hover:shadow-primary/20'}`}
+                        disabled={!canAfford || qty <= 0 || (orderType === 'LIMIT' && limitPrice <= 0)}
+                        onClick={() => onConfirm(qty, isAmo, orderType, limitPrice)}
+                        className={`w-full py-4 rounded-2xl font-black uppercase text-sm tracking-widest shadow-lg transition-all transform active:scale-95 ${(!canAfford || qty <= 0 || (orderType === 'LIMIT' && limitPrice <= 0)) ? 'bg-muted text-muted-foreground cursor-not-allowed' : isReal ? 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/30 shadow-xl border-2 border-red-500' : 'bg-primary text-primary-foreground hover:shadow-primary/20'}`}
                     >
-                        {isReal ? 'CONFIRM LIVE TRADE' : 'CONFIRM PAPER BUY'}
+                        {isReal ? `CONFIRM ${isAmo ? 'AMO ' : ''}LIVE TRADE` : `CONFIRM ${isAmo ? 'AMO ' : ''}PAPER BUY`}
                     </button>
                 </div>
             </div>

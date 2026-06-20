@@ -86,6 +86,9 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
     
     mode = order_data.get("mode", "swing")
     product_type = "MIS" if mode == "intraday" else "CNC"
+    is_amo = order_data.get("is_amo", False)
+    kite_order_type = order_data.get("order_type", "MARKET")
+    limit_price = order_data.get("limit_price", 0.0)
     
     # [REAL TRADE EXECUTION]
     if trade_type == "REAL":
@@ -94,8 +97,10 @@ async def place_paper_order(order_data: dict, db: AsyncSession = Depends(get_db)
             symbol=symbol,
             transaction_type="BUY",
             quantity=qty,
-            order_type="MARKET",
-            product_type=product_type
+            order_type=kite_order_type,
+            price=limit_price,
+            product_type=product_type,
+            is_amo=is_amo
         )
         if not order_res.get("success"):
             raise HTTPException(status_code=500, detail=f"Kite execution failed: {order_res.get('error')}")
