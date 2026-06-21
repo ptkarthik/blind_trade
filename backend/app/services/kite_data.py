@@ -111,13 +111,14 @@ class KiteDataService:
             print("Kite ready")
             return
 
-        print("Testing _auto_login")
-        # Try automated login (no browser needed)
-        if await self._auto_login():
-            print(" [KITE] Auto-login successful!")
-            await self._load_instruments()
-            self._is_ready = True
-            return
+        print("Testing _auto_login (DISABLED TO PREVENT 504 TIMEOUT)")
+        # [V45 FIX] Disabled Selenium auto-login in production to prevent 60-second hangs 
+        # that cause Nginx 504 Gateway Timeouts. We rely purely on the manual login flow.
+        # if await self._auto_login():
+        #     print(" [KITE] Auto-login successful!")
+        #     await self._load_instruments()
+        #     self._is_ready = True
+        #     return
 
         # Fallback: manual browser login
         login_url = self._kite.login_url()
