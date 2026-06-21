@@ -139,7 +139,8 @@ async def get_todays_signals(
             # Auto-restart scans (is_hidden=True) complete with potentially fewer/no results, 
             # causing the "vanishing stocks" UI bug where manual scan results disappear 
             # when the newer auto-scan finishes with empty data.
-            query = select(Job).where(
+            # [V45] Optimized 2-step query to prevent loading huge JSON blobs during sort
+            id_query = select(Job.id).where(
                 Job.type == job_type, 
                 Job.status == "completed",
                 Job.is_hidden == False,
@@ -147,8 +148,14 @@ async def get_todays_signals(
             ).order_by(
                 Job.updated_at.desc()
             ).limit(1)
-            res = await db.execute(query)
-            valid_job = res.scalars().first()
+            id_res = await db.execute(id_query)
+            valid_job_id = id_res.scalars().first()
+            
+            valid_job = None
+            if valid_job_id:
+                job_query = select(Job).where(Job.id == valid_job_id)
+                res = await db.execute(job_query)
+                valid_job = res.scalars().first()
         
         if not valid_job:
             return sanitize_json_data({"buys": [], "sells": [], "holds": [], "total_count": 0, "stats": {}})
@@ -210,7 +217,8 @@ async def get_sector_signals(
             valid_job = await db.get(Job, job_id)
         else:
             # [V30 FIX] Filter hidden auto-restart jobs (same fix as /today)
-            query = select(Job).where(
+            # [V45] Optimized 2-step query to prevent loading huge JSON blobs during sort
+            id_query = select(Job.id).where(
                 Job.type == job_type, 
                 Job.status == "completed",
                 Job.is_hidden == False,
@@ -218,8 +226,14 @@ async def get_sector_signals(
             ).order_by(
                 Job.updated_at.desc()
             ).limit(1)
-            res = await db.execute(query)
-            valid_job = res.scalars().first()
+            id_res = await db.execute(id_query)
+            valid_job_id = id_res.scalars().first()
+            
+            valid_job = None
+            if valid_job_id:
+                job_query = select(Job).where(Job.id == valid_job_id)
+                res = await db.execute(job_query)
+                valid_job = res.scalars().first()
             
         if not valid_job:
             return sanitize_json_data({"data": {}, "stats": {}})
@@ -382,15 +396,22 @@ async def get_portfolio_analysis(mode: str = "longterm", db: AsyncSession = Depe
         if mode == "longterm": job_type = "full_scan"
         elif mode == "swing": job_type = "swing_scan"
         else: job_type = "intraday"
-        query = select(Job).where(
+        # [V45] Optimized 2-step query
+        id_query = select(Job.id).where(
             Job.type == job_type, 
             Job.status.in_(["completed", "processing"])
         ).order_by(
             Job.result.isnot(None).desc(), 
             Job.updated_at.desc()
         ).limit(1)
-        result = await db.execute(query)
-        job = result.scalars().first()
+        id_res = await db.execute(id_query)
+        job_id = id_res.scalars().first()
+        
+        job = None
+        if job_id:
+            job_query = select(Job).where(Job.id == job_id)
+            res = await db.execute(job_query)
+            job = res.scalars().first()
         
         if not job or not job.result:
             return {"message": "No scan data found."}
