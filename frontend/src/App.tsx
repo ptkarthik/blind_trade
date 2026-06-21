@@ -518,7 +518,8 @@ function App() {
                        if (res.data.is_ready) {
                            console.log("Kite Connected Successfully!");
                        } else if (res.data.login_url) {
-                           alert("Auto-login failed. Please check backend console for manual login URL.");
+                           // [V45 FIX] Redirect to Zerodha login page automatically
+                           window.location.href = res.data.login_url;
                        } else {
                            alert("Login failed. Check backend logs.");
                        }
