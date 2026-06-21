@@ -14,6 +14,6 @@ class Job(Base):
     result = Column(JSON, default={})
     error_details = Column(String, nullable=True)
     trigger_source = Column(String, default="manual")  # "manual" or "auto"
-    is_hidden = Column(Boolean, default=False)
+    is_hidden = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
