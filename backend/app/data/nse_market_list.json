@@ -414,12 +414,6 @@
         "industry": "General"
     },
     {
-        "symbol": "AMANTA.NS",
-        "name": "Amanta Healthcare Limited",
-        "raw_symbol": "AMANTA",
-        "industry": "General"
-    },
-    {
         "symbol": "AMBER.NS",
         "name": "Amber Enterprises India Limited",
         "raw_symbol": "AMBER",
@@ -543,12 +537,6 @@
         "symbol": "APOLLOTYRE.NS",
         "name": "Apollo Tyres Limited",
         "raw_symbol": "APOLLOTYRE",
-        "industry": "General"
-    },
-    {
-        "symbol": "APTECHT.NS",
-        "name": "Aptech Limited",
-        "raw_symbol": "APTECHT",
         "industry": "General"
     },
     {
@@ -711,12 +699,6 @@
         "symbol": "ASKAUTOLTD.NS",
         "name": "ASK Automotive Limited",
         "raw_symbol": "ASKAUTOLTD",
-        "industry": "General"
-    },
-    {
-        "symbol": "ASMS.NS",
-        "name": "Bartronics India Limited",
-        "raw_symbol": "ASMS",
         "industry": "General"
     },
     {
@@ -4218,12 +4200,6 @@
         "industry": "General"
     },
     {
-        "symbol": "KAMDHENU.NS",
-        "name": "Kamdhenu Limited",
-        "raw_symbol": "KAMDHENU",
-        "industry": "General"
-    },
-    {
         "symbol": "KANSAINER.NS",
         "name": "Kansai Nerolac Paints Limited",
         "raw_symbol": "KANSAINER",
@@ -4287,12 +4263,6 @@
         "symbol": "KFINTECH.NS",
         "name": "Kfin Technologies Limited",
         "raw_symbol": "KFINTECH",
-        "industry": "General"
-    },
-    {
-        "symbol": "KHADIM.NS",
-        "name": "Khadim India Limited",
-        "raw_symbol": "KHADIM",
         "industry": "General"
     },
     {
@@ -6642,12 +6612,6 @@
         "industry": "General"
     },
     {
-        "symbol": "RSWM.NS",
-        "name": "RSWM Limited",
-        "raw_symbol": "RSWM",
-        "industry": "General"
-    },
-    {
         "symbol": "RSYSTEMS.NS",
         "name": "R Systems International Limited",
         "raw_symbol": "RSYSTEMS",
@@ -7704,12 +7668,6 @@
         "industry": "General"
     },
     {
-        "symbol": "SYSTMTXC.NS",
-        "name": "Systematix Corporate Services Limited",
-        "raw_symbol": "SYSTMTXC",
-        "industry": "General"
-    },
-    {
         "symbol": "TAJGVK.NS",
         "name": "Taj GVK Hotels & Resorts Limited",
         "raw_symbol": "TAJGVK",
@@ -8385,12 +8343,6 @@
         "symbol": "VENUSPIPES.NS",
         "name": "Venus Pipes & Tubes Limited",
         "raw_symbol": "VENUSPIPES",
-        "industry": "General"
-    },
-    {
-        "symbol": "VENUSREM.NS",
-        "name": "Venus Remedies Limited",
-        "raw_symbol": "VENUSREM",
         "industry": "General"
     },
     {

@@ -89,16 +89,22 @@ async def get_scan_status(job_type: Optional[str] = None, db: AsyncSession = Dep
     if job_type == "swing_scan":
         select_fields.append(func.json_extract(Job.result, '$.data').label("data"))
         
-    query = select(*select_fields).where(Job.created_at >= since, Job.is_hidden == False)
-    
+    id_query = select(Job.id).where(Job.created_at >= since, Job.is_hidden == False)
     if job_type:
-        query = query.where(Job.type == job_type)
+        id_query = id_query.where(Job.type == job_type)
         
-    query = query.order_by(
+    id_query = id_query.order_by(
         desc(Job.status == "processing"), 
         Job.created_at.desc()
     ).limit(1)
     
+    id_result = await db.execute(id_query)
+    job_id = id_result.scalar()
+    
+    if not job_id:
+        return None
+        
+    query = select(*select_fields).where(Job.id == job_id)
     result = await db.execute(query)
     row = result.first()
     

@@ -17,18 +17,31 @@ async def get_market_status(job_type: Optional[str] = None):
     # [V11 RESTORED] Dashboard-to-Engine Bridge
     if job_type:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Job).where(Job.type == job_type).order_by(Job.created_at.desc())
-            )
-            latest_job = result.scalars().first()
-            if latest_job:
-                market_data["latest_job"] = {
-                    "id": latest_job.id,
-                    "status": latest_job.status,
-                    "progress": latest_job.result.get("progress", 0) if latest_job.result else 0,
-                    "total": latest_job.result.get("total_steps", 0) if latest_job.result else 0,
-                    "status_msg": latest_job.result.get("status_msg", "") if latest_job.result else ""
-                }
+            # Step 1: Find the latest job ID to avoid scanning/deserializing huge JSON blobs for multiple rows
+            id_query = select(Job.id).where(Job.type == job_type).order_by(Job.created_at.desc()).limit(1)
+            id_result = await session.execute(id_query)
+            job_id = id_result.scalar()
+            
+            if job_id:
+                from sqlalchemy import func
+                row_query = select(
+                    Job.id,
+                    Job.status,
+                    func.json_extract(Job.result, '$.progress').label("progress"),
+                    func.json_extract(Job.result, '$.total_steps').label("total_steps"),
+                    func.json_extract(Job.result, '$.status_msg').label("status_msg")
+                ).where(Job.id == job_id)
+                
+                row_result = await session.execute(row_query)
+                row = row_result.first()
+                if row:
+                    market_data["latest_job"] = {
+                        "id": row.id,
+                        "status": row.status,
+                        "progress": row.progress or 0,
+                        "total": row.total_steps or 0,
+                        "status_msg": row.status_msg or ""
+                    }
     
     return market_data
 
