@@ -78,6 +78,33 @@ async def trigger_kite_login():
     await kite_data.initialize()
     return kite_data.get_status()
 
+@router.get("/kite/callback")
+async def kite_callback(request_token: str):
+    """
+    OAuth Callback for Kite Connect in Production.
+    The user's Kite Dashboard must have the Redirect URL set to this endpoint.
+    """
+    from app.services.kite_data import kite_data
+    from fastapi.responses import HTMLResponse
+    
+    success = kite_data._process_login(request_token)
+    
+    if success:
+        return HTMLResponse(content="""
+        <html><body style="font-family:Inter,sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#00ff88">
+        <h1>&#10003; Kite Login Successful!</h1>
+        <p>You can close this tab and return to the dashboard. The trading engine is now connected to Zerodha.</p>
+        <script>setTimeout(()=>window.close(), 3000);</script>
+        </body></html>
+        """)
+    else:
+        return HTMLResponse(content="""
+        <html><body style="font-family:Inter,sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#ff4444">
+        <h1>&#10007; Login Failed</h1>
+        <p>Check the backend logs for errors.</p>
+        </body></html>
+        """)
+
 import asyncio
 @router.post("/macro-sync")
 async def trigger_macro_sync():
